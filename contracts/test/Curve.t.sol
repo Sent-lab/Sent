@@ -24,6 +24,58 @@ contract CurveHarness {
 
 /// @notice Curve and fee correctness, including the overflow regime that a naive
 ///         port of the closed form would fail in.
+/// @notice Integer square root, tested directly rather than inferred from callers.
+contract SqrtTest is Test {
+    /// @dev The seed y = (x >> 1) + 1 equals x when x = 2, so the descent loop
+    ///      never runs and an unguarded implementation returns 2 instead of 1.
+    ///      Every neighbouring value converges correctly, which is what lets this
+    ///      survive review.
+    function test_smallValuesIncludingTheDegenerateSeed() public pure {
+        assertEq(Curve.sqrt(0), 0, "sqrt(0)");
+        assertEq(Curve.sqrt(1), 1, "sqrt(1)");
+        assertEq(Curve.sqrt(2), 1, "sqrt(2) - the degenerate seed");
+        assertEq(Curve.sqrt(3), 1, "sqrt(3)");
+        assertEq(Curve.sqrt(4), 2, "sqrt(4)");
+        assertEq(Curve.sqrt(8), 2, "sqrt(8)");
+        assertEq(Curve.sqrt(9), 3, "sqrt(9)");
+        assertEq(Curve.sqrt(15), 3, "sqrt(15)");
+        assertEq(Curve.sqrt(16), 4, "sqrt(16)");
+    }
+
+    function test_exhaustiveOverSmallRange() public pure {
+        for (uint256 x = 0; x < 1000; x++) {
+            uint256 r = Curve.sqrt(x);
+            assertLe(r * r, x, "root squared must not exceed the input");
+            assertGt((r + 1) * (r + 1), x, "the next root up must exceed the input");
+        }
+    }
+
+    /// @dev The defining property, at any magnitude: r*r <= x < (r+1)*(r+1).
+    function testFuzz_isTheExactFloor(uint256 x) public pure {
+        // Bound below 2^128 so (r+1)^2 cannot overflow while checking the property.
+        x = bound(x, 0, type(uint128).max);
+
+        uint256 r = Curve.sqrt(x);
+        assertLe(r * r, x, "root squared must not exceed the input");
+        assertGt((r + 1) * (r + 1), x, "the next root up must exceed the input");
+    }
+
+    function test_perfectSquaresAreExact() public pure {
+        for (uint256 n = 1; n < 200; n++) {
+            assertEq(Curve.sqrt(n * n), n, "a perfect square must return its exact root");
+            assertEq(Curve.sqrt(n * n - 1), n - 1, "one below a perfect square floors down");
+        }
+    }
+
+    function test_extremeMagnitudes() public pure {
+        assertEq(Curve.sqrt(type(uint128).max), 18446744073709551615, "sqrt(2^128-1)");
+        uint256 huge = type(uint256).max;
+        uint256 r = Curve.sqrt(huge);
+        assertLe(r, type(uint128).max, "root of uint256 max fits in 128 bits");
+        assertLe(r * r, huge, "still a valid floor at the ceiling of the type");
+    }
+}
+
 contract CurveTest is Test {
     uint256 constant WAD = 1e18;
     uint256 constant REFERENCE_MC_USD = 2_000e18;

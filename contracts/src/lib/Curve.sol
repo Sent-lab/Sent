@@ -204,16 +204,31 @@ library Curve {
         // function does not overflow (see the header). The precision lost here is
         // recovered exactly by the correction loop in `tokensOutFor`, which uses
         // the overflow-safe forward function as ground truth.
-        uint256 root = _sqrt(b * b + 4 * c);
+        uint256 root = sqrt(b * b + 4 * c);
         return root > b ? (root - b) / 2 : 0;
     }
 
-    /// @dev Floor integer square root (Babylonian). Flooring is the conservative
-    ///      direction: a smaller root yields fewer TOKEN out.
-    function _sqrt(uint256 x) private pure returns (uint256 z) {
-        if (x == 0) return 0;
+    /// @notice Floor integer square root (Babylonian).
+    /// @dev Flooring is the conservative direction: a smaller root yields fewer
+    ///      TOKEN out.
+    ///
+    ///      The `x <= 3` special case is load-bearing, not decorative. Without it
+    ///      the seed `y = (x >> 1) + 1` equals `x` when x = 2, the descent loop
+    ///      never executes, and the function returns 2 instead of 1. Every other
+    ///      input in the range converges correctly, which is exactly why the bug
+    ///      survives casual review.
+    ///
+    ///      Unreachable in production - the argument is always `b² + 4c`, which is
+    ///      astronomically large - but this is a canonical math primitive, and the
+    ///      TypeScript mirror computes it correctly, so leaving it wrong would
+    ///      open a divergence the differential fixtures do not cover.
+    ///
+    ///      `internal` rather than `private` so the property can be tested
+    ///      directly instead of inferred from callers.
+    function sqrt(uint256 x) internal pure returns (uint256 z) {
+        if (x <= 3) return x == 0 ? 0 : 1;
 
-        // Seed with a power of two above sqrt(x) so the iteration descends.
+        // Seed above sqrt(x) so the iteration descends onto the floor.
         z = x;
         uint256 y = (x >> 1) + 1;
         while (y < z) {
