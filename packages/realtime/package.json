@@ -1,0 +1,12 @@
+{
+  "name": "@sent/realtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared realtime event schemas and the freshness contract.",
+  "exports": { ".": "./src/schema.ts" },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types sim/freshness.ts"
+  }
+}

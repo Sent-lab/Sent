@@ -32,6 +32,8 @@ jobs:
         run: node --experimental-strip-types packages/economics/sim/lifecycle.ts
       - name: Reorg handling
         run: node --experimental-strip-types services/indexer/sim/reorg.ts
+      - name: Freshness contract
+        run: node --experimental-strip-types packages/realtime/sim/freshness.ts
       # The differential fixtures are committed. If TypeScript changed without
       # regenerating them, or a regenerated set was not committed, this fails -
       # which is exactly the drift 1064 forbids.
