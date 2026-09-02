@@ -9,6 +9,7 @@
     "test": "node --experimental-strip-types sim/gateway.ts"
   },
   "dependencies": {
+    "ws": "^8.18.0",
     "@sent/realtime": "workspace:*"
   }
 }

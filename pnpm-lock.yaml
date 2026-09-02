@@ -108,6 +108,9 @@ importers:
       '@sent/realtime':
         specifier: workspace:*
         version: link:../../packages/realtime
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.3
 
   services/stockback:
     dependencies:
