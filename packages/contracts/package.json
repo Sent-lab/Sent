@@ -1,0 +1,11 @@
+{
+  "name": "@sent/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Generated contract ABIs. Single canonical source per Masterplan 1064.",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "generate": "node --experimental-strip-types scripts/export-abis.ts"
+  }
+}
