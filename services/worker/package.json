@@ -1,0 +1,20 @@
+{
+  "name": "@sent/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Background workers per Masterplan 431. Idempotent, retried, dead-lettered.",
+  "dependencies": {
+    "@sent/database": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types sim/worker.ts"
+  },
+  "exports": {
+    ".": "./src/schedule.ts",
+    "./jobs": "./src/jobs.ts",
+    "./runner": "./src/runner.ts",
+    "./candles": "./src/candles.ts"
+  }
+}
