@@ -214,11 +214,15 @@ contract MarketInvariants is Test {
     /// @dev THE solvency invariant. Collateral is a liability figure derived from
     ///      curve state, and the market must physically hold at least that much —
     ///      otherwise a seller could be owed money that is not there.
+    ///      The comparison goes through collateralInAssetUnits() rather than
+    ///      curveCollateral directly: collateral is normalized and the balance is
+    ///      raw, so comparing them without converting is only correct by accident
+    ///      when the quote asset happens to have 18 decimals.
     function invariant_marketCanCoverItsCollateral() public view {
         if (market.status() == LaunchMarket.Status.GRADUATED) return;
         assertGe(
             quote.balanceOf(address(market)),
-            market.curveCollateral(),
+            market.collateralInAssetUnits(),
             "the market must always hold what the curve owes"
         );
     }
