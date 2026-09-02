@@ -309,6 +309,38 @@ contract CurveTest is Test {
         assertEq(f.creatorFee + f.platformFee, f.coreFee, "split stays exhaustive");
     }
 
+    /// @dev section 407: the creator remains undiluted post-graduation too. The
+    ///      same sum-of-floors problem that D-003a fixed pre-grad applies here,
+    ///      and post-grad revenue accrues over a market's entire life, so the
+    ///      drift would have been larger rather than smaller.
+    function testFuzz_postGradCreatorIsNeverShortChanged(uint256 revenue) public pure {
+        revenue = bound(revenue, 0, 1e40);
+
+        (uint256 creator, uint256 stockback, uint256 platform) = Fees.splitPostGrad(revenue, true);
+
+        assertGe(creator * 10_000, revenue * 6_500, "creator must never receive less than 65%");
+        assertEq(creator + stockback + platform, revenue, "the split must stay exhaustive");
+    }
+
+    /// @dev Many small collections must not drift the aggregate below 65%.
+    function test_postGradCreatorHoldsAcrossManyCollections() public pure {
+        uint256 totalRevenue = 0;
+        uint256 totalCreator = 0;
+
+        for (uint256 i = 1; i <= 500; i++) {
+            uint256 revenue = i * 7 + 3; // deliberately indivisible amounts
+            (uint256 creator,,) = Fees.splitPostGrad(revenue, true);
+            totalRevenue += revenue;
+            totalCreator += creator;
+        }
+
+        assertGe(
+            totalCreator * 10_000,
+            totalRevenue * 6_500,
+            "aggregate creator share must never fall below 65%"
+        );
+    }
+
     function test_postGradSplit() public pure {
         (uint256 creator, uint256 stockback, uint256 platform) = Fees.splitPostGrad(1_000e18, true);
         assertEq(creator, 650e18, "creator 65%");

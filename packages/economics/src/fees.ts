@@ -151,7 +151,11 @@ export function splitPostGradFee(
 ): PostGradSplit {
   if (creatorEligibleRevenue < 0n) throw new RangeError("splitPostGradFee: negative revenue");
 
-  const creator = mulBpsFloor(creatorEligibleRevenue, CREATOR_SHARE_BPS);
+  // Creator rounds UP, exactly as in splitCoreFee (D-003a). §407 says the
+  // creator remains undiluted, and a sum of floors is not the floor of a sum, so
+  // flooring each collection would leave the aggregate share permanently under
+  // 65%. This was missed when D-003a was applied to the pre-grad split only.
+  const { creator } = splitCoreFee(creatorEligibleRevenue);
   const platformSide = creatorEligibleRevenue - creator;
 
   if (!assetIsPairedXStock) {

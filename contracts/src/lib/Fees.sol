@@ -114,7 +114,15 @@ library Fees {
         pure
         returns (uint256 creator, uint256 stockback, uint256 platform)
     {
-        creator = (revenue * CREATOR_SHARE_BPS) / BPS;
+        // Creator rounds UP here for the same reason it does in splitCore
+        // (D-003a): §407 says the creator remains undiluted, and a sum of floors
+        // is not the floor of a sum, so flooring each collection would leave the
+        // aggregate share permanently under 65%.
+        //
+        // This was missed when D-003a was applied - the fix landed on the
+        // pre-grad split only. Post-grad fee revenue accrues over a market's
+        // entire life, so the drift here would have been larger, not smaller.
+        (creator,) = splitCore(revenue);
         uint256 platformSide = revenue - creator;
 
         if (!assetIsPairedXStock) {
