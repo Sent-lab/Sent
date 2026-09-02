@@ -418,13 +418,21 @@ contract LaunchMarketTest is Test {
     ///      over a live market. It must not be able to re-point it afterwards,
     ///      or a compromised factory could redirect the entire reserve at
     ///      graduation.
-    function test_routerCannotBeRepointedAfterLaunch() public {
+    /// @dev The router receives the entire remaining reserve and all curve
+    ///      collateral at graduation. It is wired once and can never be moved -
+    ///      not by the factory that set it, and not by anyone else.
+    ///
+    ///      An earlier version of this test only checked that non-factory callers
+    ///      were rejected, and passed while the factory could still re-point a
+    ///      live market at will.
+    function test_routerIsWriteOnceEvenForTheFactory() public {
         address hostile = makeAddr("hostileRouter");
 
+        // The factory itself cannot move it after launch.
         vm.prank(factory);
+        vm.expectRevert(LaunchMarket.RouterAlreadySet.selector);
         market.setRouter(hostile);
 
-        // setRouter is factory-only, so no other caller can reach it at all.
         vm.prank(creator);
         vm.expectRevert(LaunchMarket.NotFactory.selector);
         market.setRouter(hostile);
@@ -432,6 +440,8 @@ contract LaunchMarketTest is Test {
         vm.prank(alice);
         vm.expectRevert(LaunchMarket.NotFactory.selector);
         market.setRouter(hostile);
+
+        assertEq(address(market.router()), address(router), "the original router still stands");
     }
 
     // -----------------------------------------------------------------------

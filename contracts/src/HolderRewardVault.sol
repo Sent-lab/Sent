@@ -159,6 +159,7 @@ contract HolderRewardVault is ReentrancyGuard {
     error NotYetActive(uint256 activeAt);
     error QuorumTooHigh(uint256 quorum, uint256 attestors);
     error QuorumZero();
+    error TooManySignatures(uint256 provided, uint256 attestors);
     error NotGuardian();
     error ClaimsArePaused();
     error NotPaused();
@@ -475,6 +476,14 @@ contract HolderRewardVault is ReentrancyGuard {
         uint256 required = quorum;
         if (required == 0) revert QuorumZero();
         if (signatures.length < required) revert QuorumNotMet(signatures.length, required);
+
+        // More signatures than attestors is necessarily invalid: signers must be
+        // distinct, ascending and registered, so the surplus can only be a
+        // duplicate or a stranger. Rejecting up front states that rather than
+        // discovering it partway through a loop the caller paid for.
+        if (signatures.length > _attestors.length) {
+            revert TooManySignatures(signatures.length, _attestors.length);
+        }
 
         bytes32 digest = hashCommitment(commitment);
         address previous = address(0);

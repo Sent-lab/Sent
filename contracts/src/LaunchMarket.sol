@@ -155,6 +155,7 @@ contract LaunchMarket is ReentrancyGuard {
     error SlippageExceeded(uint256 got, uint256 minimum);
     error InsufficientCollateral();
     error RouterNotSet();
+    error RouterAlreadySet();
     error GraduationIncomplete();
     error ZeroAddress();
     error FeeSearchFailed(uint256 gross, uint256 targetNet);
@@ -206,10 +207,20 @@ contract LaunchMarket is ReentrancyGuard {
         );
     }
 
-    /// @notice Wire the graduation router. Factory only, once.
+    /// @notice Wire the graduation router. Factory only, and ONCE.
+    /// @dev The doc comment said "once" while the code allowed repeated calls.
+    ///      Today nothing calls this after launch, so the market was safe by
+    ///      absence of a caller rather than by structure - and the router
+    ///      receives the entire remaining reserve and all curve collateral at
+    ///      graduation, which is the last place to rely on nobody happening to
+    ///      call something.
+    ///
+    ///      §559 forbids governance from redirecting user or creator assets. A
+    ///      write-once router makes that structural.
     function setRouter(address router_) external {
         if (msg.sender != FACTORY) revert NotFactory();
         if (router_ == address(0)) revert ZeroAddress();
+        if (address(router) != address(0)) revert RouterAlreadySet();
         router = IGraduationRouter(router_);
         emit RouterSet(router_);
     }
