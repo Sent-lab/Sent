@@ -6,7 +6,8 @@
   "description": "HTTP API. Serves projections and SDK-built intents; never re-derives economics.",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --experimental-strip-types sim/handlers.ts"
+    "test": "node --experimental-strip-types sim/handlers.ts",
+    "start": "node --experimental-strip-types src/main.ts"
   },
   "dependencies": {
     "fastify": "^5.2.0",
@@ -15,6 +16,7 @@
     "@sent/sdk": "workspace:*",
     "@sent/economics": "workspace:*",
     "@sent/database": "workspace:*",
-    "@sent/contracts": "workspace:*"
+    "@sent/contracts": "workspace:*",
+    "@sent/config": "workspace:*"
   }
 }

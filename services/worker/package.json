@@ -5,11 +5,13 @@
   "type": "module",
   "description": "Background workers per Masterplan 431. Idempotent, retried, dead-lettered.",
   "dependencies": {
-    "@sent/database": "workspace:*"
+    "@sent/database": "workspace:*",
+    "@sent/config": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --experimental-strip-types sim/worker.ts"
+    "test": "node --experimental-strip-types sim/worker.ts",
+    "start": "node --experimental-strip-types src/main.ts"
   },
   "exports": {
     ".": "./src/schedule.ts",

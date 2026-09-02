@@ -8,10 +8,12 @@
     "viem": "^2.56.3",
     "@sent/database": "workspace:*",
     "@sent/contracts": "workspace:*",
-    "@sent/worker": "workspace:*"
+    "@sent/worker": "workspace:*",
+    "@sent/config": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --experimental-strip-types sim/reorg.ts"
+    "test": "node --experimental-strip-types sim/reorg.ts",
+    "start": "node --experimental-strip-types src/main.ts"
   }
 }

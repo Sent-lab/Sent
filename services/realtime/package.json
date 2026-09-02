@@ -6,10 +6,14 @@
   "description": "WebSocket gateway: subscriptions, reconnect replay, backpressure.",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --experimental-strip-types sim/gateway.ts"
+    "test": "node --experimental-strip-types sim/gateway.ts",
+    "start": "node --experimental-strip-types src/main.ts"
   },
   "dependencies": {
     "ws": "^8.18.0",
-    "@sent/realtime": "workspace:*"
+    "@sent/realtime": "workspace:*",
+    "@sent/config": "workspace:*",
+    "viem": "^2.56.3",
+    "@sent/database": "workspace:*"
   }
 }

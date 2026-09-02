@@ -7,10 +7,12 @@
   "dependencies": {
     "@sent/database": "workspace:*",
     "@sent/stockback": "workspace:*",
-    "@sent/stockback-service": "workspace:*"
+    "@sent/stockback-service": "workspace:*",
+    "@sent/config": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --experimental-strip-types sim/finalizer.ts"
+    "test": "node --experimental-strip-types sim/finalizer.ts",
+    "start": "node --experimental-strip-types src/main.ts"
   }
 }
