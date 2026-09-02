@@ -1,0 +1,13 @@
+{
+  "name": "@sent/integration-tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Runs the projection SQL against a real PostgreSQL.",
+  "dependencies": {
+    "@sent/database": "workspace:*"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types projection.ts"
+  }
+}

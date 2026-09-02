@@ -9,8 +9,8 @@
  *   2. Job identifiers are deterministic, because the id IS the idempotency key.
  *   3. Retry is bounded and the boundary is where it claims to be.
  *
- * The handlers themselves need a database and are covered by the integration
- * fixture; everything decided WITHOUT one is decided here.
+ * The handlers themselves need a database and run in
+ * `tests/integration/projection.ts`; everything decided WITHOUT one is here.
  */
 
 import type { TradePoint } from "@sent/database";
