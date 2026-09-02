@@ -102,35 +102,46 @@ contract DifferentialTest is Test {
     // Fees
     // -----------------------------------------------------------------------
 
-    function test_feesMatchTypeScriptExactly() public view {
+    /// @dev Buy and sell are separate functions purely to keep the number of live
+    ///      locals under the stack limit; eleven arrays in one frame does not fit
+    ///      even through the IR pipeline.
+    function test_buyFeesMatchTypeScriptExactly() public view {
         uint256[] memory notional = _u(".fees.notional");
-        uint256[] memory buyCore = _u(".fees.buyCore");
-        uint256[] memory buyCreator = _u(".fees.buyCreator");
-        uint256[] memory buyPlatform = _u(".fees.buyPlatform");
-        uint256[] memory buyStockback = _u(".fees.buyStockback");
-        uint256[] memory buyNet = _u(".fees.buyNet");
-        uint256[] memory sellCore = _u(".fees.sellCore");
-        uint256[] memory sellCreator = _u(".fees.sellCreator");
-        uint256[] memory sellPlatform = _u(".fees.sellPlatform");
-        uint256[] memory sellStockback = _u(".fees.sellStockback");
-        uint256[] memory sellNet = _u(".fees.sellNet");
+        uint256[] memory core = _u(".fees.buyCore");
+        uint256[] memory creator = _u(".fees.buyCreator");
+        uint256[] memory platform = _u(".fees.buyPlatform");
+        uint256[] memory stockback = _u(".fees.buyStockback");
+        uint256[] memory net = _u(".fees.buyNet");
 
         for (uint256 i = 0; i < notional.length; i++) {
             Fees.Breakdown memory b = Fees.forBuy(notional[i]);
-            string memory at = string.concat(" at case ", vm.toString(i));
+            string memory at = string.concat(" at buy case ", vm.toString(i));
 
-            assertEq(b.coreFee, buyCore[i], string.concat("buy core", at));
-            assertEq(b.creatorFee, buyCreator[i], string.concat("buy creator", at));
-            assertEq(b.platformFee, buyPlatform[i], string.concat("buy platform", at));
-            assertEq(b.stockback, buyStockback[i], string.concat("buy stockback", at));
-            assertEq(b.net, buyNet[i], string.concat("buy net", at));
+            assertEq(b.coreFee, core[i], string.concat("core", at));
+            assertEq(b.creatorFee, creator[i], string.concat("creator", at));
+            assertEq(b.platformFee, platform[i], string.concat("platform", at));
+            assertEq(b.stockback, stockback[i], string.concat("stockback", at));
+            assertEq(b.net, net[i], string.concat("net", at));
+        }
+    }
 
+    function test_sellFeesMatchTypeScriptExactly() public view {
+        uint256[] memory notional = _u(".fees.notional");
+        uint256[] memory core = _u(".fees.sellCore");
+        uint256[] memory creator = _u(".fees.sellCreator");
+        uint256[] memory platform = _u(".fees.sellPlatform");
+        uint256[] memory stockback = _u(".fees.sellStockback");
+        uint256[] memory net = _u(".fees.sellNet");
+
+        for (uint256 i = 0; i < notional.length; i++) {
             Fees.Breakdown memory s = Fees.forSell(notional[i]);
-            assertEq(s.coreFee, sellCore[i], string.concat("sell core", at));
-            assertEq(s.creatorFee, sellCreator[i], string.concat("sell creator", at));
-            assertEq(s.platformFee, sellPlatform[i], string.concat("sell platform", at));
-            assertEq(s.stockback, sellStockback[i], string.concat("sell stockback", at));
-            assertEq(s.net, sellNet[i], string.concat("sell net", at));
+            string memory at = string.concat(" at sell case ", vm.toString(i));
+
+            assertEq(s.coreFee, core[i], string.concat("core", at));
+            assertEq(s.creatorFee, creator[i], string.concat("creator", at));
+            assertEq(s.platformFee, platform[i], string.concat("platform", at));
+            assertEq(s.stockback, stockback[i], string.concat("stockback", at));
+            assertEq(s.net, net[i], string.concat("net", at));
         }
     }
 
@@ -138,27 +149,33 @@ contract DifferentialTest is Test {
     // Post-graduation split
     // -----------------------------------------------------------------------
 
-    function test_postGradSplitMatchesTypeScriptExactly() public view {
+    function test_postGradXStockSplitMatchesTypeScript() public view {
         uint256[] memory revenue = _u(".postGrad.revenue");
-        uint256[] memory creatorX = _u(".postGrad.creatorXStock");
-        uint256[] memory stockbackX = _u(".postGrad.stockbackXStock");
-        uint256[] memory platformX = _u(".postGrad.platformXStock");
-        uint256[] memory creatorT = _u(".postGrad.creatorToken");
-        uint256[] memory stockbackT = _u(".postGrad.stockbackToken");
-        uint256[] memory platformT = _u(".postGrad.platformToken");
+        uint256[] memory creator = _u(".postGrad.creatorXStock");
+        uint256[] memory stockback = _u(".postGrad.stockbackXStock");
+        uint256[] memory platform = _u(".postGrad.platformXStock");
 
         for (uint256 i = 0; i < revenue.length; i++) {
+            (uint256 c, uint256 s, uint256 p) = Fees.splitPostGrad(revenue[i], true);
             string memory at = string.concat(" at case ", vm.toString(i));
+            assertEq(c, creator[i], string.concat("creator (xStock)", at));
+            assertEq(s, stockback[i], string.concat("stockback (xStock)", at));
+            assertEq(p, platform[i], string.concat("platform (xStock)", at));
+        }
+    }
 
-            (uint256 c1, uint256 s1, uint256 p1) = Fees.splitPostGrad(revenue[i], true);
-            assertEq(c1, creatorX[i], string.concat("post-grad creator (xStock)", at));
-            assertEq(s1, stockbackX[i], string.concat("post-grad stockback (xStock)", at));
-            assertEq(p1, platformX[i], string.concat("post-grad platform (xStock)", at));
+    function test_postGradTokenSplitMatchesTypeScript() public view {
+        uint256[] memory revenue = _u(".postGrad.revenue");
+        uint256[] memory creator = _u(".postGrad.creatorToken");
+        uint256[] memory stockback = _u(".postGrad.stockbackToken");
+        uint256[] memory platform = _u(".postGrad.platformToken");
 
-            (uint256 c2, uint256 s2, uint256 p2) = Fees.splitPostGrad(revenue[i], false);
-            assertEq(c2, creatorT[i], string.concat("post-grad creator (TOKEN)", at));
-            assertEq(s2, stockbackT[i], string.concat("post-grad stockback (TOKEN)", at));
-            assertEq(p2, platformT[i], string.concat("post-grad platform (TOKEN)", at));
+        for (uint256 i = 0; i < revenue.length; i++) {
+            (uint256 c, uint256 s, uint256 p) = Fees.splitPostGrad(revenue[i], false);
+            string memory at = string.concat(" at case ", vm.toString(i));
+            assertEq(c, creator[i], string.concat("creator (TOKEN)", at));
+            assertEq(s, stockback[i], string.concat("stockback (TOKEN)", at));
+            assertEq(p, platform[i], string.concat("platform (TOKEN)", at));
         }
     }
 }
