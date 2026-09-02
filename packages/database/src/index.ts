@@ -1,16 +1,19 @@
 /**
- * SENT — database package entry.
+ * SENT — database package.
  *
- * The schema itself lives in `migrations/`, because SQL is the source of truth
- * for a projection that must be rebuildable (§138) — a TypeScript description of
- * a table is a second definition, and the two drift.
+ * The schema lives in `migrations/` as SQL, because SQL is the source of truth
+ * for a projection that must be rebuildable (§138, §424). A TypeScript
+ * description of a table would be a second definition, and the two drift.
  *
- * This module exposes only what code needs to talk about the schema: the
- * migration manifest, and the enums the projection and API share.
+ * This module exposes the client, the typed query layer, and the enums the
+ * projection and API share.
  */
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+
+export * from "./client.ts";
+export * from "./repository.ts";
 
 /** Lifecycle status as stored in `market_state.status` (§19). */
 export const MARKET_STATUS = {
@@ -27,9 +30,6 @@ export type MarketStatusCode = (typeof MARKET_STATUS)[keyof typeof MARKET_STATUS
 
 export const TRADE_SIDE = { BUY: 0, SELL: 1 } as const;
 
-/** Numeric precision used for every uint256 column. */
-export const UINT256_NUMERIC = "NUMERIC(78, 0)" as const;
-
 export interface Migration {
   readonly name: string;
   readonly sql: string;
@@ -39,7 +39,7 @@ export interface Migration {
  * Load migrations in lexical order.
  *
  * Filenames are numerically prefixed so ordering is explicit rather than
- * dependent on filesystem enumeration order, which differs between platforms.
+ * dependent on filesystem enumeration, which differs between platforms.
  */
 export function loadMigrations(dir = join(import.meta.dirname, "..", "migrations")): Migration[] {
   return readdirSync(dir)

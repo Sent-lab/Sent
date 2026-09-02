@@ -4,6 +4,13 @@
   "private": true,
   "type": "module",
   "description": "PostgreSQL schema and query layer. A rebuildable projection per Masterplan 138.",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc -p tsconfig.json" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
 }
