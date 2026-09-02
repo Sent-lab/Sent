@@ -1,0 +1,346 @@
+/*
+ * Token terminal — Trading mode (§39.2, §215, §216).
+ *
+ * Chart dominates, trade panel always reachable, price and status never obscured.
+ * No cinematic scroll effects: §215 rules them out inside the active trading
+ * core, and the terminal is the core.
+ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding-block: var(--s-6) var(--s-16);
+}
+
+/* --- Header --------------------------------------------------------------- */
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.monogram {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--surface-active), var(--surface));
+  border: 1px solid var(--border);
+  color: var(--volt);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.nameRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.symbol {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+/*
+ * The Official mark. Earned from the factory registry (§4), so it is styled as a
+ * fact rather than as a badge that any market could wear.
+ */
+.verified {
+  padding: 2px var(--s-2);
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--volt) 40%, transparent);
+  background: color-mix(in srgb, var(--volt) 10%, transparent);
+  color: var(--volt);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.name {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.headerMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  flex-shrink: 0;
+}
+
+.pair {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.pair strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* --- Metrics -------------------------------------------------------------- */
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--s-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.metric,
+.metricPrimary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-4);
+  min-width: 0;
+}
+
+.metricPrimary {
+  background: var(--surface);
+}
+
+.metricLabel {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.metricValue {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  /* A long price must clip rather than widen its column and reflow the row. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metricPrimary .metricValue {
+  color: var(--volt);
+}
+
+.metricSuffix {
+  font-size: var(--text-2xs);
+  font-weight: 400;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+/* --- Core: chart + trade (§216) ------------------------------------------- */
+
+.core {
+  display: grid;
+  /* Chart dominant, trade panel a fixed comfortable width. `minmax(0, 1fr)`
+     rather than `1fr`: a bare 1fr lets a wide child push the grid wider than the
+     viewport, which is how a terminal ends up scrolling sideways. */
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: var(--s-4);
+  align-items: start;
+}
+
+.chart {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  min-height: 420px;
+  display: flex;
+}
+
+.chartPlaceholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  text-align: center;
+  padding: var(--s-8);
+  margin: auto;
+  max-width: 44ch;
+}
+
+.chartTitle {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.chartBody {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  line-height: var(--leading-normal);
+}
+
+.trade {
+  position: sticky;
+  /* Below the 60px header plus a gap: the panel stays reachable while the tape
+     scrolls, which is §215's "trade panel always easy to find". */
+  top: calc(60px + var(--s-4));
+}
+
+/* --- Graduation ----------------------------------------------------------- */
+
+.graduation {
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+
+/* --- Lower: activity + details -------------------------------------------- */
+
+.lower {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: var(--s-4);
+  align-items: start;
+}
+
+.activity,
+.details {
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+
+.sectionTitle {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin-bottom: var(--s-3);
+}
+
+/* The table scrolls inside its own container rather than widening the page. */
+.tableWrap {
+  overflow-x: auto;
+  margin-inline: calc(-1 * var(--s-4));
+  padding-inline: var(--s-4);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-dim);
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.table td {
+  padding-block: var(--s-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table td:not(:first-child):not(:nth-child(5)) {
+  text-align: right;
+}
+
+.detailList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.detail {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+  font-size: var(--text-xs);
+  padding-block: var(--s-1);
+}
+
+.detail dt {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.detail dd {
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.state {
+  padding: var(--s-8);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+/* --- Mobile (§217) -------------------------------------------------------- */
+
+@media (max-width: 1080px) {
+  .core,
+  .lower {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /*
+   * §217 orders the mobile terminal header, metrics, chart, then trade. The
+   * panel stops being sticky here: a sticky panel on a short viewport covers the
+   * content it is meant to accompany, which §227 forbids.
+   */
+  .trade {
+    position: static;
+  }
+
+  .chart {
+    min-height: 280px;
+  }
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding-block: var(--s-4) var(--s-12);
+  }
+
+  .metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .header {
+    align-items: flex-start;
+  }
+
+  .headerMeta {
+    width: 100%;
+    justify-content: space-between;
+  }
+}

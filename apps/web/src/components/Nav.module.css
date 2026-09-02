@@ -1,0 +1,182 @@
+/* §212. Simple, deliberate collapse, clear current route. */
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-header);
+  border-bottom: 1px solid var(--border);
+  /* Translucent rather than solid so the page reads as continuous beneath it,
+     with a fallback for browsers without backdrop-filter — without the fallback
+     the header would be see-through and unreadable. */
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(16px);
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .header { background: var(--bg); }
+}
+
+.inner {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  height: 60px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-shrink: 0;
+}
+
+.wordmark {
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  font-size: var(--text-sm);
+  /* The wordmark is letterspaced, which adds trailing space on the right; this
+     pulls it back so the optical gap matches the left. */
+  margin-right: -0.28em;
+}
+
+.links {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  list-style: none;
+  margin-right: auto;
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding-inline: var(--s-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+
+.link:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.active {
+  color: var(--text);
+  background: var(--surface);
+}
+
+/* The current route also carries a mark that is not colour (§84). */
+.active::after {
+  content: "";
+  position: absolute;
+  margin-top: 30px;
+  width: 14px;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--volt);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-shrink: 0;
+}
+
+.connect {
+  height: 34px;
+  padding-inline: var(--s-4);
+  border-radius: var(--radius-sm);
+  background: var(--volt);
+  color: #06070a;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  transition: filter var(--dur-fast) var(--ease-out);
+}
+
+.connect:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.connect:disabled {
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+/*
+ * The menu toggle is 44x44 even though the glyph is 18px wide (§227: no tiny
+ * icon action). It is hidden entirely on desktop rather than shrunk.
+ */
+.toggle {
+  display: none;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  margin-right: -10px;
+}
+
+.bars,
+.bars::before,
+.bars::after {
+  display: block;
+  width: 18px;
+  height: 1.5px;
+  background: var(--text);
+  border-radius: var(--radius-full);
+  transition: transform var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+
+.bars::before,
+.bars::after {
+  content: "";
+  position: absolute;
+}
+
+.bars::before { transform: translateY(-6px); }
+.bars::after { transform: translateY(6px); }
+
+.barsOpen { background: transparent; }
+.barsOpen::before { transform: rotate(45deg); }
+.barsOpen::after { transform: rotate(-45deg); }
+
+.mobile {
+  border-top: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+
+.mobile ul {
+  list-style: none;
+  padding: var(--s-2) var(--s-4) var(--s-4);
+}
+
+.mobileLink {
+  display: flex;
+  align-items: center;
+  /* 48px: comfortably past the minimum touch target (§227). */
+  min-height: 48px;
+  padding-inline: var(--s-2);
+  font-size: var(--text-base);
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+
+.mobileLink[aria-current="page"] {
+  color: var(--volt);
+}
+
+@media (max-width: 860px) {
+  .links { display: none; }
+  .toggle { display: inline-flex; }
+  .inner { gap: var(--s-4); }
+  .brand { margin-right: auto; }
+}
+
+@media (min-width: 861px) {
+  .mobile { display: none; }
+}

@@ -50,3 +50,7 @@ contracts/lib/openzeppelin-contracts/contracts/mocks/
 # Both stay on disk and remain the working source of truth locally.
 Masterplan_*.md
 Brand.png
+
+# Next build output
+apps/web/.next/
+apps/web/next-env.d.ts

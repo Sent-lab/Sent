@@ -1,0 +1,97 @@
+/*
+ * §211 freshness. Colour carries meaning here, so it never carries it ALONE:
+ * every state also has a label and an accessible description (§84).
+ */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 2px var(--s-2);
+  border-radius: var(--radius-full);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  /* Reserved so the badge changing state does not resize its row (§80). */
+  min-width: 4.5rem;
+  justify-content: center;
+}
+
+.compact {
+  min-width: 0;
+  padding: 2px;
+  border: none;
+  background: none;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.label {
+  line-height: 1;
+}
+
+.live {
+  color: var(--up);
+  border-color: color-mix(in srgb, var(--up) 30%, transparent);
+}
+
+/*
+ * The only animated state. LIVE is the one that means "this is moving", and a
+ * slow pulse says so without the casino flashing §199 rules out. Every other
+ * state is static: a blinking error is harder to read, not more urgent.
+ */
+.live .dot {
+  animation: pulse 2.4s var(--ease-in-out) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.syncing {
+  color: var(--info);
+  border-color: color-mix(in srgb, var(--info) 30%, transparent);
+}
+
+.delayed {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+}
+
+.reconnecting {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+}
+
+.stale {
+  color: var(--down);
+  border-color: color-mix(in srgb, var(--down) 30%, transparent);
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--radius);
+  border: 1px solid currentColor;
+  background: var(--bg-raised);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.notice span:last-child {
+  color: var(--text);
+}

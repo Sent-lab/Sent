@@ -1,0 +1,321 @@
+"use client";
+
+/**
+ * SENT — buy/sell panel.
+ *
+ * §694: UI REVIEW = TRANSACTION INTENT = SDK BUILDER = ACTUAL CALLDATA.
+ *
+ * This component computes NOTHING financial. It collects an amount, asks the API
+ * for an intent, and renders `intent.review.rows` verbatim. Every figure the
+ * user reads comes from the same object that carries the calldata they sign.
+ *
+ * That is not a stylistic preference. This codebase has already made the
+ * opposite mistake once: the API hardcoded a 9700/10000 sell fee under a header
+ * that said it did no fee arithmetic, producing a third implementation of a
+ * number that must have exactly one. A frontend that recomputed "you receive"
+ * for display would be the fourth, and would be the one the user actually reads.
+ *
+ * So there is no fee maths here, no slippage maths, no price maths. If a value
+ * is not in the intent, it is not shown.
+ *
+ * WHAT IS DELIBERATELY MISSING
+ * ----------------------------
+ * The signing step. §694's guarantee only holds if the bytes handed to the
+ * wallet are `intent.data` unmodified, and the wallet layer is not wired in this
+ * build. The button says so plainly rather than existing and failing — a submit
+ * control that silently does nothing is worse than one that explains itself.
+ */
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { quote, isOk, type WireIntent } from "../lib/api.ts";
+import { parseAmount, formatFixed } from "../lib/format.ts";
+import { FreshnessNotice } from "./Freshness.tsx";
+import type { MarketStatus } from "./GraduationProgress.tsx";
+import type { FreshnessEnvelope } from "@sent/realtime";
+
+import styles from "./TradePanel.module.css";
+import type { JSX } from "react";
+
+type Side = "BUY" | "SELL";
+
+/** Slippage presets in basis points. §14: the user picks, nothing is implicit. */
+const SLIPPAGE_PRESETS = [50n, 100n, 300n] as const;
+
+export interface TradePanelProps {
+  readonly token: string;
+  readonly symbol: string;
+  readonly quoteSymbol: string;
+  readonly quoteDecimals: number;
+  readonly status: MarketStatus;
+  readonly freshness: FreshnessEnvelope;
+}
+
+export function TradePanel({
+  token,
+  symbol,
+  quoteSymbol,
+  quoteDecimals,
+  status,
+  freshness,
+}: TradePanelProps): JSX.Element {
+  const [side, setSide] = useState<Side>("BUY");
+  const [input, setInput] = useState("");
+  const [slippageBps, setSlippageBps] = useState<bigint>(100n);
+  const [intent, setIntent] = useState<WireIntent | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  // A BUY spends the quote asset; a SELL spends the token. The decimals differ,
+  // and parsing with the wrong one would misread the amount by a factor of 10^12
+  // on a six-decimal xStock.
+  const inputDecimals = side === "BUY" ? quoteDecimals : 18;
+  const inputSymbol = side === "BUY" ? quoteSymbol : symbol;
+
+  const amount = useMemo(() => parseAmount(input, inputDecimals), [input, inputDecimals]);
+
+  const fetchQuote = useCallback(
+    async (signal: AbortSignal) => {
+      if (amount === null || amount === 0n) {
+        setIntent(null);
+        setError(null);
+        return;
+      }
+
+      setPending(true);
+
+      try {
+        const result = await quote(
+          {
+            token,
+            side,
+            // A decimal string, never a number. This is the value the trade is
+            // built from (§424).
+            amount: amount.toString(),
+            slippageBps: slippageBps.toString(),
+          },
+          { signal },
+        );
+
+        if (signal.aborted) return;
+
+        if (isOk(result)) {
+          setIntent(result.data);
+          setError(null);
+        } else {
+          setIntent(null);
+          setError(result.message);
+        }
+      } catch (caught) {
+        if (signal.aborted) return;
+        setIntent(null);
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "Market data is reconnecting. Your funds and on-chain position are unchanged.",
+        );
+      } finally {
+        if (!signal.aborted) setPending(false);
+      }
+    },
+    [amount, side, slippageBps, token],
+  );
+
+  // Debounced, and aborted on every change. Without the abort a slow response
+  // for an old amount can land after a fast one for the new amount, and the
+  // review would describe a trade the user is no longer making.
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => void fetchQuote(controller.signal), 250);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [fetchQuote]);
+
+  const graduated = status === "GRADUATED";
+
+  return (
+    <div className={styles.panel}>
+      {/* Sides are radio semantics, not two buttons: a screen reader should hear
+          one control with two states, and arrow keys should move between them. */}
+      <div className={styles.sides} role="radiogroup" aria-label="Order side">
+        {(["BUY", "SELL"] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            role="radio"
+            aria-checked={side === option}
+            className={side === option ? styles.sideActive : styles.side}
+            data-side={option}
+            onClick={() => {
+              setSide(option);
+              // The amount is denominated in a different asset on the other
+              // side, so carrying it over would silently re-interpret it.
+              setInput("");
+              setIntent(null);
+              setError(null);
+            }}
+          >
+            {option === "BUY" ? "Buy" : "Sell"}
+          </button>
+        ))}
+      </div>
+
+      <label className={styles.field}>
+        <span className={styles.fieldLabel}>
+          {side === "BUY" ? "You spend" : "You sell"}
+        </span>
+
+        <span className={styles.inputWrap}>
+          <input
+            className={`${styles.input} num`}
+            // `text` with a numeric keypad, not `number`: a number input accepts
+            // "1e5", scrolls to a different value on a trackpad, and rounds long
+            // decimals in some browsers.
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="0.00"
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            aria-describedby="trade-help"
+            disabled={graduated}
+          />
+          <span className={styles.inputSuffix}>{inputSymbol}</span>
+        </span>
+
+        {/* Only shown once the value is invalid AND non-empty: warning at someone
+            mid-way through typing is noise (§42). */}
+        {input.trim() !== "" && amount === null && (
+          <span className={styles.fieldError} id="trade-help">
+            Enter an amount with at most {inputDecimals} decimal places.
+          </span>
+        )}
+      </label>
+
+      <fieldset className={styles.slippage}>
+        <legend className={styles.fieldLabel}>Max slippage</legend>
+        <div className={styles.slippageOptions}>
+          {SLIPPAGE_PRESETS.map((preset) => (
+            <button
+              key={String(preset)}
+              type="button"
+              className={slippageBps === preset ? styles.slippageActive : styles.slippageOption}
+              aria-pressed={slippageBps === preset}
+              onClick={() => setSlippageBps(preset)}
+            >
+              {formatFixed(preset, 2, { places: 2, pad: true })}%
+            </button>
+          ))}
+        </div>
+      </fieldset>
+
+      <FreshnessNotice envelope={freshness} />
+
+      {/* --- Review (§694) ------------------------------------------------ */}
+      <div className={styles.review} aria-live="polite" aria-busy={pending}>
+        {graduated ? (
+          <p className={styles.notice}>
+            This market has graduated. Trading now happens in the permanently locked
+            {" "}
+            {quoteSymbol} pool rather than on the curve.
+          </p>
+        ) : error !== null ? (
+          <p className={styles.error}>{error}</p>
+        ) : intent === null ? (
+          <p className={styles.placeholder}>
+            Enter an amount to see the full breakdown before you sign.
+          </p>
+        ) : (
+          <IntentReview intent={intent} pending={pending} />
+        )}
+      </div>
+
+      <button type="button" className={styles.submit} disabled title="Wallet signing is not enabled in this build">
+        {graduated ? "Trade on the pool" : `${side === "BUY" ? "Buy" : "Sell"} ${symbol}`}
+      </button>
+
+      <p className={styles.submitNote}>
+        Wallet signing is not enabled in this build. The review above is the exact
+        transaction that would be signed.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Render the intent's own review rows.
+ *
+ * Rows are rendered in the order the builder produced them, with its own labels
+ * and its own values. Nothing is reformatted: re-deriving a display string from
+ * a raw field would reintroduce exactly the divergence §694 exists to prevent.
+ */
+function IntentReview({ intent, pending }: { intent: WireIntent; pending: boolean }): JSX.Element {
+  const review = intent.review;
+
+  return (
+    <div className={pending ? styles.reviewStale : styles.reviewFresh}>
+      <p className={styles.summary}>{review.summary}</p>
+
+      <dl className={styles.rows}>
+        {review.rows.map((row, index) => (
+          <div
+            key={`${row.label}-${index}`}
+            className={row.primary === true ? styles.rowPrimary : styles.row}
+            data-warning={row.warning === true ? "true" : undefined}
+          >
+            <dt>{row.label}</dt>
+            <dd className="num">{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      {/*
+        §411 and V-19. A crossing order executes on the curve and then on
+        HyperSwap, and until the router can quote the second leg the estimate
+        covers only part of the route and the slippage bound protects only part
+        of it. Presenting either as a whole figure would be a lie of omission on
+        the one screen where it matters most.
+      */}
+      {review.estimateIsPartial === true && (
+        <p className={styles.partial}>
+          This order finishes the curve and continues into the pool. The estimate above
+          covers the curve portion only.
+        </p>
+      )}
+
+      {review.boundCoversPartialRoute === true && (
+        <p className={styles.warning}>
+          Your slippage limit applies to the curve portion of this order. The portion that
+          executes in the pool is not covered by it.
+        </p>
+      )}
+
+      {/* The signed bytes, available rather than hidden. A user who wants to
+          verify what they are about to sign should not have to open a console. */}
+      <details className={styles.calldata}>
+        <summary>Transaction detail</summary>
+        <dl className={styles.rows}>
+          <div className={styles.row}>
+            <dt>To</dt>
+            <dd className="mono">{intent.to}</dd>
+          </div>
+          <div className={styles.row}>
+            <dt>Value</dt>
+            <dd className="mono">{intent.value}</dd>
+          </div>
+          {intent.deadline !== undefined && (
+            <div className={styles.row}>
+              <dt>Deadline</dt>
+              <dd className="mono">{intent.deadline}</dd>
+            </div>
+          )}
+        </dl>
+        <pre className={styles.data}>{intent.data}</pre>
+      </details>
+    </div>
+  );
+}

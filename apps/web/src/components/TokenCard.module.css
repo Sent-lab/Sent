@@ -1,0 +1,141 @@
+/* §214: fast and scannable. Density with disciplined spacing, not decoration. */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  /* Only transform and border move on hover. Animating a box-shadow's spread or
+     any layout property in a grid of these is what makes an explore page feel
+     slow on a mid-range phone. */
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+  will-change: transform;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+
+.card:active {
+  transform: translateY(0);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.monogram {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--surface-active), var(--surface));
+  border: 1px solid var(--border);
+  color: var(--volt);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.symbol {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+}
+
+/* A market can name itself anything, including something long enough to break
+   the grid. One line, ellipsised, with the full value in a title attribute. */
+.name {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: var(--leading-tight);
+}
+
+.pair {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 2px var(--s-2);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--s-3);
+  align-items: end;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.metricLabel {
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.metricValue {
+  font-size: var(--text-base);
+  font-weight: 600;
+  /* A price is long; the card must not widen when one is. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metrics .metric:last-child .metricValue {
+  text-align: right;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--border);
+}
+
+.creator {
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A graduated market is settled rather than inert: it keeps its border but stops
+   competing with the markets still moving. */
+.card[data-status="GRADUATED"] .monogram {
+  color: var(--up);
+}

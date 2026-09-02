@@ -1,0 +1,209 @@
+/*
+ * Homepage — Experience mode (§39.1).
+ *
+ * Cinematic is allowed here in a way it is not in the terminal. What is NOT
+ * allowed, per §213: an intro splash that must finish before interaction. The
+ * hero is styled, not staged — nothing below waits on it.
+ */
+
+.hero {
+  position: relative;
+  padding-block: var(--s-24) var(--s-16);
+  overflow: hidden;
+  /* Contains the glow's paint so it cannot force a scrollbar (§80). */
+  contain: paint;
+}
+
+/*
+ * Ambient light. Pure paint: no layout, no transform on scroll, no listener.
+ * A scroll-driven parallax here would cost a frame on every scroll of the whole
+ * page for an effect visible only at the top.
+ */
+.heroGlow {
+  position: absolute;
+  top: -30%;
+  left: 50%;
+  width: min(1100px, 140vw);
+  height: 700px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--volt) 14%, transparent) 0%,
+    color-mix(in srgb, var(--volt) 5%, transparent) 35%,
+    transparent 70%
+  );
+  filter: blur(40px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .heroGlow { opacity: 0.5; }
+}
+
+.heroInner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-6);
+}
+
+.title {
+  font-size: var(--text-hero);
+  font-weight: 300;
+  line-height: 0.95;
+  letter-spacing: -0.04em;
+  max-width: 14ch;
+}
+
+.titleAccent {
+  color: var(--volt);
+  font-weight: 600;
+}
+
+.lede {
+  max-width: 62ch;
+  font-size: var(--text-lg);
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.heroActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  margin-top: var(--s-2);
+}
+
+.primaryCta,
+.secondaryCta {
+  display: inline-flex;
+  align-items: center;
+  /* 48px: a primary action must clear the touch minimum on every device (§227). */
+  min-height: 48px;
+  padding-inline: var(--s-6);
+  border-radius: var(--radius);
+  font-weight: 600;
+  font-size: var(--text-base);
+  transition: filter var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+
+.primaryCta {
+  background: var(--volt);
+  color: #06070a;
+  box-shadow: var(--glow);
+}
+
+.primaryCta:hover { filter: brightness(1.08); }
+
+.secondaryCta {
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}
+
+.secondaryCta:hover { background: var(--surface); }
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--s-6);
+  width: 100%;
+  margin-top: var(--s-8);
+  padding-top: var(--s-8);
+  border-top: 1px solid var(--border);
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.factTerm {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.factValue {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--volt);
+}
+
+.factDetail {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.rail {
+  padding-block: var(--s-12);
+  border-top: 1px solid var(--border);
+}
+
+.railHead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-4);
+  margin-bottom: var(--s-6);
+  flex-wrap: wrap;
+}
+
+.railTitle {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.railDescription {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  margin-top: var(--s-1);
+}
+
+.railMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+}
+
+.railLink {
+  font-size: var(--text-sm);
+  color: var(--volt);
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.railLink:hover { color: var(--volt-glow); }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--s-4);
+}
+
+/*
+ * Empty, error and reconnecting states share one treatment. §42 requires the
+ * copy to be contextual and recovery-oriented; the container just has to not
+ * look like a bug.
+ */
+.state {
+  padding: var(--s-8);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .hero { padding-block: var(--s-12) var(--s-10); }
+  .lede { font-size: var(--text-base); }
+  .grid { grid-template-columns: 1fr; }
+  .heroActions { width: 100%; }
+  .primaryCta, .secondaryCta { flex: 1; justify-content: center; }
+}

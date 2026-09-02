@@ -1,0 +1,152 @@
+/* §214: fast and scannable. The filters must not push the grid off the screen. */
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding-block: var(--s-10) var(--s-6);
+}
+
+.title {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.subtitle {
+  margin-top: var(--s-1);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-4);
+  padding-bottom: var(--s-6);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--s-6);
+}
+
+.group {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.chip,
+.chipActive {
+  display: inline-flex;
+  align-items: center;
+  /* 40px, and a full touch target once padding is counted (§227). */
+  min-height: 40px;
+  padding-inline: var(--s-4);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.chip {
+  color: var(--text-dim);
+}
+
+.chip:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+/*
+ * The selected chip is marked by fill AND by aria-current in the markup, never
+ * by colour alone (§84).
+ */
+.chipActive {
+  color: #06070a;
+  background: var(--volt);
+  border-color: var(--volt);
+  font-weight: 600;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--s-4);
+  padding-bottom: var(--s-16);
+}
+
+.state {
+  padding: var(--s-12);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+/* An empty state is a designed state (§40), not a blank area with a sentence. */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-16) var(--s-6);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.emptyTitle {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.emptyBody {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.emptyCta {
+  margin-top: var(--s-2);
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-inline: var(--s-5);
+  border-radius: var(--radius);
+  background: var(--volt);
+  color: #06070a;
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 640px) {
+  .head {
+    flex-direction: column;
+    gap: var(--s-3);
+    padding-block: var(--s-8) var(--s-4);
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* The filter rows scroll sideways rather than wrapping to three lines and
+     pushing the first card below the fold. */
+  .filters {
+    flex-direction: column;
+    gap: var(--s-3);
+  }
+
+  .group {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .group::-webkit-scrollbar {
+    display: none;
+  }
+}

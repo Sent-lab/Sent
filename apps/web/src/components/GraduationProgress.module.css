@@ -1,0 +1,105 @@
+/*
+ * §199. Emphasis near the endpoint is a steady glow, never a flash: a bar that
+ * blinks faster as it fills turns a market state into a slot machine.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  width: 100%;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.label {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
+
+.percent {
+  font-weight: 600;
+  color: var(--text);
+  /* Reserved width: "9.99%" and "100.00%" must not resize the header (§80). */
+  min-width: 4.5ch;
+  text-align: right;
+}
+
+.track {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: linear-gradient(90deg, var(--volt-deep), var(--volt));
+  /* Width only. Animating anything that triggers layout would defeat §80. */
+  transition: width var(--dur) var(--ease-out);
+}
+
+/* Milestone ticks sit ON the track, so passing one changes nothing about the
+   geometry — only the tick's own colour. */
+.milestone {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: var(--bg);
+  opacity: 0.8;
+}
+
+.passed {
+  background: color-mix(in srgb, var(--volt-glow) 60%, transparent);
+}
+
+.near .fill {
+  box-shadow: var(--glow-strong);
+}
+
+.context {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  line-height: var(--leading-normal);
+}
+
+.sm .track { height: 4px; }
+.sm .label,
+.sm .percent { font-size: var(--text-2xs); }
+
+.lg .track { height: 10px; }
+.lg .percent { font-size: var(--text-lg); }
+
+/* Graduated: the bar is full and the brand colour gives way to a settled state.
+   Keeping it lime would make a finished market compete for attention with the
+   ones still moving. */
+.root[data-status="GRADUATED"] .fill {
+  background: linear-gradient(90deg, var(--up), color-mix(in srgb, var(--up) 70%, var(--volt)));
+  box-shadow: none;
+}
+
+.root[data-status="GRADUATED"] .label {
+  color: var(--up);
+}
+
+/* GRADUATING exists only inside a single transaction, so this is a state a user
+   sees for at most one block. It is styled anyway: rendering it as PRE_GRAD
+   would misreport the one moment it appears. */
+.root[data-status="GRADUATING"] .fill {
+  background: linear-gradient(90deg, var(--volt), var(--volt-glow));
+  box-shadow: var(--glow-strong);
+}
+
+.root[data-status="GRADUATING"] .label {
+  color: var(--volt);
+}

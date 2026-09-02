@@ -1,0 +1,338 @@
+/*
+ * SENT — design system (§40).
+ *
+ * One coherent system, two modes (§39). Nothing here is per-screen: if a surface
+ * needs a value that is not a token, the token is missing, not the surface
+ * special. §40 is explicit that no screen may feel like a different team built
+ * it, and ad-hoc values are how that happens.
+ *
+ * THE COLOUR SYSTEM IS LOCKED
+ * ---------------------------
+ * Taken from the brand board, which marks it LOCKED. These hexes are not design
+ * opinions and are not to be nudged:
+ *
+ *   VOLT LIME   #C6F600   primary
+ *   DEEP LIME   #7BA000   secondary
+ *   LIME GLOW   #E8FF78   highlight
+ *
+ * The neutral ramp is likewise fixed: #050607 → #0D0F12 → #12161A → #1F262C,
+ * with #F5F7FA and #9AA4B2 for text.
+ *
+ * TWO MODES, ONE SYSTEM (§39)
+ * ---------------------------
+ * Experience mode (homepage, explore) may be cinematic. Trading mode (terminal,
+ * buy/sell, review) is calm, dense and fast — §215 forbids cinematic scroll
+ * effects inside the active trading core. The difference is expressed through
+ * `[data-mode]` on a container, never through a second set of tokens.
+ */
+
+/* ------------------------------------------------------------------------- */
+/* Tokens                                                                     */
+/* ------------------------------------------------------------------------- */
+
+:root {
+  /* Brand — LOCKED */
+  --volt: #c6f600;
+  --volt-deep: #7ba000;
+  --volt-glow: #e8ff78;
+
+  /* Neutrals */
+  --bg: #050607;
+  --bg-raised: #0d0f12;
+  --surface: #12161a;
+  --border: #1f262c;
+  --text: #f5f7fa;
+  --text-dim: #9aa4b2;
+
+  /* Derived surfaces. Stepped rather than opacity-stacked, so a panel inside a
+     panel does not accumulate haze until it separates from the page. */
+  --surface-hover: #171c21;
+  --surface-active: #1c2229;
+  --border-strong: #2b343d;
+
+  /* State. Green is deliberately NOT the brand lime: a buy button and a "price
+     up" indicator that share a colour make the interface ambiguous at a glance. */
+  --up: #34d399;
+  --down: #fb7185;
+  --warn: #fbbf24;
+  --info: #60a5fa;
+
+  /* Typography — Sora per the brand board, with a real fallback stack. */
+  --font-sans: "Sora", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Tabular figures for every number that sits in a column or updates in place
+     (§41). Proportional digits make a ticking price jitter horizontally. */
+  --font-mono: "Sora", ui-monospace, "SF Mono", "Cascadia Mono", monospace;
+
+  --text-2xs: 0.6875rem; /* 11px — badges, labels */
+  --text-xs: 0.75rem;    /* 12px — secondary metadata */
+  --text-sm: 0.8125rem;  /* 13px — dense table body */
+  --text-base: 0.9375rem;/* 15px — body. §41: body text must not be too small. */
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2rem;
+  --text-3xl: 3rem;
+  --text-hero: clamp(2.5rem, 7vw, 5.5rem);
+
+  --leading-tight: 1.1;
+  --leading-normal: 1.5;
+
+  /* Spacing — a 4px grid. Every margin and pad is a multiple; §40 calls for a
+     spacing grid and half-steps are how one stops being a grid. */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.25rem;
+  --s-6: 1.5rem;
+  --s-8: 2rem;
+  --s-10: 2.5rem;
+  --s-12: 3rem;
+  --s-16: 4rem;
+  --s-24: 6rem;
+
+  --container: 1280px;
+  --container-wide: 1600px;
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  /* Elevation. Shadows are near-black rather than tinted: on a #050607 ground a
+     tinted shadow reads as a colour cast. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6);
+
+  /* Glow is a brand device, used sparingly. §38: premium means intentional, not
+     busy — glow on every surface is the "generic crypto dashboard" §38 forbids. */
+  --glow: 0 0 24px rgba(198, 246, 0, 0.25);
+  --glow-strong: 0 0 40px rgba(198, 246, 0, 0.4);
+
+  /* Motion (§43). Fast enough to feel responsive, slow enough to read. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-instant: 80ms;
+  --dur-fast: 140ms;
+  --dur: 220ms;
+  --dur-slow: 400ms;
+
+  --z-sticky: 10;
+  --z-header: 20;
+  --z-drawer: 30;
+  --z-modal: 40;
+  --z-toast: 50;
+}
+
+/*
+ * Trading mode (§39.2).
+ *
+ * Tighter, faster, quieter. Not a different palette — the same tokens with
+ * ambient effects turned down, because §215 requires the terminal to be calmer
+ * than the homepage without looking like a different product.
+ */
+[data-mode="trading"] {
+  --glow: none;
+  --glow-strong: 0 0 20px rgba(198, 246, 0, 0.2);
+  --dur: 140ms;
+  --dur-slow: 220ms;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Reset                                                                      */
+/* ------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  /* Only ever dark. A light theme is not in the brand system, and a half-built
+     one is worse than none. */
+  color-scheme: dark;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+
+  /* §80: a scrollbar appearing when content grows shifts the whole page
+     sideways. Reserving the gutter costs nothing and removes the class. */
+  scrollbar-gutter: stable;
+}
+
+img,
+svg,
+video,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/*
+ * Focus (§84).
+ *
+ * Visible, always, and on the brand colour so it reads as intentional rather
+ * than as the browser default leaking through. Accessibility is not allowed to
+ * cost the visual language, and removing the ring is not an option.
+ */
+:focus-visible {
+  outline: 2px solid var(--volt);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/*
+ * §43 and §84: motion is a design element, not a requirement to endure.
+ * Everything animated must survive this being on.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Primitives                                                                 */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Numeric text (§41).
+ *
+ * Tabular figures and a slight negative tracking. Every price, size, percentage
+ * and countdown uses this; without it a value ticking from 1 to 7 changes width
+ * and the row it lives in reflows.
+ */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.01em;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.dim {
+  color: var(--text-dim);
+}
+
+.up {
+  color: var(--up);
+}
+
+.down {
+  color: var(--down);
+}
+
+.container {
+  width: 100%;
+  max-width: var(--container);
+  margin-inline: auto;
+  padding-inline: var(--s-6);
+}
+
+.container-wide {
+  width: 100%;
+  max-width: var(--container-wide);
+  margin-inline: auto;
+  padding-inline: var(--s-6);
+}
+
+@media (max-width: 640px) {
+  .container,
+  .container-wide {
+    padding-inline: var(--s-4);
+  }
+}
+
+/*
+ * Skeleton (§40).
+ *
+ * Occupies the exact space the real content will, which is the only reason a
+ * skeleton is better than a spinner: a spinner that becomes content of a
+ * different size shifts the page, which §80 forbids.
+ */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface) 25%,
+    var(--surface-hover) 50%,
+    var(--surface) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-sweep 1.4s var(--ease-in-out) infinite;
+  border-radius: var(--radius-sm);
+}
+
+@keyframes skeleton-sweep {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/*
+ * Screen-reader-only text (§84).
+ *
+ * For labels an icon-only control needs. `display: none` would remove it from
+ * the accessibility tree, which defeats the purpose.
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Safe areas (§227): a sticky CTA must not sit under a home indicator. */
+.safe-bottom {
+  padding-bottom: max(var(--s-4), env(safe-area-inset-bottom));
+}
