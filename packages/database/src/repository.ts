@@ -14,7 +14,7 @@
  * event, and every table can be dropped and rebuilt by replaying logs.
  */
 
-import { Database, Transaction, big, bigOrNull, addr, toBytes } from "./client.ts";
+import { Database, Transaction, big, bigOrNull, addr, hexBytes, toBytes } from "./client.ts";
 
 export type Db = Database | Transaction;
 
@@ -77,7 +77,7 @@ export async function getCursor(
 
   return {
     lastBlock: big(row.last_processed_block, "last_processed_block"),
-    lastHash: row.last_processed_hash === null ? null : addr(row.last_processed_hash, "last_hash"),
+    lastHash: row.last_processed_hash === null ? null : hexBytes(row.last_processed_hash, "last_hash"),
   };
 }
 
@@ -342,7 +342,7 @@ export async function listTrades(db: Db, market: string, limit: number): Promise
   );
 
   return rows.map((r) => ({
-    txHash: addr(r.tx_hash, "tx_hash"),
+    txHash: hexBytes(r.tx_hash, "tx_hash"),
     blockNumber: big(r.block_number, "block_number"),
     market: addr(r.market, "market"),
     trader: addr(r.trader, "trader"),
@@ -509,7 +509,7 @@ export async function getActiveCommitment(
   if (row === null) return null;
 
   return {
-    merkleRoot: addr(row.merkle_root, "merkle_root"),
+    merkleRoot: hexBytes(row.merkle_root, "merkle_root"),
     totalCumulative: big(row.total_cumulative, "total_cumulative"),
     epochSequence: big(row.epoch_sequence, "epoch_sequence"),
   };
@@ -525,8 +525,298 @@ export async function getClaimedTotal(db: Db, market: string, account: string): 
 }
 
 // ---------------------------------------------------------------------------
+// Finalizer output
+//
+// Distinct from the commitment tables above on purpose: those project what the
+// chain accepted, these hold what this node computed and nobody has signed.
+// ---------------------------------------------------------------------------
+
+export interface DatasetRecord {
+  readonly market: string;
+  readonly epochSequence: bigint;
+  readonly merkleRoot: string;
+  readonly datasetHash: string;
+  readonly totalCumulative: bigint;
+  readonly carryForward: bigint;
+  readonly totalFunded: bigint;
+  readonly computedThroughBlock: bigint;
+  readonly computedAt: number;
+  readonly entitlements: readonly {
+    account: string;
+    cumulative: bigint;
+    proof: readonly string[];
+  }[];
+  readonly allocations: readonly {
+    epochId: bigint;
+    pool: bigint;
+    allocated: bigint;
+    carryForward: bigint;
+    eligibleHolders: number;
+    totalWeight: bigint;
+  }[];
+}
+
+/**
+ * Persist a computed dataset with its entitlements and per-epoch breakdown.
+ *
+ * Must be called inside a transaction. A dataset whose header landed without its
+ * entitlements would make the claim endpoint report zero for every holder while
+ * a root sits there looking authoritative.
+ */
+export async function recordDataset(db: Db, d: DatasetRecord): Promise<void> {
+  await db.query(
+    `INSERT INTO stockback_datasets (
+       market, epoch_sequence, merkle_root, dataset_hash, total_cumulative,
+       carry_forward, total_funded, holder_count, computed_through_block, computed_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     ON CONFLICT (market, epoch_sequence) DO NOTHING`,
+    [
+      toBytes(d.market),
+      d.epochSequence.toString(),
+      toBytes(d.merkleRoot),
+      toBytes(d.datasetHash),
+      d.totalCumulative.toString(),
+      d.carryForward.toString(),
+      d.totalFunded.toString(),
+      d.entitlements.length,
+      d.computedThroughBlock.toString(),
+      d.computedAt,
+    ],
+  );
+
+  // Chunked rather than one statement per holder: a market with ten thousand
+  // holders would otherwise be ten thousand round trips inside one transaction,
+  // which is how a finalizer run turns into a lock held for minutes.
+  const CHUNK = 500;
+
+  for (let i = 0; i < d.entitlements.length; i += CHUNK) {
+    const chunk = d.entitlements.slice(i, i + CHUNK);
+    const values: unknown[] = [];
+    const rows: string[] = [];
+
+    for (const e of chunk) {
+      const base = values.length;
+      rows.push(`($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5})`);
+      values.push(
+        toBytes(d.market),
+        d.epochSequence.toString(),
+        toBytes(e.account),
+        e.cumulative.toString(),
+        e.proof.map((node) => toBytes(node)),
+      );
+    }
+
+    await db.query(
+      `INSERT INTO stockback_entitlements (market, epoch_sequence, account, cumulative, proof)
+       VALUES ${rows.join(",")}
+       ON CONFLICT (market, epoch_sequence, account) DO NOTHING`,
+      values,
+    );
+  }
+
+  for (const a of d.allocations) {
+    await db.query(
+      `INSERT INTO stockback_epoch_allocations (
+         market, epoch_sequence, epoch_id, pool, allocated, carry_forward,
+         eligible_holders, total_weight
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (market, epoch_sequence, epoch_id) DO NOTHING`,
+      [
+        toBytes(d.market),
+        d.epochSequence.toString(),
+        a.epochId.toString(),
+        a.pool.toString(),
+        a.allocated.toString(),
+        a.carryForward.toString(),
+        a.eligibleHolders,
+        a.totalWeight.toString(),
+      ],
+    );
+  }
+}
+
+/** Addresses registered as ineligible for Stockback (§323, §324). */
+export async function getExclusions(db: Db, market: string): Promise<`0x${string}`[]> {
+  const rows = await db.query<Record<string, unknown>>(
+    "SELECT account FROM stockback_exclusions WHERE market = $1 ORDER BY account",
+    [toBytes(market)],
+  );
+  return rows.map((r) => addr(r.account, "excluded_account"));
+}
+
+/**
+ * Total Stockback funding received up to a cut-off.
+ *
+ * Bounded by timestamp, not "latest", because the conservation ceiling must
+ * match the window being distributed. Using the current total against an older
+ * window would let a commitment spend funding that arrived after the epochs it
+ * claims to cover.
+ */
+export async function getTotalFundedThrough(
+  db: Db,
+  market: string,
+  toTimestamp: number,
+): Promise<bigint> {
+  const row = await db.queryOne<{ total: string | null }>(
+    `SELECT COALESCE(SUM(amount), 0)::TEXT AS total
+     FROM stockback_funding WHERE market = $1 AND timestamp < $2`,
+    [toBytes(market), toTimestamp],
+  );
+  return row === null || row.total === null ? 0n : big(row.total, "total_funded");
+}
+
+/** Stockback contributions bucketed by 24h epoch (§329), up to a cut-off. */
+export async function listFundingByEpoch(
+  db: Db,
+  market: string,
+  toTimestamp: number,
+  epochSeconds: bigint,
+): Promise<Map<bigint, bigint>> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT timestamp, amount FROM stockback_funding
+     WHERE market = $1 AND timestamp < $2
+     ORDER BY block_number, log_index`,
+    [toBytes(market), toTimestamp],
+  );
+
+  const byEpoch = new Map<bigint, bigint>();
+
+  for (const row of rows) {
+    const epoch = big(row.timestamp, "timestamp") / epochSeconds;
+    byEpoch.set(epoch, (byEpoch.get(epoch) ?? 0n) + big(row.amount, "amount"));
+  }
+
+  return byEpoch;
+}
+
+/**
+ * Markets that have ever received Stockback funding.
+ *
+ * A market with no funding has nothing to distribute, so finalizing it would
+ * only produce the "no holder earned anything" refusal on every run.
+ */
+export async function listFundedMarkets(db: Db): Promise<
+  { market: `0x${string}`; token: `0x${string}`; quoteAsset: `0x${string}` }[]
+> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT m.market, m.token, m.quote_asset
+     FROM markets m
+     WHERE EXISTS (SELECT 1 FROM stockback_funding f WHERE f.market = m.market)
+     ORDER BY m.market`,
+  );
+
+  return rows.map((r) => ({
+    market: addr(r.market, "market"),
+    token: addr(r.token, "token"),
+    quoteAsset: addr(r.quote_asset, "quote_asset"),
+  }));
+}
+
+/** Highest epoch sequence this node has computed for a market, or null. */
+export async function getLatestDataset(
+  db: Db,
+  market: string,
+): Promise<{
+  epochSequence: bigint;
+  merkleRoot: `0x${string}`;
+  datasetHash: `0x${string}`;
+  totalCumulative: bigint;
+  carryForward: bigint;
+} | null> {
+  const row = await db.queryOne<Record<string, unknown>>(
+    `SELECT epoch_sequence, merkle_root, dataset_hash, total_cumulative, carry_forward
+     FROM stockback_datasets WHERE market = $1
+     ORDER BY epoch_sequence DESC LIMIT 1`,
+    [toBytes(market)],
+  );
+  if (row === null) return null;
+
+  return {
+    epochSequence: big(row.epoch_sequence, "epoch_sequence"),
+    merkleRoot: hexBytes(row.merkle_root, "merkle_root"),
+    datasetHash: hexBytes(row.dataset_hash, "dataset_hash"),
+    totalCumulative: big(row.total_cumulative, "total_cumulative"),
+    carryForward: big(row.carry_forward, "carry_forward"),
+  };
+}
+
+/**
+ * A holder's entitlement under a specific attested root.
+ *
+ * Keyed on the root rather than on "the newest dataset": a proof is only valid
+ * against the root it was built for, and the root the vault currently accepts is
+ * whatever the attestors last activated — which may lag what this node computed.
+ * Serving the newest proof against an older active root would hand the user
+ * calldata that reverts.
+ */
+export async function getEntitlementForRoot(
+  db: Db,
+  market: string,
+  account: string,
+  merkleRoot: string,
+): Promise<{ cumulative: bigint; proof: `0x${string}`[]; epochSequence: bigint } | null> {
+  const row = await db.queryOne<Record<string, unknown>>(
+    `SELECT e.cumulative, e.proof, e.epoch_sequence
+     FROM stockback_entitlements e
+     JOIN stockback_datasets d
+       ON d.market = e.market AND d.epoch_sequence = e.epoch_sequence
+     WHERE e.market = $1 AND e.account = $2 AND d.merkle_root = $3`,
+    [toBytes(market), toBytes(account), toBytes(merkleRoot)],
+  );
+  if (row === null) return null;
+
+  const proof = row.proof;
+  if (!Array.isArray(proof)) {
+    throw new TypeError("entitlement proof: expected an array of BYTEA nodes");
+  }
+
+  return {
+    cumulative: big(row.cumulative, "cumulative"),
+    proof: proof.map((node, i) => hexBytes(node, `proof[${i}]`)),
+    epochSequence: big(row.epoch_sequence, "epoch_sequence"),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------------
+
+/**
+ * Mark every block at or below `throughBlock` as settled (§335).
+ *
+ * Set-once and never cleared. That is safe only because the caller passes a
+ * height the reorg tracker has already put `confirmations` below the head, and
+ * rollback deletes blocks ABOVE the fork — so a finalized block is by
+ * construction one a rollback cannot reach. If that ever stops being true, this
+ * flag becomes a lie that Stockback finalization acts on.
+ */
+export async function markFinalized(db: Db, throughBlock: bigint): Promise<number> {
+  if (throughBlock <= 0n) return 0;
+
+  const rows = await db.query<{ number: string }>(
+    `UPDATE blocks SET finalized = TRUE
+     WHERE number <= $1 AND finalized = FALSE
+     RETURNING number`,
+    [throughBlock.toString()],
+  );
+  return rows.length;
+}
+
+/** Highest settled block, and its chain timestamp. */
+export async function finalizedHead(
+  db: Db,
+): Promise<{ number: bigint; timestamp: number } | null> {
+  const row = await db.queryOne<Record<string, unknown>>(
+    `SELECT number, timestamp FROM blocks
+     WHERE finalized = TRUE ORDER BY number DESC LIMIT 1`,
+  );
+  if (row === null) return null;
+
+  return {
+    number: big(row.number, "finalized_number"),
+    timestamp: Number(big(row.timestamp, "finalized_timestamp")),
+  };
+}
 
 export async function headBlockIndexed(db: Db): Promise<bigint> {
   const row = await db.queryOne<{ number: string | null }>(
