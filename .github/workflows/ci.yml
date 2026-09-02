@@ -22,6 +22,10 @@ jobs:
       # A failure here is a BLOCKED escalation, never a tuning exercise.
       - name: Reproduce section 8 reference outcomes
         run: node --experimental-strip-types packages/economics/sim/reference.ts
+      - name: Graduation V3 geometry proof
+        run: node --experimental-strip-types packages/economics/sim/graduation-v3.ts
+      - name: Stockback TWAB and conservation
+        run: node --experimental-strip-types packages/stockback/sim/stockback.ts
 
   workspace:
     name: Typecheck / lint / build

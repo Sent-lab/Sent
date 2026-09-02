@@ -14,7 +14,9 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "sim": "node --experimental-strip-types packages/economics/sim/reference.ts",
-    "sim:invariants": "node --experimental-strip-types packages/economics/sim/invariants.ts"
+    "sim:v3": "node --experimental-strip-types packages/economics/sim/graduation-v3.ts",
+    "sim:stockback": "node --experimental-strip-types packages/stockback/sim/stockback.ts",
+    "sim:all": "pnpm sim && pnpm sim:v3 && pnpm sim:stockback"
   },
   "devDependencies": {
     "turbo": "^2.3.3",
