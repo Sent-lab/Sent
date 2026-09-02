@@ -380,6 +380,52 @@ contract HolderRewardVaultTest is Test {
         vault.registerMarket(makeAddr("rogueMarket"), address(asset));
     }
 
+    /// @dev A pending commitment sits inside its activation delay. Overwriting it
+    ///      with an OLDER (but still newer-than-active) commitment would both roll
+    ///      entitlements backwards and restart the delay - a downgrade and a
+    ///      griefing vector in one.
+    function test_pendingCommitmentCannotBeDowngraded() public {
+        _fund(200e18);
+
+        bytes32 rootHigh = _root(_leaf(alice, 90e18), _leaf(bob, 70e18));
+        HolderRewardVault.Commitment memory high = _commitment(9, 160e18, rootHigh);
+        vault.submitCommitment(high, _sign(high));
+
+        (, , uint256 pendingTotal, uint256 pendingSeq,) = vault.pending(market);
+        assertEq(pendingSeq, 9, "the newer commitment is pending");
+        assertEq(pendingTotal, 160e18);
+
+        // An older commitment, still ahead of `active` (which is empty), should not
+        // be able to replace what is already pending.
+        bytes32 rootLow = _root(_leaf(alice, 10e18), _leaf(bob, 10e18));
+        HolderRewardVault.Commitment memory low = _commitment(8, 20e18, rootLow);
+        bytes[] memory lowSigs = _sign(low);
+
+        vm.expectRevert(abi.encodeWithSelector(HolderRewardVault.StaleCommitment.selector, 8, 9));
+        vault.submitCommitment(low, lowSigs);
+
+        (, , uint256 stillTotal, uint256 stillSeq,) = vault.pending(market);
+        assertEq(stillSeq, 9, "pending must not be downgraded");
+        assertEq(stillTotal, 160e18, "entitlements must not roll backwards");
+    }
+
+    /// @dev A genuinely newer commitment may still supersede a pending one.
+    function test_pendingCanBeSupersededByANewerCommitment() public {
+        _fund(200e18);
+
+        HolderRewardVault.Commitment memory first =
+            _commitment(3, 100e18, _root(_leaf(alice, 60e18), _leaf(bob, 40e18)));
+        vault.submitCommitment(first, _sign(first));
+
+        HolderRewardVault.Commitment memory second =
+            _commitment(4, 150e18, _root(_leaf(alice, 90e18), _leaf(bob, 60e18)));
+        vault.submitCommitment(second, _sign(second));
+
+        (, , uint256 total, uint256 seq,) = vault.pending(market);
+        assertEq(seq, 4, "a newer commitment supersedes the pending one");
+        assertEq(total, 150e18);
+    }
+
     function test_onlyMarketCanFund() public {
         vm.expectRevert(HolderRewardVault.NotMarket.selector);
         vault.fund(1e18);

@@ -193,16 +193,33 @@ contract HolderRewardVault is ReentrancyGuard {
         if (!isMarket[commitment.market]) revert NotMarket();
         if (commitment.rewardAsset != rewardAsset[commitment.market]) revert WrongRewardAsset();
 
+        // Monotonicity must be measured against the FURTHEST-ADVANCED commitment
+        // the vault knows about, which is the pending one whenever it exists.
+        //
+        // Checking only against `active` left a downgrade open: an older but still
+        // valid commitment could overwrite a pending newer one, rolling
+        // entitlements backwards AND restarting the activation delay. Both
+        // attestor-signed, so signature checks alone would never catch it.
         Distribution storage current = active[commitment.market];
+        Distribution storage inFlight = pending[commitment.market];
 
-        // Monotonic: a root may only ever move the cumulative total forward, and
-        // only for a newer epoch sequence (§365). This blocks a replay of an older
-        // valid commitment from rolling entitlements backwards.
-        if (commitment.epochSequence <= current.epochSequence && current.merkleRoot != bytes32(0)) {
-            revert StaleCommitment(commitment.epochSequence, current.epochSequence);
+        uint256 highestSequence = current.epochSequence;
+        uint256 highestTotal = current.totalCumulative;
+        bool haveAny = current.merkleRoot != bytes32(0);
+
+        if (inFlight.merkleRoot != bytes32(0)) {
+            haveAny = true;
+            if (inFlight.epochSequence > highestSequence) highestSequence = inFlight.epochSequence;
+            if (inFlight.totalCumulative > highestTotal) highestTotal = inFlight.totalCumulative;
         }
-        if (commitment.totalCumulative < current.totalCumulative) {
-            revert StaleCommitment(commitment.totalCumulative, current.totalCumulative);
+
+        // A root may only ever move the cumulative total forward, and only for a
+        // strictly newer epoch sequence (§365).
+        if (haveAny && commitment.epochSequence <= highestSequence) {
+            revert StaleCommitment(commitment.epochSequence, highestSequence);
+        }
+        if (commitment.totalCumulative < highestTotal) {
+            revert StaleCommitment(commitment.totalCumulative, highestTotal);
         }
 
         // THE conservation check (§364). Rejected here, at the door, rather than
