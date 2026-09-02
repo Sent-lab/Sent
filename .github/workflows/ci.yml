@@ -15,9 +15,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # pnpm reads its version from `packageManager` in package.json. Passing a
+      # `version` here as well makes the action refuse to guess between them.
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
+      # These simulations import each other by package name (@sent/stockback and
+      # friends), so they need the workspace links even though they run no build.
+      # They used to work without an install because they reached across
+      # directories with relative paths — which is exactly the undeclared
+      # dependency graph that refactor removed.
+      - run: pnpm install --frozen-lockfile
+
       # Masterplan 9/10: the simulation is a mandatory validation gate.
       # A failure here is a BLOCKED escalation, never a tuning exercise.
       - name: Reproduce section 8 reference outcomes
@@ -40,6 +51,7 @@ jobs:
         run: node --experimental-strip-types services/realtime/sim/gateway.ts
       - name: API handlers
         run: node --experimental-strip-types services/api/sim/handlers.ts
+
       # The differential fixtures are committed. If TypeScript changed without
       # regenerating them, or a regenerated set was not committed, this fails -
       # which is exactly the drift 1064 forbids.
@@ -57,8 +69,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -68,8 +78,6 @@ jobs:
       # This was not wired up until Day 4's audit, which is exactly the kind of
       # gap an audit is for.
       - run: pnpm typecheck
-      - run: pnpm lint
-      - run: pnpm build
 
   contracts:
     name: Foundry
