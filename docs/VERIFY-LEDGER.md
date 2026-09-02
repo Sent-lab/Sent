@@ -395,3 +395,32 @@ to locate candidates and to understand mechanisms; none were treated as producti
 - [Hyperliquid integrates xStocks via Chainlink CCIP — Crypto Briefing](https://cryptobriefing.com/hyperliquid-xstocks-chainlink-ccip-integration/)
 - [Hyperliquid adds xStocks spot markets — Crypto Adventure](https://cryptoadventure.com/hyperliquid-adds-xstocks-spot-markets-for-nvidia-spy-qqq-and-chip-stocks/)
 - [Chainlink Hyperliquid Integration Guide](https://docs.chain.link/ccip/tools-resources/network-specific/hyperliquid-integration-guide)
+
+---
+
+## V-19 — Crossing-order slippage bound covers only the curve leg · **OPEN, surfaced**
+
+```text
+UNKNOWN:            how to bound the post-graduation leg of a crossing order
+WHY IT MATTERS:     §14 requires ONE user-wide minimum covering blended execution
+                    between the final curve segment and post-grad HyperSwap
+CURRENT STATE:      `minTokensOut` is derived from the curve leg alone, because
+                    quoting the HyperSwap leg needs the router (V-06, V-09)
+CONSEQUENCE:        the post-grad portion is effectively unprotected — it could
+                    return almost nothing and the trade would still clear, since
+                    the curve leg alone satisfies the bound
+HOW TO RESOLVE:     once the router exists, quote both legs and set the bound
+                    from the blended total
+BLOCKS:             §14 acceptance, §178.10 trader UX readiness
+OWNER:              Stream A / D
+STATUS:             OPEN — surfaced in the UI rather than hidden
+```
+
+**Interim handling.** The intent now carries `estimateIsPartial` and
+`boundCoversPartialRoute`, the review labels the figure "curve leg only", and a
+row states plainly that slippage protection does not cover the HyperSwap leg. A
+user is told what their protection does and does not cover.
+
+This is mitigation, not a fix. The bound is genuinely weaker than §14 requires
+until the router can quote both legs, and it must not ship to mainnet in this
+state without an explicit accepted-risk decision.

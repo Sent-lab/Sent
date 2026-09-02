@@ -377,6 +377,67 @@ console.log("\n--- 5c. Timestamps are real, never zero -------------------------
 
 
 // ---------------------------------------------------------------------------
+console.log("\n--- 5d. A crossing order never looks like a complete quote ---------------");
+
+{
+  // A crossing buy finishes the curve, graduates, then executes the remainder on
+  // HyperSwap. Only the curve leg is quotable, so presenting it as "you receive"
+  // would show a partial figure that reads as a total.
+  class CrossingPort extends FakePort {
+    override quoteBuy(_m: string, amount: bigint): QuoteResult | null {
+      return { tokensOut: amount * 10n ** 12n, crossesGraduation: true, priceImpactBps: 900n };
+    }
+  }
+
+  const port = new CrossingPort();
+  const result = handleQuote(port, {
+    token: TOKEN,
+    side: "BUY",
+    amount: 1_000_000n,
+    slippageBps: 100n,
+    deadline: 9_999_999_999n,
+    chainId: 999,
+  });
+
+  if (!result.ok) throw new Error("expected success");
+  const review = result.data.review;
+
+  check("a crossing order is flagged as such", review.crossesGraduation === true);
+  check("its estimate is declared partial", review.estimateIsPartial === true);
+
+  // §14 requires one user-wide bound over blended execution. Until the router can
+  // quote the HyperSwap leg (V-06, V-09) the bound covers the curve leg only, so
+  // the post-grad portion is effectively unprotected. Surfaced, not hidden.
+  check("its bound is declared to cover only part of the route", review.boundCoversPartialRoute === true);
+
+  const receiveRow = review.rows.find((r) => r.label.startsWith("You receive"));
+  check("the receive row says it is the curve leg only", receiveRow?.label.includes("curve leg") === true);
+  check("and is marked as a warning rather than a plain figure", receiveRow?.warning === true);
+
+  const protectionRow = review.rows.find((r) => r.label === "Slippage protection");
+  check("the weakened protection is stated explicitly", protectionRow !== undefined);
+
+  // A non-crossing order must NOT carry any of these caveats, or they become
+  // noise that users learn to ignore.
+  const plain = handleQuote(new FakePort(), {
+    token: TOKEN,
+    side: "BUY",
+    amount: 1_000_000n,
+    slippageBps: 100n,
+    deadline: 9_999_999_999n,
+    chainId: 999,
+  });
+  if (!plain.ok) throw new Error("expected success");
+
+  check("an ordinary order carries no partial-estimate flag", plain.data.review.estimateIsPartial === undefined);
+  check(
+    "an ordinary order shows a plain receive row",
+    plain.data.review.rows.find((r) => r.label === "You receive")?.warning !== true,
+  );
+}
+
+
+// ---------------------------------------------------------------------------
 console.log("\n--- 6. Refusals are explicit -------------------------------------------");
 
 {

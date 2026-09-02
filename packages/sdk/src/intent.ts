@@ -62,6 +62,26 @@ export interface IntentReview {
   readonly minimumReceived?: bigint;
   /** True when this order finishes the curve and spills into HyperSwap (§411). */
   readonly crossesGraduation?: boolean;
+  /**
+   * True when the expected output covers only PART of the route.
+   *
+   * A crossing order executes on the curve and then on HyperSwap, and the
+   * post-grad leg cannot be quoted without live venue state. Presenting the
+   * curve leg alone as "you receive" would understate the total and read as a
+   * complete figure — §411 requires a blended breakdown, so a UI must render
+   * this differently rather than showing a number that looks whole.
+   */
+  readonly estimateIsPartial?: boolean;
+  /**
+   * True when `minimumReceived` bounds only part of the route.
+   *
+   * §14 requires ONE user-wide minimum covering blended execution. Until the
+   * graduation router can quote the HyperSwap leg (V-06, V-09), the bound is
+   * derived from the curve leg alone, which means the post-grad portion is
+   * effectively unprotected: it could return almost nothing and the trade would
+   * still clear. That is a real weakness, and it is surfaced rather than hidden.
+   */
+  readonly boundCoversPartialRoute?: boolean;
 }
 
 export interface IntentRow {
@@ -186,11 +206,21 @@ export function buildBuyIntent(params: BuildBuyParams): TransactionIntent {
       value: `${formatUnits(grossQuoteIn, quoteDecimals)} ${quoteSymbol}`,
       primary: true,
     },
-    {
-      label: "You receive",
-      value: `${formatUnits(expectedTokensOut, 18)} ${tokenSymbol}`,
-      primary: true,
-    },
+    crossesGraduation
+      ? {
+          // Never present a partial figure as a total. This order finishes the
+          // curve and then executes on HyperSwap, and only the first leg is
+          // quotable here.
+          label: "You receive (curve leg only)",
+          value: `at least ${formatUnits(expectedTokensOut, 18)} ${tokenSymbol}, plus a HyperSwap leg`,
+          primary: true,
+          warning: true,
+        }
+      : {
+          label: "You receive",
+          value: `${formatUnits(expectedTokensOut, 18)} ${tokenSymbol}`,
+          primary: true,
+        },
     // §316: the breakdown is shown in full. An aggregated "fee: 2%" hides which
     // part funds the creator and which part comes back to holders.
     { label: "Trading fee (1%)", value: fee(fees.coreFee) },
@@ -215,7 +245,12 @@ export function buildBuyIntent(params: BuildBuyParams): TransactionIntent {
   if (crossesGraduation) {
     rows.push({
       label: "Route",
-      value: "Finishes the curve, then HyperSwap",
+      value: "Finishes the curve, graduates, then HyperSwap",
+      warning: true,
+    });
+    rows.push({
+      label: "Slippage protection",
+      value: "Covers the curve leg only — the HyperSwap leg is not yet quotable",
       warning: true,
     });
   }
@@ -234,6 +269,9 @@ export function buildBuyIntent(params: BuildBuyParams): TransactionIntent {
       fees,
       minimumReceived: minTokensOut,
       ...(crossesGraduation !== undefined ? { crossesGraduation } : {}),
+      ...(crossesGraduation
+        ? { estimateIsPartial: true, boundCoversPartialRoute: true }
+        : {}),
     },
   };
 }
