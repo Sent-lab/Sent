@@ -1,0 +1,9 @@
+{
+  "name": "@sent/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PostgreSQL schema and query layer. A rebuildable projection per Masterplan 138.",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc -p tsconfig.json" }
+}
