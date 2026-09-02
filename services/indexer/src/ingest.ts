@@ -49,6 +49,7 @@ import {
   recordStockbackFunding,
   type Transaction,
 } from "@sent/database";
+import { scheduleForRange } from "@sent/worker";
 import { launchpadFactoryAbi, launchMarketAbi, launchTokenAbi, holderRewardVaultAbi } from "@sent/contracts";
 
 import { ChainTracker, type BlockRef } from "./reorg.ts";
@@ -230,8 +231,27 @@ export class Indexer {
         return (a.logIndex ?? 0) - (b.logIndex ?? 0);
       });
 
+      // Markets whose state changed in this range, collected as the logs are
+      // handled so the follow-up work can be scheduled without a second pass.
+      const touched = new Set<string>();
+
       for (const log of ordered) {
-        await this.handleLog(tx, log, Number(first.timestamp));
+        await this.handleLog(tx, log, Number(first.timestamp), touched);
+      }
+
+      // Derived work — candles, holder reconciliation — is enqueued in the SAME
+      // transaction as the events that imply it. Enqueuing after the commit would
+      // lose the jobs if the process died in between, and the projection would
+      // then hold trades that no candle ever covers.
+      for (const market of touched) {
+        await scheduleForRange(
+          tx,
+          market,
+          Number(first.timestamp),
+          Number(first.timestamp),
+          to,
+          Number(first.timestamp),
+        );
       }
 
       await setCursor(tx, to, first.hash);
@@ -289,7 +309,12 @@ export class Indexer {
   // Event normalization (§421 stage 2)
   // -------------------------------------------------------------------------
 
-  private async handleLog(tx: Transaction, log: Log, blockTimestamp: number): Promise<void> {
+  private async handleLog(
+    tx: Transaction,
+    log: Log,
+    blockTimestamp: number,
+    touched: Set<string>,
+  ): Promise<void> {
     const address = log.address.toLowerCase();
 
     if (address === this.config.factory.toLowerCase()) {
@@ -299,9 +324,14 @@ export class Indexer {
       return this.handleRewardVaultLog(tx, log, blockTimestamp);
     }
     if (this.knownMarkets.has(address)) {
+      touched.add(address);
       return this.handleMarketLog(tx, log, blockTimestamp);
     }
     if (this.tokenToMarket.has(address)) {
+      // A token transfer changes balances, so the market it belongs to needs
+      // reconciling even though the market contract emitted nothing.
+      const market = this.tokenToMarket.get(address);
+      if (market !== undefined) touched.add(market);
       return this.handleTokenLog(tx, log, blockTimestamp);
     }
   }

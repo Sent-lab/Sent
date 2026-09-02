@@ -111,6 +111,9 @@ importers:
       '@sent/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@sent/worker':
+        specifier: workspace:*
+        version: link:../worker
       viem:
         specifier: ^2.56.3
         version: 2.56.3(typescript@5.9.3)
@@ -132,6 +135,12 @@ importers:
       viem:
         specifier: ^2.56.3
         version: 2.56.3(typescript@5.9.3)
+
+  services/worker:
+    dependencies:
+      '@sent/database':
+        specifier: workspace:*
+        version: link:../../packages/database
 
 packages:
 
