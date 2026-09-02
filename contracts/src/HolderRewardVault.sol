@@ -292,11 +292,22 @@ contract HolderRewardVault is ReentrancyGuard {
     }
 
     /// @notice Promote a pending distribution once its activation delay has passed.
-    /// @dev Permissionless, and idempotent in effect: the delay is what gives
-    ///      independent verifiers time to detect a bad dataset before money moves.
+    ///
+    /// @dev Permissionless. The delay is what gives independent verifiers time to
+    ///      detect a bad dataset before money moves, and the Guardian time to
+    ///      cancel it (§589).
+    ///
+    ///      NOT idempotent: a second call reverts, because the pending slot is
+    ///      cleared. The doc comment previously claimed idempotence, which is the
+    ///      kind of inaccuracy that leads a caller to retry blindly. Two callers
+    ///      racing means the loser pays for a revert, which is the honest outcome
+    ///      and cheaper than pretending the second call did something.
     function activate(address market) external whenNotPaused {
         Distribution memory p = pending[market];
-        if (p.merkleRoot == bytes32(0)) revert InvalidProof();
+        // A distinct error: "nothing is pending" is a different situation from
+        // "your proof does not verify", and reporting the latter for the former
+        // sends whoever is debugging in the wrong direction.
+        if (p.merkleRoot == bytes32(0)) revert NoPendingCommitment();
         if (block.timestamp < p.activeAt) revert NotYetActive(p.activeAt);
 
         active[market] = p;

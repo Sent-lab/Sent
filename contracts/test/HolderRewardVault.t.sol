@@ -406,8 +406,33 @@ contract HolderRewardVaultTest is Test {
 
         vm.warp(block.timestamp + vault.ACTIVATION_DELAY());
 
-        vm.expectRevert(HolderRewardVault.InvalidProof.selector);
+        // The reason is "nothing is pending", not "your proof is bad". Reporting
+        // the latter would send whoever is debugging in the wrong direction.
+        vm.expectRevert(HolderRewardVault.NoPendingCommitment.selector);
         vault.activate(market);
+    }
+
+    /// @dev Activation is NOT idempotent: the pending slot is cleared, so a
+    ///      second call reverts rather than silently doing nothing. Two callers
+    ///      racing means the loser pays for a revert, which is honest.
+    function test_activateIsNotIdempotent() public {
+        _fund(100e18);
+
+        bytes32 leafA = _leaf(alice, 60e18);
+        bytes32 leafB = _leaf(bob, 40e18);
+        HolderRewardVault.Commitment memory c = _commitment(1, 100e18, _root(leafA, leafB));
+        vault.submitCommitment(c, _sign(c));
+
+        vm.warp(block.timestamp + vault.ACTIVATION_DELAY());
+        vault.activate(market);
+
+        vm.expectRevert(HolderRewardVault.NoPendingCommitment.selector);
+        vault.activate(market);
+
+        // The activated distribution is untouched by the failed second call.
+        (bytes32 root,, uint256 total,,) = vault.active(market);
+        assertEq(root, _root(leafA, leafB), "the active root still stands");
+        assertEq(total, 100e18, "and its total is unchanged");
     }
 
     function test_guardianPauseFreezesClaimsAndActivations() public {
