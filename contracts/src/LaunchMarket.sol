@@ -147,6 +147,12 @@ contract LaunchMarket is ReentrancyGuard {
     error RouterNotSet();
     error GraduationIncomplete();
     error ZeroAddress();
+    error FeeSearchFailed(uint256 gross, uint256 targetNet);
+    error CrossingUnderCollateralised(uint256 net, uint256 required);
+
+    /// @dev Bound on the fee-inversion search. The estimate lands within a couple
+    ///      of units; anything beyond this means an assumption is broken.
+    uint256 private constant MAX_FEE_SEARCH_STEPS = 16;
 
     modifier onlyPreGrad() {
         if (status != Status.PRE_GRAD) revert NotPreGrad();
@@ -266,9 +272,15 @@ contract LaunchMarket is ReentrancyGuard {
 
         Fees.Breakdown memory f = Fees.forBuy(preGradGross);
 
+        // Defence in depth. `_grossForNet` already asserts this, but the clamp
+        // above can only lower `preGradGross`, so the guarantee is re-checked
+        // where the credit actually happens. Booking netToEndpoint against a
+        // smaller receipt would under-collateralise the curve.
+        if (f.net < netToEndpoint) revert CrossingUnderCollateralised(f.net, netToEndpoint);
+
         // The curve consumes exactly what the endpoint costs. Any excess from
         // fee-rounding is holder-neutral dust, not revenue (§417).
-        uint256 excess = f.net > netToEndpoint ? f.net - netToEndpoint : 0;
+        uint256 excess = f.net - netToEndpoint;
 
         distributed += remainingSupply;
         curveCollateral += netToEndpoint;
@@ -459,30 +471,42 @@ contract LaunchMarket is ReentrancyGuard {
 
     /// @dev Smallest gross whose post-fee net is at least `targetNet`.
     ///
-    ///      net(g) = g - floor(g/100) - floor(g/100) for a BUY, so the relationship
-    ///      is piecewise and cannot be inverted exactly by a single division. The
-    ///      estimate is corrected against the real fee function, the same technique
-    ///      the curve uses: guess cheaply, then verify against ground truth.
+    ///      net(g) = g - floor(g/100) - floor(g/100) for a BUY. This is NOT
+    ///      monotonic: at g = 99 -> 100 the net actually falls from 99 to 98,
+    ///      because both floors step at once. So it cannot be inverted by a single
+    ///      division, and a search cannot assume monotonicity either.
+    ///
+    ///      The estimate is corrected against the real fee function, then the
+    ///      result is ASSERTED. An earlier version broke out of the loop on
+    ///      non-convergence, which would have credited `netToEndpoint` to
+    ///      collateral while the market had actually received less — a silent
+    ///      under-collateralisation. Failing loudly is the only acceptable
+    ///      outcome here.
     function _grossForNet(uint256 targetNet) private pure returns (uint256 gross) {
+        if (targetNet == 0) return 0;
+
         // net ~= gross * 98%, so gross ~= net / 0.98.
         gross = (targetNet * 10_000 + 9_799) / 9_800;
 
-        uint256 steps = 0;
-        while (Fees.forBuy(gross).net < targetNet) {
+        // Walk up until the net covers the target.
+        for (uint256 i = 0; i < MAX_FEE_SEARCH_STEPS; i++) {
+            if (Fees.forBuy(gross).net >= targetNet) break;
             unchecked {
                 ++gross;
-                ++steps;
             }
-            if (steps > 8) break;
         }
 
-        while (gross > 0 && Fees.forBuy(gross - 1).net >= targetNet) {
+        // Then walk back down to the smallest gross that still covers it.
+        for (uint256 i = 0; i < MAX_FEE_SEARCH_STEPS; i++) {
+            if (gross == 0 || Fees.forBuy(gross - 1).net < targetNet) break;
             unchecked {
                 --gross;
-                ++steps;
             }
-            if (steps > 16) break;
         }
+
+        // The whole crossing path depends on this holding. If it does not, the
+        // market would book collateral it never received.
+        if (Fees.forBuy(gross).net < targetNet) revert FeeSearchFailed(gross, targetNet);
     }
 
     function _adapterConfig() private view returns (XStockAssetAdapter.AssetConfig memory) {

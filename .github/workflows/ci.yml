@@ -26,6 +26,13 @@ jobs:
         run: node --experimental-strip-types packages/economics/sim/graduation-v3.ts
       - name: Stockback TWAB and conservation
         run: node --experimental-strip-types packages/stockback/sim/stockback.ts
+      # The differential fixtures are committed. If TypeScript changed without
+      # regenerating them, or a regenerated set was not committed, this fails -
+      # which is exactly the drift 1064 forbids.
+      - name: Differential fixtures are current
+        run: |
+          node --experimental-strip-types packages/economics/sim/fixtures.ts
+          git diff --exit-code contracts/test/fixtures/economics.json
 
   workspace:
     name: Typecheck / lint / build

@@ -143,13 +143,37 @@ export function tokensOutForNetIn(c: CurveParams, q: bigint, netIn: bigint): big
   if (netIn < 0n) throw new RangeError("tokensOutForNetIn: negative input");
   if (netIn === 0n) return 0n;
 
+  const remaining = c.qG - q;
+  if (remaining === 0n) return 0n;
+
+  // Clamp first: nobody can buy more than the reserve holds, and this also keeps
+  // the Solidity mirror's rescaled intermediates inside uint256.
+  const maxIn = netInForTokensOut(c, q, remaining);
+  if (netIn >= maxIn) return remaining;
+
   const b = c.p0 * c.qG + c.dP * q;
   const discriminant = b * b + 2n * c.dP * netIn * c.qG * WAD;
-  const delta = divFloor(sqrtFloor(discriminant) - b, c.dP);
+  let delta = divFloor(sqrtFloor(discriminant) - b, c.dP);
+  if (delta > remaining) delta = remaining;
 
-  // Never distribute past the graduation endpoint in a single curve step; the
-  // market segments a graduation-crossing order explicitly (§411-A).
-  return delta > c.qG - q ? c.qG - q : delta;
+  // Correct to the exact floor of the SPECIFICATION:
+  //   tokensOutForNetIn(q, netIn) = max { Δ : netInForTokensOut(q, Δ) <= netIn }
+  //
+  // The Solidity implementation reaches the same answer by a different route (it
+  // must rescale to avoid overflow). Both are corrected against the same forward
+  // function, which is what lets the differential test prove they agree rather
+  // than merely observe it.
+  let steps = 0;
+  while (delta > 0n && netInForTokensOut(c, q, delta) > netIn) {
+    delta -= 1n;
+    if (++steps > 32) throw new Error("tokensOutForNetIn: correction did not converge");
+  }
+  while (delta < remaining && netInForTokensOut(c, q, delta + 1n) <= netIn) {
+    delta += 1n;
+    if (++steps > 32) throw new Error("tokensOutForNetIn: correction did not converge");
+  }
+
+  return delta;
 }
 
 /**
