@@ -37,6 +37,17 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  infra:
+    dependencies:
+      '@sent/config':
+        specifier: workspace:*
+        version: link:../packages/config
+      '@sent/database':
+        specifier: workspace:*
+        version: link:../packages/database
+
+  packages/config: {}
+
   packages/contracts: {}
 
   packages/database:
@@ -69,6 +80,9 @@ importers:
 
   services/api:
     dependencies:
+      '@sent/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@sent/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -93,6 +107,9 @@ importers:
 
   services/finalizer:
     dependencies:
+      '@sent/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@sent/database':
         specifier: workspace:*
         version: link:../../packages/database
@@ -105,6 +122,9 @@ importers:
 
   services/indexer:
     dependencies:
+      '@sent/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@sent/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -120,9 +140,18 @@ importers:
 
   services/realtime:
     dependencies:
+      '@sent/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@sent/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       '@sent/realtime':
         specifier: workspace:*
         version: link:../../packages/realtime
+      viem:
+        specifier: ^2.56.3
+        version: 2.56.3(typescript@5.9.3)
       ws:
         specifier: ^8.18.0
         version: 8.21.3
@@ -138,6 +167,9 @@ importers:
 
   services/worker:
     dependencies:
+      '@sent/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@sent/database':
         specifier: workspace:*
         version: link:../../packages/database

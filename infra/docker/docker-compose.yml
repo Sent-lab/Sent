@@ -1,0 +1,131 @@
+# SENT — local stack.
+#
+# NOT a production topology. §434 puts the API and WebSocket tiers behind a load
+# balancer with replicas; this runs one of each on one host so the whole system
+# can be exercised end to end.
+#
+# What it does share with production is the SHAPE: the indexer is the only writer
+# that creates the schema, the finalizer computes but never signs, and every
+# service reads its configuration from the environment rather than a baked file.
+
+name: sent
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sent
+      POSTGRES_PASSWORD: sent
+      POSTGRES_DB: sent
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # Every other service waits on this. Starting the indexer against a
+      # database that is still initialising produces a crash loop that looks like
+      # a code fault.
+      test: ["CMD-SHELL", "pg_isready -U sent -d sent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Runs the migrations as a side effect of starting, so nothing else has to.
+  indexer:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    environment:
+      SERVICE: indexer
+      DATABASE_URL: postgres://sent:sent@postgres:5432/sent
+      RPC_URL: ${RPC_URL:?RPC_URL must be set}
+      CHAIN_ID: ${CHAIN_ID:-999}
+      FACTORY_ADDRESS: ${FACTORY_ADDRESS:?FACTORY_ADDRESS must be set}
+      REWARD_VAULT_ADDRESS: ${REWARD_VAULT_ADDRESS:?REWARD_VAULT_ADDRESS must be set}
+      START_BLOCK: ${START_BLOCK:-0}
+      CONFIRMATIONS: ${CONFIRMATIONS:-20}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    environment:
+      SERVICE: api
+      DATABASE_URL: postgres://sent:sent@postgres:5432/sent
+      RPC_URL: ${RPC_URL:?RPC_URL must be set}
+      CHAIN_ID: ${CHAIN_ID:-999}
+      FACTORY_ADDRESS: ${FACTORY_ADDRESS:?FACTORY_ADDRESS must be set}
+      REWARD_VAULT_ADDRESS: ${REWARD_VAULT_ADDRESS:?REWARD_VAULT_ADDRESS must be set}
+      API_PORT: 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # Not service_healthy: the API is designed to serve while the projection is
+      # behind and to SAY so (§211). Blocking on the indexer would replace an
+      # honest DELAYED envelope with an outage.
+      indexer:
+        condition: service_started
+    healthcheck:
+      # /health returns 503 when the service is not serving, so the container's
+      # health and the service's own answer cannot drift apart.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  realtime:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    environment:
+      SERVICE: realtime
+      DATABASE_URL: postgres://sent:sent@postgres:5432/sent
+      RPC_URL: ${RPC_URL:?RPC_URL must be set}
+      CHAIN_ID: ${CHAIN_ID:-999}
+      FACTORY_ADDRESS: ${FACTORY_ADDRESS:?FACTORY_ADDRESS must be set}
+      REWARD_VAULT_ADDRESS: ${REWARD_VAULT_ADDRESS:?REWARD_VAULT_ADDRESS must be set}
+      REALTIME_PORT: 8081
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    environment:
+      SERVICE: worker
+      DATABASE_URL: postgres://sent:sent@postgres:5432/sent
+    depends_on:
+      postgres:
+        condition: service_healthy
+      indexer:
+        condition: service_started
+    restart: unless-stopped
+
+  finalizer:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    environment:
+      SERVICE: finalizer
+      DATABASE_URL: postgres://sent:sent@postgres:5432/sent
+    depends_on:
+      postgres:
+        condition: service_healthy
+      indexer:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

@@ -6,6 +6,7 @@
     "packages/*/sim/**/*.ts",
     "packages/*/scripts/**/*.ts",
     "services/*/src/**/*.ts",
-    "services/*/sim/**/*.ts"
+    "services/*/sim/**/*.ts",
+    "infra/**/*.ts"
   ]
 }

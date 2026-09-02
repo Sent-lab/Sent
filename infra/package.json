@@ -1,0 +1,14 @@
+{
+  "name": "@sent/infra",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Deployment topology, container images and the migration runner.",
+  "dependencies": {
+    "@sent/database": "workspace:*",
+    "@sent/config": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}
