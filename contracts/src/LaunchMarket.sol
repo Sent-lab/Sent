@@ -358,12 +358,26 @@ contract LaunchMarket is ReentrancyGuard {
     // Fee settlement — money leaves in the same transaction it is booked
     // -----------------------------------------------------------------------
 
+    /// @dev Settlement happens in RAW asset units, because that is what the vaults
+    ///      hold and pay out in.
+    ///
+    ///      Booking the NORMALIZED figures here was a fund-blocking bug: at 18
+    ///      decimals raw and normalized coincide, so it looked correct, but for a
+    ///      6-decimal quote asset the vault was credited 10^12 times what it
+    ///      actually held and the first creator claim reverted on an insufficient
+    ///      balance. Every market test used an 18-decimal asset, which hid it
+    ///      completely.
+    ///
+    ///      The 65/35 split is therefore re-derived from the RAW core fee through
+    ///      `Fees.splitCore`, so creator + platform equals exactly what was
+    ///      transferred, with no unit mixing anywhere.
     function _settleFees(Fees.Breakdown memory f) private {
         if (f.coreFee > 0) {
             uint256 coreRaw = _denormalizeForPayout(f.coreFee);
             if (coreRaw > 0) {
+                (uint256 creatorRaw, uint256 platformRaw) = Fees.splitCore(coreRaw);
                 IERC20(QUOTE_ASSET).safeTransfer(address(FEE_VAULT), coreRaw);
-                FEE_VAULT.accrue(CREATOR, QUOTE_ASSET, f.creatorFee, f.platformFee);
+                FEE_VAULT.accrue(CREATOR, QUOTE_ASSET, creatorRaw, platformRaw);
             }
         }
 
@@ -371,9 +385,17 @@ contract LaunchMarket is ReentrancyGuard {
             uint256 sbRaw = _denormalizeForPayout(f.stockback);
             if (sbRaw > 0) {
                 IERC20(QUOTE_ASSET).safeTransfer(address(REWARD_VAULT), sbRaw);
-                REWARD_VAULT.fund(f.stockback);
+                REWARD_VAULT.fund(sbRaw);
             }
         }
+    }
+
+    /// @notice Curve liability expressed in RAW asset units.
+    /// @dev `curveCollateral` is normalized. Any solvency comparison against this
+    ///      contract's balance must go through here, or it is only correct by
+    ///      accident at 18 decimals.
+    function collateralInAssetUnits() external view returns (uint256) {
+        return _denormalizeForPayout(curveCollateral);
     }
 
     // -----------------------------------------------------------------------

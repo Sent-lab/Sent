@@ -61,6 +61,19 @@ library Fees {
         uint256 net;
     }
 
+    /// @notice Split a core fee 65/35, in whatever units it is denominated.
+    /// @dev Exposed because the market must re-split in RAW asset units at
+    ///      settlement time. The split logic lives here and only here (§1064);
+    ///      duplicating it at the call site is how the two would drift.
+    ///
+    ///      Creator rounds UP, platform absorbs the remainder (D-003a), and the
+    ///      split is exhaustive: creator + platform == coreFee exactly.
+    function splitCore(uint256 coreFee) internal pure returns (uint256 creator, uint256 platform) {
+        creator = (coreFee * CREATOR_SHARE_BPS + BPS - 1) / BPS;
+        if (creator > coreFee) creator = coreFee;
+        platform = coreFee - creator;
+    }
+
     /// @notice Fee waterfall for a BUY. `notional` is the gross quote input.
     function forBuy(uint256 notional) internal pure returns (Breakdown memory) {
         return _compute(notional, STOCKBACK_BUY_BPS);
@@ -84,9 +97,7 @@ library Fees {
         // the platform - the party that agreed to the split - never on the
         // creator, who is the protected party. Found by an invariant, not by
         // inspection.
-        b.creatorFee = (b.coreFee * CREATOR_SHARE_BPS + BPS - 1) / BPS;
-        if (b.creatorFee > b.coreFee) b.creatorFee = b.coreFee;
-        b.platformFee = b.coreFee - b.creatorFee;
+        (b.creatorFee, b.platformFee) = splitCore(b.coreFee);
 
         b.stockback = (notional * stockbackBps) / BPS;
         b.totalFee = b.coreFee + b.stockback;
