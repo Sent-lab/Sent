@@ -7,7 +7,7 @@ libs = ["lib"]
 solc_version = "0.8.28"
 optimizer = true
 optimizer_runs = 1000
-via_ir = false
+via_ir = true
 bytecode_hash = "none"
 # Lint runs in CI as an informational step, not as a build gate (D-008).
 # Every hit in this codebase is either in a test or is a deliberate, documented
