@@ -19,9 +19,27 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  packages/contracts: {}
+
   packages/economics: {}
 
-  packages/stockback: {}
+  packages/sdk:
+    dependencies:
+      '@sent/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@sent/economics':
+        specifier: workspace:*
+        version: link:../economics
+      viem:
+        specifier: ^2.56.3
+        version: 2.56.3(typescript@5.9.3)
+
+  packages/stockback:
+    dependencies:
+      viem:
+        specifier: ^2.56.3
+        version: 2.56.3(typescript@5.9.3)
 
 packages:
 

@@ -19,9 +19,11 @@
     "sim:all": "pnpm sim && pnpm sim:v3 && pnpm sim:stockback && pnpm sim:twab-edges && pnpm sim:lifecycle",
     "fixtures": "node --experimental-strip-types packages/economics/sim/fixtures.ts",
     "fixtures:merkle": "node --experimental-strip-types packages/stockback/sim/merkle-fixtures.ts",
-    "fixtures:all": "pnpm fixtures && pnpm fixtures:merkle",
+    "fixtures:all": "pnpm fixtures && pnpm fixtures:merkle && pnpm fixtures:intent",
     "sim:lifecycle": "node --experimental-strip-types packages/economics/sim/lifecycle.ts",
-    "sim:twab-edges": "node --experimental-strip-types packages/stockback/sim/twab-edges.ts"
+    "sim:twab-edges": "node --experimental-strip-types packages/stockback/sim/twab-edges.ts",
+    "abis": "node --experimental-strip-types packages/contracts/scripts/export-abis.ts",
+    "fixtures:intent": "node --experimental-strip-types packages/sdk/sim/intent-fixtures.ts"
   },
   "devDependencies": {
     "turbo": "^2.3.3",

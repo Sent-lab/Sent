@@ -37,6 +37,7 @@ jobs:
         run: |
           node --experimental-strip-types packages/economics/sim/fixtures.ts
           node --experimental-strip-types packages/stockback/sim/merkle-fixtures.ts
+          node --experimental-strip-types packages/sdk/sim/intent-fixtures.ts
           git diff --exit-code contracts/test/fixtures/
 
   workspace:
