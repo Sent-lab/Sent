@@ -34,6 +34,7 @@ contract HolderRewardVaultTest is Test {
 
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
+    address guardian = makeAddr("guardianSafe");
 
     uint256 att1Key = 0xA11CE;
     uint256 att2Key = 0xB0B;
@@ -373,6 +374,129 @@ contract HolderRewardVaultTest is Test {
         // Funds must never become unreachable because the signer set was shrunk
         // below its own quorum.
         assertEq(vault.attestorCount(), 2, "attestor set stays quorum-reachable");
+    }
+
+    // -----------------------------------------------------------------------
+    // Guardian — §589, §590, §591
+    // -----------------------------------------------------------------------
+
+    function _activeRoot() internal returns (bytes32 leafB) {
+        _fund(100e18);
+        bytes32 leafA = _leaf(alice, 60e18);
+        leafB = _leaf(bob, 40e18);
+        HolderRewardVault.Commitment memory c = _commitment(1, 100e18, _root(leafA, leafB));
+        vault.submitCommitment(c, _sign(c));
+        vm.warp(block.timestamp + vault.ACTIVATION_DELAY());
+        vault.activate(market);
+    }
+
+    /// @dev The power §589 names explicitly: stop a suspicious root before it goes
+    ///      live. Without it the activation delay is a countdown, not a defence.
+    function test_guardianCanStopASuspiciousRootBeforeItActivates() public {
+        vm.prank(governance);
+        vault.setGuardian(guardian);
+
+        _fund(100e18);
+        HolderRewardVault.Commitment memory bad =
+            _commitment(1, 100e18, _root(_leaf(alice, 100e18), _leaf(bob, 0)));
+        vault.submitCommitment(bad, _sign(bad));
+
+        vm.prank(guardian);
+        vault.cancelPendingCommitment(market, "dataset mismatch across indexers");
+
+        vm.warp(block.timestamp + vault.ACTIVATION_DELAY());
+
+        vm.expectRevert(HolderRewardVault.InvalidProof.selector);
+        vault.activate(market);
+    }
+
+    function test_guardianPauseFreezesClaimsAndActivations() public {
+        vm.prank(governance);
+        vault.setGuardian(guardian);
+
+        bytes32 leafB = _activeRoot();
+
+        vm.prank(guardian);
+        vault.pauseClaims("suspected attestor compromise");
+
+        bytes32[] memory proof = new bytes32[](1);
+        proof[0] = leafB;
+
+        vm.expectRevert(HolderRewardVault.ClaimsArePaused.selector);
+        vault.claim(market, alice, 60e18, proof);
+    }
+
+    /// @dev §591: the actor that pulls the brake must not be the one that releases
+    ///      it. Governance investigates first.
+    function test_guardianCannotUnpauseOnlyGovernanceCan() public {
+        vm.prank(governance);
+        vault.setGuardian(guardian);
+
+        bytes32 leafB = _activeRoot();
+
+        vm.prank(guardian);
+        vault.pauseClaims("suspected attestor compromise");
+
+        vm.prank(guardian);
+        vm.expectRevert(HolderRewardVault.NotGovernance.selector);
+        vault.unpauseClaims();
+
+        vm.prank(governance);
+        vault.unpauseClaims();
+
+        bytes32[] memory proof = new bytes32[](1);
+        proof[0] = leafB;
+        assertEq(vault.claim(market, alice, 60e18, proof), 60e18, "claims resume after governance approval");
+    }
+
+    /// @dev §590: the Guardian is a brake, never a steering wheel. It has no path
+    ///      to funds, roots, governance or the attestor set - the absence of those
+    ///      functions IS the guarantee, so this asserts what it can reach.
+    function test_guardianCannotMoveFundsOrInstallRoots() public {
+        vm.prank(governance);
+        vault.setGuardian(guardian);
+        _fund(100e18);
+
+        vm.startPrank(guardian);
+
+        vm.expectRevert(HolderRewardVault.NotGovernance.selector);
+        vault.addAttestor(guardian);
+
+        vm.expectRevert(HolderRewardVault.NotGovernance.selector);
+        vault.setQuorum(1);
+
+        vm.expectRevert(HolderRewardVault.NotGovernance.selector);
+        vault.transferGovernance(guardian);
+
+        vm.expectRevert(HolderRewardVault.NotGovernance.selector);
+        vault.setGuardian(guardian);
+
+        vm.stopPrank();
+
+        assertEq(asset.balanceOf(guardian), 0, "guardian holds nothing");
+        assertEq(vault.funded(market), 100e18, "funding untouched");
+    }
+
+    /// @dev A pause must not strand funding or block evidence gathering: markets
+    ///      keep funding and attestors keep submitting. Only money stops moving.
+    function test_pauseDoesNotStallFundingOrSubmission() public {
+        vm.prank(governance);
+        vault.setGuardian(guardian);
+
+        _fund(100e18);
+
+        vm.prank(guardian);
+        vault.pauseClaims("investigating");
+
+        _fund(50e18);
+        assertEq(vault.funded(market), 150e18, "funding continues while paused");
+
+        HolderRewardVault.Commitment memory c =
+            _commitment(2, 150e18, _root(_leaf(alice, 90e18), _leaf(bob, 60e18)));
+        vault.submitCommitment(c, _sign(c));
+
+        (, , uint256 total,,) = vault.pending(market);
+        assertEq(total, 150e18, "submission continues while paused");
     }
 
     function test_onlyFactoryRegistersMarkets() public {

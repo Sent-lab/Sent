@@ -75,6 +75,26 @@ contract HolderRewardVault is ReentrancyGuard {
 
     address public governance;
 
+    /// @notice Guardian Safe (§588). A brake, never a steering wheel.
+    ///
+    /// §589 names the exact power this exists for: "pause Stockback claims before
+    /// a suspicious root activates." Without it the activation delay is merely a
+    /// wait — a compromised attestor quorum could submit a bad root and nothing
+    /// could stop it going live. The delay is only a defence if someone can act
+    /// inside it.
+    ///
+    /// §590 forbids the Guardian from withdrawing funds, setting roots, changing
+    /// the creator, or rewriting economics. It has none of those here.
+    ///
+    /// §591 forbids the same emergency actor from both pausing and recovering, so
+    /// the Guardian CANNOT unpause. Only governance can, after investigating.
+    address public guardian;
+
+    /// @notice While true, claims and activations are frozen. Funding and
+    ///         submission continue, so the market never stalls and evidence keeps
+    ///         accumulating — only the movement of money stops.
+    bool public claimsPaused;
+
     /// @notice Attestor set (§592). Signs commitments; never custodies funds.
     mapping(address attestor => bool) public isAttestor;
     address[] private _attestors;
@@ -118,6 +138,10 @@ contract HolderRewardVault is ReentrancyGuard {
     event QuorumUpdated(uint256 from, uint256 to);
     event GovernanceTransferred(address indexed from, address indexed to);
     event VaultInitialised(address indexed governance, address indexed factory, uint256 chainId);
+    event GuardianUpdated(address indexed from, address indexed to);
+    event ClaimsPaused(address indexed guardian, string reason);
+    event ClaimsUnpaused(address indexed governance);
+    event PendingCommitmentCancelled(address indexed market, bytes32 indexed merkleRoot, string reason);
 
     error NotGovernance();
     error NotFactory();
@@ -135,9 +159,23 @@ contract HolderRewardVault is ReentrancyGuard {
     error NotYetActive(uint256 activeAt);
     error QuorumTooHigh(uint256 quorum, uint256 attestors);
     error QuorumZero();
+    error NotGuardian();
+    error ClaimsArePaused();
+    error NotPaused();
+    error NoPendingCommitment();
 
     modifier onlyGovernance() {
         if (msg.sender != governance) revert NotGovernance();
+        _;
+    }
+
+    modifier onlyGuardian() {
+        if (msg.sender != guardian) revert NotGuardian();
+        _;
+    }
+
+    modifier whenNotPaused() {
+        if (claimsPaused) revert ClaimsArePaused();
         _;
     }
 
@@ -255,7 +293,7 @@ contract HolderRewardVault is ReentrancyGuard {
     /// @notice Promote a pending distribution once its activation delay has passed.
     /// @dev Permissionless, and idempotent in effect: the delay is what gives
     ///      independent verifiers time to detect a bad dataset before money moves.
-    function activate(address market) external {
+    function activate(address market) external whenNotPaused {
         Distribution memory p = pending[market];
         if (p.merkleRoot == bytes32(0)) revert InvalidProof();
         if (block.timestamp < p.activeAt) revert NotYetActive(p.activeAt);
@@ -278,6 +316,7 @@ contract HolderRewardVault is ReentrancyGuard {
     function claim(address market, address account, uint256 cumulativeAmount, bytes32[] calldata proof)
         external
         nonReentrant
+        whenNotPaused
         returns (uint256 payout)
     {
         Distribution memory dist = active[market];
@@ -300,6 +339,46 @@ contract HolderRewardVault is ReentrancyGuard {
         IERC20(rewardAsset[market]).safeTransfer(account, payout);
 
         emit Claimed(market, account, payout, cumulativeAmount);
+    }
+
+    // -----------------------------------------------------------------------
+    // Guardian — a brake, enumerated exactly (§589, §590, §591)
+    // -----------------------------------------------------------------------
+
+    /// @notice Freeze claims and activations. Guardian only.
+    /// @dev This is the whole reason the activation delay is a defence rather than
+    ///      a countdown. It moves no funds and rewrites no state beyond the flag.
+    function pauseClaims(string calldata reason) external onlyGuardian {
+        claimsPaused = true;
+        emit ClaimsPaused(msg.sender, reason);
+    }
+
+    /// @notice Discard a commitment that has not yet activated. Guardian only.
+    /// @dev The narrow, surgical power §589 describes. It can only DELETE a
+    ///      pending root — it can never install one, so a compromised Guardian can
+    ///      stall distributions but can never redirect a single token. Governance
+    ///      remains the only path to a new root, and that still needs an attestor
+    ///      quorum.
+    function cancelPendingCommitment(address market, string calldata reason) external onlyGuardian {
+        Distribution memory p = pending[market];
+        if (p.merkleRoot == bytes32(0)) revert NoPendingCommitment();
+
+        delete pending[market];
+        emit PendingCommitmentCancelled(market, p.merkleRoot, reason);
+    }
+
+    /// @notice Resume claims. GOVERNANCE ONLY — deliberately not the Guardian.
+    /// @dev §591: the same emergency actor must not both pause and recover.
+    ///      Governance investigates, then approves the unpause.
+    function unpauseClaims() external onlyGovernance {
+        if (!claimsPaused) revert NotPaused();
+        claimsPaused = false;
+        emit ClaimsUnpaused(msg.sender);
+    }
+
+    function setGuardian(address newGuardian) external onlyGovernance {
+        emit GuardianUpdated(guardian, newGuardian);
+        guardian = newGuardian;
     }
 
     // -----------------------------------------------------------------------
