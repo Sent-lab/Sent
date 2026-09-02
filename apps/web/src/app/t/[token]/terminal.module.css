@@ -132,7 +132,13 @@
   gap: var(--s-2);
   font-size: var(--text-lg);
   font-weight: 600;
-  /* A long price must clip rather than widen its column and reflow the row. */
+  min-width: 0;
+}
+
+/* A long price clips rather than widening its column and reflowing the row. The
+   overflow lives here rather than on the row so the unit beside it survives. */
+.metricNumber {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -333,6 +339,15 @@
 
   .metrics {
     grid-template-columns: 1fr 1fr;
+  }
+
+  /* Two columns on a 375px screen leaves roughly 140px per value. At the desktop
+     size a padded eight-digit price plus its unit does not fit and the number
+     ellipsises; a step down makes it fit outright, which is better than a
+     correctly-truncated figure. */
+  .metric .metricValue,
+  .metricPrimary .metricValue {
+    font-size: var(--text-base);
   }
 
   .header {

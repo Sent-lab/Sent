@@ -28,6 +28,7 @@ import { getMarket, getTape, isOk } from "../../../lib/api.ts";
 import {
   formatCompact,
   formatFixed,
+  placesFor,
   formatRelativeTime,
   truncateAddress,
   truncateHash,
@@ -137,7 +138,14 @@ export default async function TerminalPage({
           value={
             price === null
               ? "—"
-              : formatFixed(price, decimals, { places: 8, pad: true, grouped: true })
+              : // Precision from the magnitude (§41), then padded to it so the
+                // figure keeps a stable width as it ticks (§80). A fixed eight
+                // places renders a sub-cent price as zeros.
+                formatFixed(price, decimals, {
+                  places: placesFor(price, decimals),
+                  pad: true,
+                  grouped: true,
+                })
           }
           suffix={market.quoteSymbol}
           emphasis
@@ -277,7 +285,10 @@ function Metric({
     <div className={emphasis ? styles.metricPrimary : styles.metric}>
       <span className={styles.metricLabel}>{label}</span>
       <span className={`${styles.metricValue} num`}>
-        {value}
+        {/* The number clips, the unit does not. Putting the overflow on the row
+            would truncate whichever child came last, which is the unit — and a
+            price whose unit reads "xSTOC" is worse than one that wraps. */}
+        <span className={styles.metricNumber}>{value}</span>
         {suffix !== undefined && <span className={styles.metricSuffix}>{suffix}</span>}
       </span>
     </div>

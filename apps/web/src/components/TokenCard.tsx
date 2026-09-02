@@ -22,7 +22,7 @@
 import Link from "next/link";
 
 import type { ExploreItem } from "../lib/api.ts";
-import { formatCompact, formatFixed, truncateAddress } from "../lib/format.ts";
+import { formatAmount, formatCompact, truncateAddress } from "../lib/format.ts";
 import { GraduationProgress, type MarketStatus } from "./GraduationProgress.tsx";
 
 import styles from "./TokenCard.module.css";
@@ -30,11 +30,14 @@ import type { JSX } from "react";
 
 export interface TokenCardProps {
   readonly item: ExploreItem;
-  /** Quote decimals, from the registry. Never read from the token (§699). */
-  readonly quoteDecimals?: number;
 }
 
-export function TokenCard({ item, quoteDecimals = 18 }: TokenCardProps): JSX.Element {
+export function TokenCard({ item }: TokenCardProps): JSX.Element {
+  // From the response, never defaulted. A default of eighteen renders a
+  // six-decimal xStock's price a trillion times too small, and the result looks
+  // like a plausible number rather than like an error.
+  const quoteDecimals = item.quoteDecimals;
+
   const status = normaliseStatus(item.status);
   const price = safeBigint(item.price.value);
   const holders = safeBigint(item.holderCount.value);
@@ -67,11 +70,9 @@ export function TokenCard({ item, quoteDecimals = 18 }: TokenCardProps): JSX.Ele
       <div className={styles.metrics}>
         <Metric
           label="Price"
-          value={
-            price === null
-              ? "—"
-              : formatFixed(price, quoteDecimals, { places: 6, pad: true, grouped: true })
-          }
+          // Magnitude-aware: a fixed six places renders a sub-cent price as
+          // "0.000000", which §41 is explicit is not a price.
+          value={price === null ? "—" : formatAmount(price, quoteDecimals)}
         />
         <Metric
           label="Holders"

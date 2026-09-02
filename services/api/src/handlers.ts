@@ -191,6 +191,14 @@ export interface ExploreItem {
   readonly name: string;
   readonly symbol: string;
   readonly quoteSymbol: string;
+  /**
+   * Quote decimals, from the REGISTRY (§699), never read from the token.
+   *
+   * Without this a client cannot format `price` at all: the value is in raw
+   * quote units, and assuming eighteen renders a six-decimal xStock's price a
+   * trillion times too small — a wrong number that looks like a plausible one.
+   */
+  readonly quoteDecimals: number;
   readonly status: string;
   readonly price: Sourced;
   readonly graduationProgressBps: Sourced;
@@ -219,6 +227,7 @@ export function handleExplore(port: DataPort, options: Partial<ExploreOptions>):
       name: row.name,
       symbol: row.symbol,
       quoteSymbol: row.quoteSymbol,
+      quoteDecimals: row.quoteDecimals,
       status: row.status,
       price: sourced(row.price.toString(), "INDEXED", row.lastBlock, port.serverTime()),
       // CALCULATED, not INDEXED: derived from indexed values rather than read
