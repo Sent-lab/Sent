@@ -16,14 +16,15 @@
     "sim": "node --experimental-strip-types packages/economics/sim/reference.ts",
     "sim:v3": "node --experimental-strip-types packages/economics/sim/graduation-v3.ts",
     "sim:stockback": "node --experimental-strip-types packages/stockback/sim/stockback.ts",
-    "sim:all": "pnpm sim && pnpm sim:v3 && pnpm sim:stockback && pnpm sim:twab-edges && pnpm sim:lifecycle",
+    "sim:all": "pnpm sim && pnpm sim:v3 && pnpm sim:stockback && pnpm sim:twab-edges && pnpm sim:lifecycle && pnpm sim:reorg",
     "fixtures": "node --experimental-strip-types packages/economics/sim/fixtures.ts",
     "fixtures:merkle": "node --experimental-strip-types packages/stockback/sim/merkle-fixtures.ts",
     "fixtures:all": "pnpm fixtures && pnpm fixtures:merkle && pnpm fixtures:intent",
     "sim:lifecycle": "node --experimental-strip-types packages/economics/sim/lifecycle.ts",
     "sim:twab-edges": "node --experimental-strip-types packages/stockback/sim/twab-edges.ts",
     "abis": "node --experimental-strip-types packages/contracts/scripts/export-abis.ts",
-    "fixtures:intent": "node --experimental-strip-types packages/sdk/sim/intent-fixtures.ts"
+    "fixtures:intent": "node --experimental-strip-types packages/sdk/sim/intent-fixtures.ts",
+    "sim:reorg": "node --experimental-strip-types services/indexer/sim/reorg.ts"
   },
   "devDependencies": {
     "turbo": "^2.3.3",

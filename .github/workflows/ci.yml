@@ -30,6 +30,8 @@ jobs:
         run: node --experimental-strip-types packages/stockback/sim/twab-edges.ts
       - name: Market lifecycle economic gate
         run: node --experimental-strip-types packages/economics/sim/lifecycle.ts
+      - name: Reorg handling
+        run: node --experimental-strip-types services/indexer/sim/reorg.ts
       # The differential fixtures are committed. If TypeScript changed without
       # regenerating them, or a regenerated set was not committed, this fails -
       # which is exactly the drift 1064 forbids.
