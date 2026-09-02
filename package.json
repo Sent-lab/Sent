@@ -1,0 +1,23 @@
+{
+  "name": "sent",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "SENT - xStock Launchpad on HyperEVM",
+  "packageManager": "pnpm@10.33.4",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "sim": "node --experimental-strip-types packages/economics/sim/reference.ts",
+    "sim:invariants": "node --experimental-strip-types packages/economics/sim/invariants.ts"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,224 @@
+/**
+ * SENT — design tokens. INTERFACE FREEZE F5 (Day 1).
+ *
+ * Authority: Masterplan §240 (tokenization), §260 (exact design tokens), §261
+ * (animation values), §262 (breakpoints), §40 (design system), §1011 (brand copy).
+ * Values seeded from the SENT brand board (visual reference only — where the board
+ * and the masterplan disagree, the masterplan wins).
+ *
+ * THE TWO LAWS THIS FILE ENCODES
+ * ------------------------------
+ * 1. Volt Lime is a RESTRAINED SIGNATURE ACCENT. It is not a UI colour. It marks
+ *    identity, a single primary action, and live/positive market state — nothing
+ *    else. There is deliberately no --sent-accent-bg-subtle-hover-pressed ladder,
+ *    because that ladder is how a signature colour becomes wallpaper.
+ *
+ * 2. THE CLOSER THE USER GETS TO MOVING MONEY, THE CALMER THE MOTION BECOMES.
+ *    Motion tokens are split into an Experience scale and a Trading scale. A
+ *    transaction surface may only use the Trading scale. This is enforced in
+ *    review, and the token names make a violation obvious in a diff.
+ *
+ * No component may hardcode a colour, duration, radius or z-index (§240, §241).
+ */
+
+:root {
+  /* ---------------------------------------------------------------------
+   * BRAND — Volt Lime. LOCKED signature.
+   * ------------------------------------------------------------------ */
+  --sent-volt-lime: #c6f600;
+  --sent-deep-lime: #7ba000;
+  --sent-lime-glow: #e8ff78;
+
+  /* ---------------------------------------------------------------------
+   * NEUTRALS — the actual surface of the product.
+   * Dark, refined, low-chroma. This is what the user mostly sees.
+   * ------------------------------------------------------------------ */
+  --sent-bg-primary: #050607;
+  --sent-bg-secondary: #0d0f12;
+  --sent-surface: #12161a;
+  --sent-surface-raised: #171c21;
+  --sent-border: #1f262c;
+  --sent-border-strong: #2b343c;
+
+  --sent-text-primary: #f5f7fa;
+  --sent-text-secondary: #9aa4b2;
+  --sent-text-tertiary: #6b7684;
+  --sent-text-inverse: #050607;
+
+  /* ---------------------------------------------------------------------
+   * MARKET SEMANTICS
+   * Volt Lime doubles as "up/live" — which is exactly why it must not also
+   * be used for generic emphasis. Down is a restrained red, never a
+   * casino red.
+   * ------------------------------------------------------------------ */
+  --sent-market-up: var(--sent-volt-lime);
+  --sent-market-down: #ff5c5c;
+  --sent-market-neutral: var(--sent-text-secondary);
+
+  --sent-status-success: var(--sent-volt-lime);
+  --sent-status-warning: #ffb340;
+  --sent-status-danger: #ff5c5c;
+  --sent-status-info: #6ea8ff;
+
+  /* Data freshness (§211) — staleness must be visible, never silent. */
+  --sent-freshness-live: var(--sent-volt-lime);
+  --sent-freshness-delayed: #ffb340;
+  --sent-freshness-stale: var(--sent-text-tertiary);
+
+  /* ---------------------------------------------------------------------
+   * ACCENT USAGE BUDGET (§47 interaction budget, §40)
+   * A single viewport should not exceed roughly this much Volt Lime.
+   * Encoded as a token so it is reviewable rather than folklore.
+   * ------------------------------------------------------------------ */
+  --sent-accent-max-coverage: 4%;
+
+  --sent-accent-on: var(--sent-text-inverse); /* text on a Volt Lime fill */
+  --sent-accent-glow: 0 0 24px rgb(198 246 0 / 18%);
+  --sent-accent-glow-strong: 0 0 40px rgb(198 246 0 / 28%);
+
+  /* ---------------------------------------------------------------------
+   * TYPOGRAPHY (§41, §185)
+   * Sora for brand/experience. Tabular numerics everywhere money appears.
+   * ------------------------------------------------------------------ */
+  --sent-font-brand: "Sora", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --sent-font-ui: "Sora", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --sent-font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+
+  /* Numeric display: every price, size, fee and balance uses this. */
+  --sent-font-numeric: var(--sent-font-mono);
+  --sent-numeric-features: "tnum" 1, "zero" 1;
+
+  --sent-text-2xs: 0.6875rem; /* 11px — dense table meta */
+  --sent-text-xs: 0.75rem; /* 12px */
+  --sent-text-sm: 0.8125rem; /* 13px — trading default */
+  --sent-text-base: 0.9375rem; /* 15px — reading default */
+  --sent-text-lg: 1.125rem;
+  --sent-text-xl: 1.5rem;
+  --sent-text-2xl: 2rem;
+  --sent-text-3xl: 2.75rem;
+  --sent-text-display: 4rem;
+
+  --sent-leading-tight: 1.15;
+  --sent-leading-snug: 1.35;
+  --sent-leading-normal: 1.55;
+
+  --sent-tracking-brand: 0.32em; /* S E N T wordmark lockup */
+  --sent-tracking-tight: -0.02em;
+  --sent-tracking-normal: 0;
+
+  --sent-weight-regular: 400;
+  --sent-weight-medium: 500;
+  --sent-weight-semibold: 600;
+
+  /* ---------------------------------------------------------------------
+   * SPACING (§184) — 4px base.
+   * ------------------------------------------------------------------ */
+  --sent-space-1: 0.25rem;
+  --sent-space-2: 0.5rem;
+  --sent-space-3: 0.75rem;
+  --sent-space-4: 1rem;
+  --sent-space-5: 1.25rem;
+  --sent-space-6: 1.5rem;
+  --sent-space-8: 2rem;
+  --sent-space-10: 2.5rem;
+  --sent-space-12: 3rem;
+  --sent-space-16: 4rem;
+  --sent-space-24: 6rem;
+  --sent-space-32: 8rem;
+
+  /* ---------------------------------------------------------------------
+   * RADIUS — restrained. "Over-rounded" is an explicit non-goal (§92).
+   * ------------------------------------------------------------------ */
+  --sent-radius-xs: 2px;
+  --sent-radius-sm: 4px;
+  --sent-radius-md: 6px;
+  --sent-radius-lg: 10px;
+  --sent-radius-xl: 14px;
+  --sent-radius-pill: 999px; /* badges and status pills only */
+
+  /* ---------------------------------------------------------------------
+   * ELEVATION — depth by border and ground, not by drop shadow spam.
+   * ------------------------------------------------------------------ */
+  --sent-shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --sent-shadow-md: 0 4px 16px rgb(0 0 0 / 45%);
+  --sent-shadow-lg: 0 16px 48px rgb(0 0 0 / 55%);
+
+  /* ---------------------------------------------------------------------
+   * MOTION — two scales. §43, §224, §236, §261.
+   *
+   * EXPERIENCE: homepage, explore, roadmap, creator preview, milestone
+   * moments. Cinematic and expressive.
+   * ------------------------------------------------------------------ */
+  --sent-ease-experience: cubic-bezier(0.22, 1, 0.36, 1);
+  --sent-ease-spatial: cubic-bezier(0.16, 1, 0.3, 1);
+  --sent-duration-experience-sm: 240ms;
+  --sent-duration-experience-md: 420ms;
+  --sent-duration-experience-lg: 700ms;
+  --sent-duration-experience-xl: 1100ms;
+
+  /*
+   * TRADING: terminal, quotes, transaction review, signing, claim.
+   * Calm, short, non-distracting. Nothing here bounces, overshoots, or
+   * draws the eye away from a number the user is about to act on.
+   */
+  --sent-ease-trading: cubic-bezier(0.4, 0, 0.2, 1);
+  --sent-duration-trading-instant: 80ms;
+  --sent-duration-trading-sm: 120ms;
+  --sent-duration-trading-md: 180ms;
+
+  /*
+   * MONEY SURFACES: the calmest scale. Transaction review, signature
+   * prompts, claim confirmation. Opacity and colour only — no transform,
+   * no scale, no motion that could make a number appear to change while
+   * it is being read.
+   */
+  --sent-duration-money: 100ms;
+  --sent-ease-money: linear;
+
+  /* Live data tick (§210): a brief tint, never a layout move. */
+  --sent-duration-tick: 400ms;
+
+  /* ---------------------------------------------------------------------
+   * LAYERING (§241) — no ad-hoc z-index anywhere.
+   * ------------------------------------------------------------------ */
+  --sent-z-base: 0;
+  --sent-z-sticky: 100;
+  --sent-z-header: 200;
+  --sent-z-dropdown: 300;
+  --sent-z-drawer: 400;
+  --sent-z-modal: 500;
+  --sent-z-toast: 600;
+  --sent-z-tooltip: 700;
+
+  /* ---------------------------------------------------------------------
+   * BREAKPOINTS (§262) — reference values for JS; CSS uses media queries.
+   * ------------------------------------------------------------------ */
+  --sent-bp-mobile: 480px;
+  --sent-bp-tablet: 768px;
+  --sent-bp-desktop: 1024px;
+  --sent-bp-wide: 1440px;
+  --sent-bp-ultra: 1920px;
+
+  /* Touch targets (§227). */
+  --sent-touch-min: 44px;
+
+  /* Focus (§226) — visible, never removed, never Volt-Lime-on-Volt-Lime. */
+  --sent-focus-ring: 2px solid var(--sent-lime-glow);
+  --sent-focus-offset: 2px;
+}
+
+/*
+ * Accessibility (§84, §525): honour reduced motion. Experience Mode collapses
+ * to near-instant; Trading Mode is already calm enough to be safe.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --sent-duration-experience-sm: 1ms;
+    --sent-duration-experience-md: 1ms;
+    --sent-duration-experience-lg: 1ms;
+    --sent-duration-experience-xl: 1ms;
+    --sent-duration-trading-sm: 1ms;
+    --sent-duration-trading-md: 1ms;
+    --sent-duration-tick: 1ms;
+  }
+}

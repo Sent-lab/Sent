@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.next/
+out/
+build/
+cache/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+.turbo/
+.DS_Store
+contracts/out/
+contracts/cache/
+contracts/broadcast/
