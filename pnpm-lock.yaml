@@ -69,6 +69,12 @@ importers:
 
   services/api:
     dependencies:
+      '@sent/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@sent/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       '@sent/economics':
         specifier: workspace:*
         version: link:../../packages/economics
@@ -78,6 +84,12 @@ importers:
       '@sent/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+      fastify:
+        specifier: ^5.2.0
+        version: 5.12.1
+      viem:
+        specifier: ^2.56.3
+        version: 2.56.3(typescript@5.9.3)
 
   services/indexer:
     dependencies:

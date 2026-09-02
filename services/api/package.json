@@ -9,8 +9,12 @@
     "test": "node --experimental-strip-types sim/handlers.ts"
   },
   "dependencies": {
+    "fastify": "^5.2.0",
+    "viem": "^2.56.3",
     "@sent/realtime": "workspace:*",
     "@sent/sdk": "workspace:*",
-    "@sent/economics": "workspace:*"
+    "@sent/economics": "workspace:*",
+    "@sent/database": "workspace:*",
+    "@sent/contracts": "workspace:*"
   }
 }
