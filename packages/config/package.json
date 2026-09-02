@@ -1,0 +1,15 @@
+{
+  "name": "@sent/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Verified chain constants and validated environment loading.",
+  "exports": {
+    ".": "./src/chain.ts",
+    "./env": "./src/env.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types sim/env.ts"
+  }
+}
