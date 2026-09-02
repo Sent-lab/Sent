@@ -1,0 +1,363 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.28;
+
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+import {LaunchToken} from "./LaunchToken.sol";
+import {LaunchMarket} from "./LaunchMarket.sol";
+import {XStockRegistry} from "./XStockRegistry.sol";
+import {FeeVault} from "./FeeVault.sol";
+import {HolderRewardVault} from "./HolderRewardVault.sol";
+import {Curve} from "./lib/Curve.sol";
+
+/// @title SENT LaunchpadFactory
+/// @notice Deploys markets and is the single source of token authenticity (§138).
+///
+/// AUTHENTICITY IS THE REGISTRY, NOT THE ADDRESS (§4)
+/// --------------------------------------------------
+/// A vanity suffix is branding. Anyone can grind an address that ends in the same
+/// characters, so a suffix proves nothing and the UI must never treat it as proof.
+/// The only authenticity source is this factory's registry and its `TokenLaunched`
+/// event.
+///
+/// CREATOR-BOUND CREATE2 (§412)
+/// ----------------------------
+/// A naive vanity flow is trivially front-runnable: the creator grinds a salt,
+/// broadcasts it, and a mempool observer copies the salt into their own
+/// transaction and becomes the creator of the address the victim paid to find.
+///
+/// So the salt a creator supplies is never the salt used. The deployment salt is
+///
+///     effectiveSalt = keccak256(creator, userSalt, LAUNCH_VERSION, pairIdentity, launchIntentHash)
+///
+/// with `creator` bound in. A front-runner copying the whole calldata derives a
+/// DIFFERENT effectiveSalt, because their address differs — so they land on a
+/// different address entirely and cannot steal the ground one. The victim's
+/// address remains reachable only by the victim.
+///
+/// CREATOR IDENTITY (§578, §579)
+/// -----------------------------
+/// `msg.sender` is the creator, and it is recorded before anything else happens.
+/// This factory is deployed and operated by the platform deployer wallet, and the
+/// deployer is NEVER the creator of anything it deploys on a user's behalf. §578
+/// calls this out as a CRITICAL LOCK, and §641 makes it a P0 test.
+///
+/// THE CIRCULAR DEPENDENCY (D-009)
+/// -------------------------------
+/// Token needs market, market needs token. Under CREATE2 each address depends on
+/// the other's constructor arguments, so one side must be resolved after
+/// deployment. It is resolved on the TOKEN side, because the market's `TOKEN` is
+/// security-critical and stays immutable while the token's `market` field is
+/// informational and is never read by any balance or transfer decision.
+///
+/// Both addresses stay fully predictable off-chain: the token address is a pure
+/// function of (factory, effectiveSalt, name, symbol, creator), so a grinder can
+/// search `userSalt` without deploying anything.
+contract LaunchpadFactory is ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
+    /// @dev Bound into every salt so a future launch version can never collide
+    ///      with, or replay, an address derived under this one.
+    uint256 public constant LAUNCH_VERSION = 1;
+
+    address public governance;
+    XStockRegistry public immutable REGISTRY;
+    FeeVault public immutable FEE_VAULT;
+    HolderRewardVault public immutable REWARD_VAULT;
+
+    /// @notice Where the graduation router lives. Markets inherit it at launch.
+    address public router;
+
+    /// @notice Launch fee, in the native gas token. §2 targets ~$1-2 equivalent.
+    uint256 public launchFee;
+
+    /// @notice Destination for launch fees: the Treasury Safe (§563, §607).
+    address public treasury;
+
+    struct Launch {
+        address token;
+        address market;
+        address creator;
+        address quoteAsset;
+        uint64 launchedAt;
+        bool exists;
+    }
+
+    /// @dev token => launch record. THE authenticity source (§138).
+    mapping(address token => Launch) private _launches;
+    address[] private _allTokens;
+
+    /// @dev creator => tokens they launched.
+    mapping(address creator => address[]) private _byCreator;
+
+    /// @dev effectiveSalt => used. Replay protection (§412).
+    mapping(bytes32 salt => bool) public saltUsed;
+
+    event TokenLaunched(
+        address indexed token,
+        address indexed market,
+        address indexed creator,
+        address quoteAsset,
+        string name,
+        string symbol,
+        uint256 p0,
+        bytes32 effectiveSalt
+    );
+    event RouterUpdated(address indexed from, address indexed to);
+    event LaunchFeeUpdated(uint256 from, uint256 to);
+    event TreasuryUpdated(address indexed from, address indexed to);
+    event GovernanceTransferred(address indexed from, address indexed to);
+
+    error NotGovernance();
+    error ZeroAddress();
+    error QuoteAssetNotLaunchable(address quoteAsset);
+    error SaltAlreadyUsed(bytes32 effectiveSalt);
+    error PredictedAddressMismatch(address predicted, address actual);
+    error InsufficientLaunchFee(uint256 sent, uint256 required);
+    error InvalidReferencePrice();
+    error RouterNotSet();
+    error LaunchFeeTransferFailed();
+
+    modifier onlyGovernance() {
+        if (msg.sender != governance) revert NotGovernance();
+        _;
+    }
+
+    constructor(address governance_, address treasury_, address registry_, uint256 launchFee_) {
+        if (governance_ == address(0) || treasury_ == address(0) || registry_ == address(0)) {
+            revert ZeroAddress();
+        }
+
+        governance = governance_;
+        treasury = treasury_;
+        REGISTRY = XStockRegistry(registry_);
+        launchFee = launchFee_;
+
+        // The vaults are deployed by this factory so that their immutable FACTORY
+        // field can only ever be this contract. A market registered with either
+        // vault is therefore provably one this factory created.
+        FEE_VAULT = new FeeVault(governance_, treasury_, address(this));
+        REWARD_VAULT = new HolderRewardVault(governance_, address(this));
+    }
+
+    // -----------------------------------------------------------------------
+    // Launch
+    // -----------------------------------------------------------------------
+
+    struct LaunchParams {
+        string name;
+        string symbol;
+        address quoteAsset;
+        /// @dev The salt the creator's grinder found. Never used directly.
+        bytes32 userSalt;
+        /// @dev Hash of the launch intent the creator reviewed (metadata, socials).
+        ///      Bound into the salt so a modified intent produces a different
+        ///      address rather than silently launching something else.
+        bytes32 launchIntentHash;
+        /// @dev Launch-time xStock/USD reference snapshot, wad (§8, §402).
+        uint256 xStockUsdWad;
+        /// @dev The address the creator was shown in the preview. Enforced.
+        address expectedToken;
+    }
+
+    /// @notice Launch a token and its market.
+    /// @dev `msg.sender` is the creator, permanently. Callable by anyone; the
+    ///      caller becomes the creator of what they launch, and can never become
+    ///      the creator of what someone else launched.
+    function launch(LaunchParams calldata params)
+        external
+        payable
+        nonReentrant
+        returns (address token, address market)
+    {
+        if (msg.value < launchFee) revert InsufficientLaunchFee(msg.value, launchFee);
+        if (router == address(0)) revert RouterNotSet();
+
+        // §420: only a fully verified official xStock may back a market. An empty
+        // or unverified registry means no launch is possible at all — which is the
+        // correct behaviour, not an outage.
+        if (!REGISTRY.isLaunchable(params.quoteAsset)) revert QuoteAssetNotLaunchable(params.quoteAsset);
+
+        bytes32 effectiveSalt = computeEffectiveSalt(
+            msg.sender, params.userSalt, params.quoteAsset, params.launchIntentHash
+        );
+        if (saltUsed[effectiveSalt]) revert SaltAlreadyUsed(effectiveSalt);
+        saltUsed[effectiveSalt] = true;
+
+        // The creator signed off on a specific address in the preview (§3 step 5).
+        // If anything about the launch changed, the address changes, and this
+        // check stops the launch rather than deploying something they never saw.
+        address predicted = predictTokenAddress(effectiveSalt, params.name, params.symbol, msg.sender);
+        if (params.expectedToken != address(0) && params.expectedToken != predicted) {
+            revert PredictedAddressMismatch(params.expectedToken, predicted);
+        }
+
+        uint256 p0 = referencePriceToP0(params.xStockUsdWad, params.quoteAsset);
+
+        token = address(new LaunchToken{salt: effectiveSalt}(params.name, params.symbol, msg.sender));
+        if (token != predicted) revert PredictedAddressMismatch(predicted, token);
+
+        market = address(
+            new LaunchMarket{salt: effectiveSalt}(
+                token,
+                params.quoteAsset,
+                IERC20Metadata(params.quoteAsset).decimals(),
+                msg.sender,
+                address(FEE_VAULT),
+                address(REWARD_VAULT),
+                p0
+            )
+        );
+
+        LaunchToken(token).setMarket(market);
+
+        // The entire genesis supply moves to the market. The creator receives
+        // nothing, here or anywhere else.
+        IERC20(token).safeTransfer(market, LaunchToken(token).GENESIS_SUPPLY());
+
+        FEE_VAULT.registerMarket(market);
+        REWARD_VAULT.registerMarket(market, params.quoteAsset);
+        LaunchMarket(market).setRouter(router);
+
+        _launches[token] = Launch({
+            token: token,
+            market: market,
+            creator: msg.sender,
+            quoteAsset: params.quoteAsset,
+            launchedAt: uint64(block.timestamp),
+            exists: true
+        });
+        _allTokens.push(token);
+        _byCreator[msg.sender].push(token);
+
+        if (msg.value > 0) {
+            (bool ok,) = treasury.call{value: msg.value}("");
+            if (!ok) revert LaunchFeeTransferFailed();
+        }
+
+        emit TokenLaunched(
+            token, market, msg.sender, params.quoteAsset, params.name, params.symbol, p0, effectiveSalt
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Address prediction — what a grinder calls off-chain
+    // -----------------------------------------------------------------------
+
+    /// @notice The salt actually used, bound to the creator (§412).
+    /// @dev Because `creator` is inside the hash, two different callers passing
+    ///      identical parameters land on two different addresses. That is what
+    ///      makes a copied salt worthless to a front-runner.
+    function computeEffectiveSalt(
+        address creator,
+        bytes32 userSalt,
+        address quoteAsset,
+        bytes32 launchIntentHash
+    ) public pure returns (bytes32) {
+        return keccak256(abi.encode(creator, userSalt, LAUNCH_VERSION, quoteAsset, launchIntentHash));
+    }
+
+    /// @notice Predict a token address without deploying. The grinder's inner loop.
+    function predictTokenAddress(bytes32 effectiveSalt, string memory name, string memory symbol, address creator)
+        public
+        view
+        returns (address)
+    {
+        bytes32 initCodeHash =
+            keccak256(abi.encodePacked(type(LaunchToken).creationCode, abi.encode(name, symbol, creator)));
+
+        return address(
+            uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), effectiveSalt, initCodeHash))))
+        );
+    }
+
+    /// @notice Full preview: what address a given userSalt would produce.
+    function previewLaunchAddress(
+        address creator,
+        bytes32 userSalt,
+        address quoteAsset,
+        bytes32 launchIntentHash,
+        string calldata name,
+        string calldata symbol
+    ) external view returns (address token, bytes32 effectiveSalt) {
+        effectiveSalt = computeEffectiveSalt(creator, userSalt, quoteAsset, launchIntentHash);
+        token = predictTokenAddress(effectiveSalt, name, symbol, creator);
+    }
+
+    // -----------------------------------------------------------------------
+    // Curve anchoring (§8, §402)
+    // -----------------------------------------------------------------------
+
+    /// @notice Derive the starting price from the $2,000 reference market cap.
+    /// @dev Anchored ONCE, at launch, from the reference snapshot. The live USD
+    ///      feed never re-anchors an existing market — §402 splits those roles
+    ///      precisely so a display feed can never move a market's economics.
+    function referencePriceToP0(uint256 xStockUsdWad, address) public pure returns (uint256 p0) {
+        if (xStockUsdWad == 0) revert InvalidReferencePrice();
+
+        uint256 referenceMcUsd = 2_000e18; // LOCKED (§0)
+        uint256 quoteMc = (referenceMcUsd * 1e18) / xStockUsdWad;
+        p0 = (quoteMc * 1e18) / Curve.TOTAL_SUPPLY;
+
+        if (p0 == 0) revert InvalidReferencePrice();
+    }
+
+    // -----------------------------------------------------------------------
+    // Authenticity views (§138)
+    // -----------------------------------------------------------------------
+
+    /// @notice THE authenticity check. A UI must use this, never an address suffix.
+    function isAuthentic(address token) external view returns (bool) {
+        return _launches[token].exists;
+    }
+
+    function getLaunch(address token) external view returns (Launch memory) {
+        return _launches[token];
+    }
+
+    function creatorOf(address token) external view returns (address) {
+        return _launches[token].creator;
+    }
+
+    function totalLaunches() external view returns (uint256) {
+        return _allTokens.length;
+    }
+
+    function tokenAt(uint256 index) external view returns (address) {
+        return _allTokens[index];
+    }
+
+    function launchesByCreator(address creator) external view returns (address[] memory) {
+        return _byCreator[creator];
+    }
+
+    // -----------------------------------------------------------------------
+    // Governance — parameters only, never funds (§559)
+    // -----------------------------------------------------------------------
+
+    function setRouter(address router_) external onlyGovernance {
+        if (router_ == address(0)) revert ZeroAddress();
+        emit RouterUpdated(router, router_);
+        router = router_;
+    }
+
+    function setLaunchFee(uint256 newFee) external onlyGovernance {
+        emit LaunchFeeUpdated(launchFee, newFee);
+        launchFee = newFee;
+    }
+
+    function setTreasury(address newTreasury) external onlyGovernance {
+        if (newTreasury == address(0)) revert ZeroAddress();
+        emit TreasuryUpdated(treasury, newTreasury);
+        treasury = newTreasury;
+    }
+
+    function transferGovernance(address newGovernance) external onlyGovernance {
+        if (newGovernance == address(0)) revert ZeroAddress();
+        emit GovernanceTransferred(governance, newGovernance);
+        governance = newGovernance;
+    }
+}

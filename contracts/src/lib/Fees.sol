@@ -75,9 +75,17 @@ library Fees {
         b.notional = notional;
         b.coreFee = (notional * CORE_FEE_BPS) / BPS;
 
-        // Creator floors, platform takes the remainder: the split is exhaustive,
-        // no dust escapes it, and the creator can never exceed 65% (D-003).
-        b.creatorFee = (b.coreFee * CREATOR_SHARE_BPS) / BPS;
+        // Creator rounds UP, platform absorbs the remainder (D-003, revised).
+        //
+        // Direction matters here. Rounding the creator DOWN made the aggregate
+        // creator share sit permanently a wei or two below 65%, because a sum of
+        // floors is not the floor of a sum. Sub-wei, but section 314.2 is explicit
+        // that the creator's share may never be reduced, so the dust must land on
+        // the platform - the party that agreed to the split - never on the
+        // creator, who is the protected party. Found by an invariant, not by
+        // inspection.
+        b.creatorFee = (b.coreFee * CREATOR_SHARE_BPS + BPS - 1) / BPS;
+        if (b.creatorFee > b.coreFee) b.creatorFee = b.coreFee;
         b.platformFee = b.coreFee - b.creatorFee;
 
         b.stockback = (notional * stockbackBps) / BPS;

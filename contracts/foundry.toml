@@ -31,3 +31,14 @@ runs = 10000
 [profile.ci.invariant]
 runs = 1024
 depth = 128
+
+# Masterplan 411 places invariant suites in contracts/invariants/, which is not
+# one of Foundry's default compiled paths. A dedicated profile keeps the repo
+# shape the masterplan specifies instead of relocating the suite to suit the tool.
+[profile.inv]
+test = "invariants"
+
+[profile.inv.invariant]
+runs = 256
+depth = 64
+fail_on_revert = false

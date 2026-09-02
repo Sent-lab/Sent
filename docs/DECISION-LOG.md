@@ -209,3 +209,58 @@ adversarial review (Stream I).
 **UX impact:** none.
 **Migration impact:** none.
 **Approved by:** implementation agent (ordinary CHOOSE). Revisit Day 6.
+
+
+---
+
+## D-003a — Creator fee rounding reversed (revises D-003)
+
+**Class:** CHOOSE (rounding direction), correcting an earlier CHOOSE
+**Date:** Day 3
+
+**Decision:** the creator's 65% share of the core fee now rounds **up**, with the
+platform taking the remainder. D-003 originally specified the opposite.
+
+**Reason:** an on-chain invariant over randomised multi-trade sequences
+(`invariant_creatorShareIsNeverReduced`) failed by exactly one wei. Flooring the
+creator's share per trade makes the aggregate share sit permanently below 65%, because
+a sum of floors is not the floor of a sum. §314.2 states the creator's share may never
+be reduced, and rounding dust should fall on the platform — the party that agreed to
+the split — rather than on the creator, who is the protected party.
+
+**Economic impact:** sub-wei per trade, now in the creator's favour instead of against
+them. Locked rates unchanged; the §315 worked examples are unaffected because 100 is
+exactly divisible.
+**Security impact:** none. The split remains exhaustive, so no dust escapes accounting.
+**UX impact:** none at display precision.
+**Migration impact:** none — pre-deployment.
+**Approved by:** implementation agent (ordinary CHOOSE). Both implementations updated
+together; the Solidity and TypeScript splits are differential-tested and may not diverge.
+
+---
+
+## D-009 — Circular token/market dependency broken on the token side
+
+**Class:** CHOOSE (architecture mechanism)
+**Date:** Day 3
+
+**Decision:** `LaunchToken`'s constructor takes only `(name, symbol, creator)` and mints
+the genesis supply to the factory, which forwards it to the market. The token's `market`
+field is a write-once, factory-only setter. `LaunchMarket` keeps `TOKEN` immutable.
+
+**Reason:** the market needs the token address and the token needs the market address.
+Under CREATE2 each address depends on the other's constructor arguments through the
+init-code hash, so one side must resolve after deployment. The market's `TOKEN` is
+security-critical — every transfer, the entire reserve and the graduation migration
+depend on it. The token's `market` field is informational: nothing in `LaunchToken`
+reads it, and no balance, supply or transfer decision depends on it. Making the harmless
+field write-once is strictly safer than making the critical one mutable.
+
+Both addresses stay fully predictable off-chain, so the vanity grinder can search
+`userSalt` without deploying anything.
+
+**Economic impact:** none.
+**Security impact:** positive — the mutable surface is the one with no security role.
+**UX impact:** none; the launch preview still shows the exact deployed address.
+**Migration impact:** none.
+**Approved by:** implementation agent (ordinary CHOOSE).

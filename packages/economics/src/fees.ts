@@ -76,12 +76,18 @@ export interface FeeBreakdown {
 /**
  * Split the core fee 65/35.
  *
- * Rounding (D-003): the creator share is floored and the platform receives the
- * remainder, so creator + platform === coreFee exactly, with no dust escaping
- * the split and no path by which the creator's entitlement exceeds 65%.
+ * Rounding (D-003, revised): the creator share rounds UP and the platform takes
+ * the remainder, so creator + platform === coreFee exactly with no dust escaping.
+ *
+ * The direction is deliberate. Flooring the creator left the aggregate creator
+ * share permanently a wei or two below 65%, because a sum of floors is not the
+ * floor of a sum. §314.2 is explicit that the creator's share may never be
+ * reduced, so rounding dust lands on the platform — the party that agreed to the
+ * split — never on the creator. Surfaced by an on-chain invariant.
  */
 export function splitCoreFee(coreFee: bigint): { creator: bigint; platform: bigint } {
-  const creator = mulBpsFloor(coreFee, CREATOR_SHARE_BPS);
+  let creator = (coreFee * CREATOR_SHARE_BPS + BPS - 1n) / BPS;
+  if (creator > coreFee) creator = coreFee;
   return { creator, platform: coreFee - creator };
 }
 

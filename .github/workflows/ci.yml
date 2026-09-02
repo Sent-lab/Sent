@@ -56,5 +56,9 @@ jobs:
       # design decision. Reviewed as part of the Day 6 quality pass.
       - name: Lint (non-blocking)
         run: forge lint --root contracts || true
-      - name: Unit + fuzz + invariants
+      - name: Unit + fuzz
+        run: forge test --root contracts -vvv
+      - name: Invariants
+        env:
+          FOUNDRY_PROFILE: inv
         run: forge test --root contracts -vvv

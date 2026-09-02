@@ -105,14 +105,14 @@ contract LaunchMarketTest is Test {
         uint256 quoteMc = (2_000e18 * WAD) / XSTOCK_USD;
         uint256 p0 = (quoteMc * WAD) / Curve.TOTAL_SUPPLY;
 
-        // Predict the market address so the token can mint to it, mirroring what
-        // the factory will do on Day 3.
+        // Mirrors the factory: deploy the token, then the market, then forward
+        // the entire genesis supply. No address prediction needed (D-009).
+        token = new LaunchToken("Sent Test", "TEST", creator);
         market = new LaunchMarket(
-            _predictToken(), address(quote), 18, creator, address(feeVault), address(rewardVault), p0
+            address(token), address(quote), 18, creator, address(feeVault), address(rewardVault), p0
         );
-
-        token = new LaunchToken("Sent Test", "TEST", address(market), creator);
-        require(address(token) == market.TOKEN(), "token address prediction failed");
+        token.setMarket(address(market));
+        token.transfer(address(market), token.GENESIS_SUPPLY());
 
         feeVault.registerMarket(address(market));
         rewardVault.registerMarket(address(market), address(quote));
@@ -125,11 +125,6 @@ contract LaunchMarketTest is Test {
         quote.approve(address(market), type(uint256).max);
         vm.prank(bob);
         quote.approve(address(market), type(uint256).max);
-    }
-
-    /// @dev The LaunchToken is the next contract this test deploys after the market.
-    function _predictToken() internal view returns (address) {
-        return vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
     }
 
     function _buy(address who, uint256 gross) internal returns (uint256) {

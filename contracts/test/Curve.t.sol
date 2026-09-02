@@ -245,10 +245,16 @@ contract CurveTest is Test {
         assertEq(buy.creatorFee, sell.creatorFee, "creator share must not depend on side");
     }
 
-    function testFuzz_creatorNeverExceeds65Percent(uint256 notional) public pure {
+    /// @dev section 314.2: the creator's share may never be REDUCED. Rounding
+    ///      therefore favours the creator, and the platform absorbs the dust.
+    function testFuzz_creatorIsNeverShortChanged(uint256 notional) public pure {
         notional = bound(notional, 0, 1e40);
         Fees.Breakdown memory f = Fees.forBuy(notional);
-        assertLe(f.creatorFee * 10_000, f.coreFee * 6_500, "creator must never exceed 65%");
+
+        assertGe(f.creatorFee * 10_000, f.coreFee * 6_500, "creator must never receive less than 65%");
+        // And never more than one indivisible unit above it.
+        assertLe(f.creatorFee * 10_000, f.coreFee * 6_500 + 10_000, "excess is bounded to rounding");
+        assertEq(f.creatorFee + f.platformFee, f.coreFee, "split stays exhaustive");
     }
 
     function test_postGradSplit() public pure {

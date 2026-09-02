@@ -130,11 +130,18 @@ All terms are exact integers. The same treatment applies to sell and to collater
 | integer sqrt | **floor** | smaller root ⇒ fewer TOKEN out |
 | core fee, Stockback | **down** | fee is a deduction; flooring favours the user, and the |
 | | | protocol's solvency is unaffected because fees sit outside collateral |
-| creator 65% split | **down**, platform takes remainder | creator + platform ≡ coreFee exactly, no dust escapes, creator never exceeds 65% |
+| creator 65% split | **up**, platform takes remainder | §314.2 says the creator's share may never be *reduced*, so rounding dust lands on the platform, never the creator. Split stays exhaustive. |
 | graduation endpoint qG | **down** | graduation triggers a hair early, keeping the LP seed fully funded |
 
 Asserted in simulation: a buy-then-sell round trip never returns more than was paid
 (pre-fee), and stepwise collateral accumulation is always ≥ the closed form.
+
+**On the creator split direction.** This originally floored the creator's share. An
+on-chain invariant over randomised multi-trade sequences caught that the *aggregate*
+creator share then sat permanently one or two wei below 65%, because a sum of floors
+is not the floor of a sum. Sub-wei, but the wrong direction against §314.2, so the
+rounding now favours the creator and the platform absorbs the dust. No single-trade
+unit test could have found this.
 
 ---
 
