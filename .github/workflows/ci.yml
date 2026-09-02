@@ -61,6 +61,9 @@ jobs:
       - name: Configuration and environment
         run: node --experimental-strip-types packages/config/sim/env.ts
 
+      - name: Display formatting
+        run: node --experimental-strip-types apps/web/sim/format.ts
+
       # The Dockerfile copies each workspace manifest by name so the dependency
       # layer can be cached. A new package that nobody adds there produces an
       # image that installs a different graph than the repo declares, and the
