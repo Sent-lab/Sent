@@ -52,6 +52,9 @@ jobs:
       - name: API handlers
         run: node --experimental-strip-types services/api/sim/handlers.ts
 
+      - name: Stockback finalizer
+        run: node --experimental-strip-types services/finalizer/sim/finalizer.ts
+
       # The differential fixtures are committed. If TypeScript changed without
       # regenerating them, or a regenerated set was not committed, this fails -
       # which is exactly the drift 1064 forbids.

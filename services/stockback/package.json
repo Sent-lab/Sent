@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "TWAB to Merkle commitment pipeline. Deterministic per Masterplan 404/406.",
+  "exports": {
+    ".": "./src/distribution.ts"
+  },
   "dependencies": {
     "viem": "^2.56.3",
     "@sent/stockback": "workspace:*"

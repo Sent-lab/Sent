@@ -1,0 +1,16 @@
+{
+  "name": "@sent/finalizer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Computes Stockback distributions from settled chain state. Proposes, never signs (Masterplan 594/597).",
+  "dependencies": {
+    "@sent/database": "workspace:*",
+    "@sent/stockback": "workspace:*",
+    "@sent/stockback-service": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types sim/finalizer.ts"
+  }
+}

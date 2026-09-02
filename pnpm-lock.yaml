@@ -91,6 +91,18 @@ importers:
         specifier: ^2.56.3
         version: 2.56.3(typescript@5.9.3)
 
+  services/finalizer:
+    dependencies:
+      '@sent/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@sent/stockback':
+        specifier: workspace:*
+        version: link:../../packages/stockback
+      '@sent/stockback-service':
+        specifier: workspace:*
+        version: link:../stockback
+
   services/indexer:
     dependencies:
       '@sent/contracts':
