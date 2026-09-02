@@ -304,8 +304,15 @@ console.log("\n--- 6. §327/§359 Multi-epoch conservation ---------------------
   check("first claim pays the cumulative entitlement", first > 0n);
   check("replayed claim pays exactly zero (§336, §337)", replay === 0n);
 
+  // Assert the property directly rather than asserting `true` after a call that
+  // throws. A literal `true` reads like coverage and tests nothing.
   ledger.assertSolvent();
-  check("ledger still solvent after claims", true);
+  check(
+    "claimed never exceeds entitlement, which never exceeds funding",
+    ledger.totalClaimed <= ledger.totalEntitlement &&
+      ledger.totalEntitlement <= ledger.totalFunded,
+    `claimed ${ledger.totalClaimed} <= entitlement ${ledger.totalEntitlement} <= funded ${ledger.totalFunded}`,
+  );
 }
 
 // ---------------------------------------------------------------------------

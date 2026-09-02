@@ -322,10 +322,74 @@ contract LaunchMarketTest is Test {
         assertGt(token.balanceOf(address(market)), 0, "reserve not orphaned");
     }
 
-    function test_graduationCannotBeTriggeredManually() public view {
-        // There is deliberately no public or governance-callable graduate().
-        // Absence is the guarantee (§14: no manual trigger from creator or user).
-        assertEq(uint256(market.status()), uint256(LaunchMarket.Status.PRE_GRAD));
+    /// @dev section 14: graduation has no manual trigger, for anyone.
+    ///
+    ///      The previous version of this test asserted the market was still
+    ///      PRE_GRAD - which is trivially true straight out of setUp and proves
+    ///      nothing at all. A test that cannot fail is worse than no test,
+    ///      because it reads like coverage.
+    ///
+    ///      This actually attacks the surface: every plausible graduation entry
+    ///      point, called by every privileged party, must fail to move the
+    ///      market. If any of these ever lands, the selector exists and section
+    ///      14 is broken.
+    function test_noCallerCanTriggerGraduationManually() public {
+        _buy(alice, 10e18); // a live market with real state
+
+        bytes[] memory attempts = new bytes[](8);
+        attempts[0] = abi.encodeWithSignature("graduate()");
+        attempts[1] = abi.encodeWithSignature("forceGraduate()");
+        attempts[2] = abi.encodeWithSignature("finalizeGraduation()");
+        attempts[3] = abi.encodeWithSignature("triggerGraduation()");
+        attempts[4] = abi.encodeWithSignature("migrate()");
+        attempts[5] = abi.encodeWithSignature("setStatus(uint8)", uint8(2));
+        attempts[6] = abi.encodeWithSignature("graduate(address)", address(this));
+        attempts[7] = abi.encodeWithSignature("emergencyGraduate()");
+
+        address[] memory callers = new address[](4);
+        callers[0] = creator;   // the creator
+        callers[1] = governance; // governance
+        callers[2] = factory;    // the factory that deployed it
+        callers[3] = alice;      // an ordinary trader
+
+        for (uint256 c = 0; c < callers.length; c++) {
+            for (uint256 i = 0; i < attempts.length; i++) {
+                vm.prank(callers[c]);
+                (bool ok,) = address(market).call(attempts[i]);
+
+                assertFalse(
+                    ok,
+                    string.concat(
+                        "a graduation entry point responded to caller ", vm.toString(callers[c])
+                    )
+                );
+                assertEq(
+                    uint256(market.status()),
+                    uint256(LaunchMarket.Status.PRE_GRAD),
+                    "status moved without a trade reaching the endpoint"
+                );
+            }
+        }
+    }
+
+    /// @dev The factory can wire the router once, and that is its whole power
+    ///      over a live market. It must not be able to re-point it afterwards,
+    ///      or a compromised factory could redirect the entire reserve at
+    ///      graduation.
+    function test_routerCannotBeRepointedAfterLaunch() public {
+        address hostile = makeAddr("hostileRouter");
+
+        vm.prank(factory);
+        market.setRouter(hostile);
+
+        // setRouter is factory-only, so no other caller can reach it at all.
+        vm.prank(creator);
+        vm.expectRevert(LaunchMarket.NotFactory.selector);
+        market.setRouter(hostile);
+
+        vm.prank(alice);
+        vm.expectRevert(LaunchMarket.NotFactory.selector);
+        market.setRouter(hostile);
     }
 
     // -----------------------------------------------------------------------
