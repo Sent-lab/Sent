@@ -38,6 +38,8 @@ jobs:
         run: node --experimental-strip-types services/stockback/sim/determinism.ts
       - name: Realtime gateway
         run: node --experimental-strip-types services/realtime/sim/gateway.ts
+      - name: API handlers
+        run: node --experimental-strip-types services/api/sim/handlers.ts
       # The differential fixtures are committed. If TypeScript changed without
       # regenerating them, or a regenerated set was not committed, this fails -
       # which is exactly the drift 1064 forbids.

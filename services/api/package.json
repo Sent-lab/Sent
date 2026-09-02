@@ -1,0 +1,11 @@
+{
+  "name": "@sent/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "HTTP API. Serves projections and SDK-built intents; never re-derives economics.",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types sim/handlers.ts"
+  }
+}
