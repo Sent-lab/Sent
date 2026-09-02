@@ -39,7 +39,11 @@ importers:
 
   packages/contracts: {}
 
-  packages/database: {}
+  packages/database:
+    dependencies:
+      pg:
+        specifier: ^8.13.1
+        version: 8.23.0
 
   packages/economics: {}
 
@@ -77,6 +81,12 @@ importers:
 
   services/indexer:
     dependencies:
+      '@sent/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@sent/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       viem:
         specifier: ^2.56.3
         version: 2.56.3(typescript@5.9.3)

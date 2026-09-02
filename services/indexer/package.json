@@ -5,7 +5,9 @@
   "type": "module",
   "description": "Reorg-safe HyperEVM event ingestion. Produces the projection per Masterplan 138.",
   "dependencies": {
-    "viem": "^2.56.3"
+    "viem": "^2.56.3",
+    "@sent/database": "workspace:*",
+    "@sent/contracts": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
