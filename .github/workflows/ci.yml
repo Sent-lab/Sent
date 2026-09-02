@@ -77,3 +77,10 @@ jobs:
         env:
           FOUNDRY_PROFILE: inv
         run: forge test --root contracts -vvv
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Replays the logs the Foundry run just captured through the production
+      # reducer, proving the projection reproduces on-chain state (138).
+      - name: Projection replay proof
+        run: node --experimental-strip-types services/indexer/sim/projection.ts

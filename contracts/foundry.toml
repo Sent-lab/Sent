@@ -15,7 +15,12 @@ bytecode_hash = "none"
 # that is the sole reason the curve math does not overflow uint256. Blocking on
 # them would be theatre. The real gates are the compiler, the fuzz and invariant
 # suites, the differential tests against packages/economics, and security review.
-fs_permissions = [{ access = "read", path = "./" }]
+# Read everywhere for fixtures; write ONLY into the fixture directory, so a test
+# can capture chain output without being able to touch source or config.
+fs_permissions = [
+    { access = "read", path = "./" },
+    { access = "read-write", path = "./test/fixtures" },
+]
 
 [profile.default.fuzz]
 runs = 1024
