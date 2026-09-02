@@ -51,6 +51,8 @@ contract MarketHandler is Test {
 
     address[] public actors;
 
+    uint256 public donatedQuote;
+    uint256 public donatedToken;
     uint256 public totalQuoteIn;
     uint256 public totalQuoteOut;
     uint256 public buyCount;
@@ -112,10 +114,29 @@ contract MarketHandler is Test {
         } catch {}
     }
 
-    /// @dev An unsolicited donation. Must never change what the curve owes.
+    /// @dev An unsolicited QUOTE donation. Must never change what the curve owes.
     function donate(uint256 amount) external {
         amount = bound(amount, 1, 100e18);
         quote.mint(address(market), amount);
+        donatedQuote += amount;
+    }
+
+    /// @dev An unsolicited TOKEN donation.
+    ///
+    ///      This is the shape that broke graduation: reading balanceOf for the
+    ///      migrated reserve let a donation inflate the token side of the V3 mint
+    ///      and open the pool at the wrong price. Driving it continuously here
+    ///      means the fix is held by an invariant rather than by one test.
+    function donateToken(uint256 actorSeed, uint256 amount) external {
+        address actor = _actor(actorSeed);
+        uint256 held = token.balanceOf(actor);
+        if (held == 0) return;
+
+        amount = bound(amount, 1, held);
+
+        vm.prank(actor);
+        token.transfer(address(market), amount);
+        donatedToken += amount;
     }
 
     function actorCount() external view returns (uint256) {
@@ -180,6 +201,38 @@ contract MarketInvariants is Test {
     function invariant_distributedNeverExceedsEndpoint() public view {
         (,,, uint256 qG) = market.curve();
         assertLe(market.distributed(), qG, "distribution must never pass the endpoint");
+    }
+
+    /// @dev The market's TOKEN balance must always cover the undistributed
+    ///      reserve, and the excess must be exactly what was donated.
+    ///
+    ///      This is the invariant that would have caught the graduation bug: the
+    ///      reserve is `TOTAL_SUPPLY - distributed`, and anything above it is a
+    ///      donation that must never be treated as reserve.
+    function invariant_reserveIsCurveStateNotBalance() public view {
+        if (market.status() == LaunchMarket.Status.GRADUATED) return;
+
+        uint256 reserve = Curve.TOTAL_SUPPLY - market.distributed();
+        uint256 balance = token.balanceOf(address(market));
+
+        assertGe(balance, reserve, "the market must hold at least its undistributed reserve");
+        assertEq(
+            balance - reserve,
+            handler.donatedToken(),
+            "any excess over the reserve must be exactly what was donated"
+        );
+    }
+
+    /// @dev After graduation the router holds the reserve, and donated TOKEN is
+    ///      stranded in the dead market rather than having joined the LP.
+    function invariant_donatedTokenIsNeverMigrated() public view {
+        if (market.status() != LaunchMarket.Status.GRADUATED) return;
+
+        assertEq(
+            token.balanceOf(address(market)),
+            handler.donatedToken(),
+            "only donated TOKEN may remain after migration"
+        );
     }
 
     /// @dev Every token is either in the market's reserve or held by someone.
