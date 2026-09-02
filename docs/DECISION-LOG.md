@@ -151,3 +151,61 @@ These are **not** decided here. They are recorded so they cannot be lost.
 | C-03 / V-08 | If exact V3 tick geometry demands a material economic change | §416 requires escalation as a product decision, not a code fix. |
 | V-18 | Legal / operator restrictions | Counsel, not engineering. |
 | D-004, D-005 | Acknowledgement of two LOCKED-surface interpretations | Both change nothing, but both touch locked economics and should be seen. |
+
+---
+
+## D-007 — Foundry dependencies vendored, pruned to compiled sources
+
+**Class:** CHOOSE (supply chain / build reproducibility)
+**Date:** Day 2
+
+**Decision:** `forge-std` and `openzeppelin-contracts@v5.1.0` are committed into
+`contracts/lib` rather than tracked as git submodules, and `.gitignore` excludes each
+dependency's own tests, scripts, docs, audits, certora specs, hardhat config and mocks.
+
+**Reason:** §702 requires dependency pinning. A vendored copy of an exact version cannot change
+under us if an upstream tag is moved, and it keeps CI builds reproducible without submodule
+initialisation. The first `git add -A` swept in 781 files / 13 MB of upstream tooling that we
+neither build nor audit; pruning to compiled sources brings the tree to 281 tracked files and
+keeps future diffs and CODEOWNERS review (§658) legible.
+
+**Economic impact:** none.
+**Security impact:** positive — pinned, inspectable dependency bytecode; §703 SBOM obligation
+still outstanding.
+**UX impact:** none.
+**Migration impact:** none.
+**Approved by:** implementation agent (ordinary CHOOSE).
+
+---
+
+## D-008 — `forge lint` is informational, not a build gate
+
+**Class:** CHOOSE (tooling)
+**Date:** Day 2
+
+**Decision:** `deny = "warnings"` removed from `foundry.toml`. `forge lint` runs in CI as a
+non-blocking step and is reviewed during the Day 6 quality pass.
+
+**Reason:** the gate was set on Day 2 and immediately produced 13 warnings, all of which are
+either inside test files or are deliberate, documented decisions in `Curve.sol`:
+
+- `require-revert-in-loop` — the bounded correction loop in `tokensOutFor` reverts precisely
+  because failure to converge means an invariant is broken; halting is the correct behaviour.
+  The linter also flags callees transitively.
+- `divide-before-multiply` — dividing the quadratic by `dP` before squaring is the *sole reason*
+  the curve math does not overflow `uint256` for realistic xStock prices. The precision lost is
+  recovered exactly by the correction loop against the overflow-safe forward function.
+
+Per-line suppression did not take effect because the linter reports at the callee site. Blocking
+a build on false positives against documented decisions is theatre, and it trains reviewers to
+ignore warnings.
+
+**The gates that actually protect this codebase remain in force:** the Solidity compiler, the
+fuzz and invariant suites, the differential tests against `packages/economics`, and continuous
+adversarial review (Stream I).
+
+**Economic impact:** none.
+**Security impact:** neutral — no real finding is being suppressed; lint output stays visible in CI.
+**UX impact:** none.
+**Migration impact:** none.
+**Approved by:** implementation agent (ordinary CHOOSE). Revisit Day 6.

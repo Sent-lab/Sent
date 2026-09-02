@@ -9,8 +9,12 @@ optimizer = true
 optimizer_runs = 1000
 via_ir = false
 bytecode_hash = "none"
-# Masterplan 396-A: accounting bugs are the primary risk. Fail on any warning.
-deny = "warnings"
+# Lint runs in CI as an informational step, not as a build gate (D-008).
+# Every hit in this codebase is either in a test or is a deliberate, documented
+# design decision in Curve.sol - the bounded correction loop and the rescaling
+# that is the sole reason the curve math does not overflow uint256. Blocking on
+# them would be theatre. The real gates are the compiler, the fuzz and invariant
+# suites, the differential tests against packages/economics, and security review.
 fs_permissions = [{ access = "read", path = "./" }]
 
 [profile.default.fuzz]

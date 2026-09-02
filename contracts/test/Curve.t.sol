@@ -122,8 +122,8 @@ contract CurveTest is Test {
     function test_fullWalkAtExtremePrice() public pure {
         Curve.Params memory p = _curve(1e18);
 
-        uint256 q;
-        uint256 collateral;
+        uint256 q = 0;
+        uint256 collateral = 0;
         for (uint256 i = 0; i < 64; i++) {
             uint256 target = (p.qG * (i + 1)) / 64;
             collateral += Curve.quoteInFor(p, q, target - q);

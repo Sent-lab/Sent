@@ -37,15 +37,15 @@ contract LaunchToken is ERC20 {
     uint256 public constant GENESIS_SUPPLY = 1_000_000_000e18;
 
     /// @notice The market this token was minted to. Immutable, informational.
-    address public immutable market;
+    address public immutable MARKET;
 
     /// @notice The factory that deployed this token. Authenticity is checked
     ///         against the factory's registry, not against this field alone.
-    address public immutable factory;
+    address public immutable FACTORY;
 
     /// @notice The creator wallet that requested the launch. This is the canonical
     ///         creator identity (§579) — the platform deployer never is (§578).
-    address public immutable creator;
+    address public immutable CREATOR;
 
     error ZeroAddress();
 
@@ -58,9 +58,9 @@ contract LaunchToken is ERC20 {
     {
         if (market_ == address(0) || creator_ == address(0)) revert ZeroAddress();
 
-        market = market_;
-        creator = creator_;
-        factory = msg.sender;
+        MARKET = market_;
+        CREATOR = creator_;
+        FACTORY = msg.sender;
 
         // The one and only mint. There is no other path to _mint in this contract,
         // and ERC20 exposes none — so totalSupply is fixed for all time.

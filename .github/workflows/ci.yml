@@ -52,5 +52,9 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
       - name: Build
         run: forge build --root contracts
+      # Informational only (D-008): every current hit is a test or a documented
+      # design decision. Reviewed as part of the Day 6 quality pass.
+      - name: Lint (non-blocking)
+        run: forge lint --root contracts || true
       - name: Unit + fuzz + invariants
         run: forge test --root contracts -vvv

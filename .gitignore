@@ -14,3 +14,18 @@ coverage/
 contracts/out/
 contracts/cache/
 contracts/broadcast/
+
+# Vendored Foundry deps: keep only what the compiler needs (D-007).
+# Pinned copies are committed rather than submoduled so CI builds are
+# reproducible and a retagged upstream release cannot change our bytecode
+# (Masterplan 702 dependency pinning). Everything else is upstream's own
+# tooling, docs and tests, which we neither build nor audit.
+contracts/lib/*/test/
+contracts/lib/*/scripts/
+contracts/lib/*/docs/
+contracts/lib/*/audits/
+contracts/lib/*/certora/
+contracts/lib/*/hardhat/
+contracts/lib/*/lib/
+contracts/lib/*/.github/
+contracts/lib/openzeppelin-contracts/contracts/mocks/

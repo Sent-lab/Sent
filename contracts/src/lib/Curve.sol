@@ -165,8 +165,11 @@ library Curve {
 
         // Correct to the exact floor. The guess errs by at most a couple of units
         // from the two floor divisions in the rescaling.
-        uint256 steps;
+        uint256 steps = 0;
 
+        // forge-lint: disable-next-line(require-revert-in-loop)
+        // The revert IS the point: the loop is a bounded correction, and failing
+        // to converge means an invariant is broken, so halting is correct.
         while (delta > 0 && quoteInFor(p, q, delta) > netIn) {
             unchecked {
                 --delta;
@@ -175,6 +178,7 @@ library Curve {
             if (steps > MAX_CORRECTION_STEPS) revert CurveCorrectionFailed();
         }
 
+        // forge-lint: disable-next-line(require-revert-in-loop)
         while (delta < remaining && quoteInFor(p, q, delta + 1) <= netIn) {
             unchecked {
                 ++delta;
@@ -195,6 +199,11 @@ library Curve {
         uint256 b = (2 * (p.p0 * p.qG + p.dP * q)) / p.dP;
         uint256 c = (2 * p.qG * WAD * netIn) / p.dP;
 
+        // forge-lint: disable-next-line(divide-before-multiply)
+        // Deliberate. Dividing by dP BEFORE squaring is the entire reason this
+        // function does not overflow (see the header). The precision lost here is
+        // recovered exactly by the correction loop in `tokensOutFor`, which uses
+        // the overflow-safe forward function as ground truth.
         uint256 root = _sqrt(b * b + 4 * c);
         return root > b ? (root - b) / 2 : 0;
     }
