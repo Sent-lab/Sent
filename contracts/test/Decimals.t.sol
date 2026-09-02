@@ -208,6 +208,48 @@ contract DecimalsTest is Test {
     }
 
     // -----------------------------------------------------------------------
+    // Dust: a trade that rounds to nothing must not silently consume value
+    // -----------------------------------------------------------------------
+
+    /// @dev Selling an amount so small that the payout rounds to zero would take
+    ///      the seller's TOKEN and hand back nothing. The smaller the quote
+    ///      asset's decimals, the larger the band of amounts this affects: at 6
+    ///      decimals the dust floor is 1e12 normalized units.
+    function test_sellThatRoundsToZeroMustRevert_sixDecimals() public {
+        Deployment memory d = _deploy(6);
+
+        vm.prank(alice);
+        uint256 out = d.market.buy(50 * (10 ** 6), 0, block.timestamp + 1);
+
+        vm.startPrank(alice);
+        d.token.approve(address(d.market), out);
+
+        uint256 balanceBefore = d.token.balanceOf(alice);
+
+        // One wei of TOKEN is worth far less than one unit of a 6-decimal asset.
+        vm.expectRevert();
+        d.market.sell(1, 0, block.timestamp + 1);
+
+        vm.stopPrank();
+
+        assertEq(d.token.balanceOf(alice), balanceBefore, "no TOKEN may be consumed for a zero payout");
+    }
+
+    function test_buyThatRoundsToZeroMustRevert_sixDecimals() public {
+        Deployment memory d = _deploy(6);
+
+        vm.startPrank(alice);
+        uint256 balanceBefore = d.quote.balanceOf(alice);
+
+        vm.expectRevert();
+        d.market.buy(1, 0, block.timestamp + 1);
+
+        vm.stopPrank();
+
+        assertEq(d.quote.balanceOf(alice), balanceBefore, "no quote may be consumed for a zero fill");
+    }
+
+    // -----------------------------------------------------------------------
     // Eight decimals, and a sweep
     // -----------------------------------------------------------------------
 

@@ -159,6 +159,8 @@ contract LaunchMarket is ReentrancyGuard {
     error ZeroAddress();
     error FeeSearchFailed(uint256 gross, uint256 targetNet);
     error CrossingUnderCollateralised(uint256 net, uint256 required);
+    error TradeTooSmallToSettleFees();
+    error PayoutRoundsToZero();
 
     /// @dev Bound on the fee-inversion search. The estimate lands within a couple
     ///      of units; anything beyond this means an assumption is broken.
@@ -360,6 +362,11 @@ contract LaunchMarket is ReentrancyGuard {
         _settleFees(f);
 
         netOutRaw = _denormalizeForPayout(f.net);
+
+        // A sell that pays nothing would still consume the seller's TOKEN. The
+        // curve is not harmed by it, but the seller is, so it is rejected rather
+        // than executed for zero.
+        if (netOutRaw == 0) revert PayoutRoundsToZero();
         if (netOutRaw < minQuoteOut) revert SlippageExceeded(netOutRaw, minQuoteOut);
 
         IERC20(QUOTE_ASSET).safeTransfer(msg.sender, netOutRaw);
@@ -389,19 +396,32 @@ contract LaunchMarket is ReentrancyGuard {
     function _settleFees(Fees.Breakdown memory f) private {
         if (f.coreFee > 0) {
             uint256 coreRaw = _denormalizeForPayout(f.coreFee);
-            if (coreRaw > 0) {
-                (uint256 creatorRaw, uint256 platformRaw) = Fees.splitCore(coreRaw);
-                IERC20(QUOTE_ASSET).safeTransfer(address(FEE_VAULT), coreRaw);
-                FEE_VAULT.accrue(CREATOR, QUOTE_ASSET, creatorRaw, platformRaw);
-            }
+
+            // A trade whose fee rounds away to nothing must be REJECTED, not
+            // waved through.
+            //
+            // Skipping settlement when the raw fee is zero looked harmless and was
+            // not: it made every trade below the fee dust floor completely free.
+            // For a 6-decimal quote asset that band runs to ~0.0001 xStock, so an
+            // order could be split into micro-fills that pay no core fee and fund
+            // no Stockback at all. Section 314.2 says the creator's share may
+            // never be reduced, and silently losing it to rounding reduces it.
+            //
+            // Rejecting instead of skipping also makes the minimum trade size
+            // emergent and exact: the smallest trade that can pay its own fee.
+            if (coreRaw == 0) revert TradeTooSmallToSettleFees();
+
+            (uint256 creatorRaw, uint256 platformRaw) = Fees.splitCore(coreRaw);
+            IERC20(QUOTE_ASSET).safeTransfer(address(FEE_VAULT), coreRaw);
+            FEE_VAULT.accrue(CREATOR, QUOTE_ASSET, creatorRaw, platformRaw);
         }
 
         if (f.stockback > 0) {
             uint256 sbRaw = _denormalizeForPayout(f.stockback);
-            if (sbRaw > 0) {
-                IERC20(QUOTE_ASSET).safeTransfer(address(REWARD_VAULT), sbRaw);
-                REWARD_VAULT.fund(sbRaw);
-            }
+            if (sbRaw == 0) revert TradeTooSmallToSettleFees();
+
+            IERC20(QUOTE_ASSET).safeTransfer(address(REWARD_VAULT), sbRaw);
+            REWARD_VAULT.fund(sbRaw);
         }
     }
 
