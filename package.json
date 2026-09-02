@@ -19,7 +19,7 @@
     "sim:all": "pnpm sim && pnpm sim:v3 && pnpm sim:stockback && pnpm sim:twab-edges && pnpm sim:lifecycle && pnpm sim:reorg && pnpm sim:freshness && pnpm sim:determinism && pnpm sim:gateway && pnpm sim:api",
     "fixtures": "node --experimental-strip-types packages/economics/sim/fixtures.ts",
     "fixtures:merkle": "node --experimental-strip-types packages/stockback/sim/merkle-fixtures.ts",
-    "fixtures:all": "pnpm fixtures && pnpm fixtures:merkle && pnpm fixtures:intent",
+    "fixtures:all": "pnpm fixtures && pnpm fixtures:merkle && pnpm fixtures:intent && pnpm fixtures:v3",
     "sim:lifecycle": "node --experimental-strip-types packages/economics/sim/lifecycle.ts",
     "sim:twab-edges": "node --experimental-strip-types packages/stockback/sim/twab-edges.ts",
     "abis": "node --experimental-strip-types packages/contracts/scripts/export-abis.ts",
@@ -29,7 +29,8 @@
     "sim:freshness": "node --experimental-strip-types packages/realtime/sim/freshness.ts",
     "sim:determinism": "node --experimental-strip-types services/stockback/sim/determinism.ts",
     "sim:gateway": "node --experimental-strip-types services/realtime/sim/gateway.ts",
-    "sim:api": "node --experimental-strip-types services/api/sim/handlers.ts"
+    "sim:api": "node --experimental-strip-types services/api/sim/handlers.ts",
+    "fixtures:v3": "node --experimental-strip-types packages/economics/sim/v3-fixtures.ts"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",

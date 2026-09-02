@@ -94,7 +94,14 @@ export function liquidityForAmount0(
   amount0: bigint,
 ): bigint {
   if (sqrtB <= sqrtP) throw new RangeError("liquidityForAmount0: upper must exceed current");
-  return (amount0 * sqrtB * sqrtP) / ((sqrtB - sqrtP) * Q96);
+
+  // Two steps, not one exact expression. Solidity CANNOT evaluate this directly:
+  // at full range the product `amount0·sb·sp` reaches ~1e100, far past uint256.
+  // The on-chain implementation therefore uses Uniswap's two-step form, and this
+  // mirror must floor at the same points or the two disagree by a wei — which
+  // would make the differential test measure the wrong thing.
+  const intermediate = (sqrtP * sqrtB) / Q96;
+  return (amount0 * intermediate) / (sqrtB - sqrtP);
 }
 
 /**
@@ -115,9 +122,8 @@ export function liquidityForAmount1(
 /** Token0 required to mint `liquidity` over [sp, sb]. Rounded up (the pool takes it). */
 export function amount0ForLiquidity(sqrtP: bigint, sqrtB: bigint, liquidity: bigint): bigint {
   if (sqrtB <= sqrtP) return 0n;
-  const numerator = liquidity * (sqrtB - sqrtP) * Q96;
-  const denominator = sqrtB * sqrtP;
-  return (numerator + denominator - 1n) / denominator;
+  // Uniswap's two-step form, mirroring the on-chain implementation exactly.
+  return ((liquidity << 96n) * (sqrtB - sqrtP)) / sqrtB / sqrtP;
 }
 
 /** Token1 required to mint `liquidity` over [sa, sp]. Rounded up. */
