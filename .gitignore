@@ -29,3 +29,22 @@ contracts/lib/*/hardhat/
 contracts/lib/*/lib/
 contracts/lib/*/.github/
 contracts/lib/openzeppelin-contracts/contracts/mocks/
+
+# ---------------------------------------------------------------------------
+# Private to the project, deliberately not published
+# ---------------------------------------------------------------------------
+#
+# The masterplan is the product and business specification: locked economics,
+# custody architecture, treasury and founder-profit routing, and the go-to-market
+# plan. It is the source of truth this repository implements, and most of it is
+# competitive advantage rather than anything a reader needs in order to
+# understand, audit or integrate with the code. docs/ carries what they do need.
+#
+# The brand board is the complete identity system - every logo variation, the
+# exact palette, the app icons. Publishing it makes a convincing clone cheap to
+# build, and section 507 treats domain and brand impersonation as a real attack
+# on users rather than a trademark inconvenience.
+#
+# Both stay on disk and remain the working source of truth locally.
+Masterplan_*.md
+Brand.png
