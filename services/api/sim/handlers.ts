@@ -21,7 +21,8 @@ import {
   type StockbackRow,
   type QuoteResult,
 } from "../src/handlers.ts";
-import { intentFingerprint } from "../../../packages/sdk/src/intent.ts";
+import { intentFingerprint, toNormalized, toRawForPayout } from "../../../packages/sdk/src/intent.ts";
+import { computeFees } from "../../../packages/economics/src/fees.ts";
 
 let passed = 0;
 const failures: string[] = [];
@@ -73,8 +74,13 @@ class FakePort implements DataPort {
     epochEndsAt: 1_700_086_400,
   };
 
+  now = 1_700_000_500;
+
   headBlock(): bigint {
     return this.head;
+  }
+  serverTime(): number {
+    return this.now;
   }
   indexedBlock(): bigint {
     return this.indexed;
@@ -302,6 +308,73 @@ console.log("\n--- 5. §694: a quote is a signable intent, not a number --------
   const stockbackRow = sell.data.review.rows.find((r) => r.label.startsWith("Stockback"));
   check("the sell review quotes the 2% Stockback rate", stockbackRow?.label.includes("2%") === true);
 }
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 5b. The sell bound comes from canonical fee code ---------------------");
+
+{
+  // Regression guard. An earlier version computed the sell net as
+  // `grossOut * 9700 / 10000` — a third implementation of the sell fee, after
+  // the contract and the SDK, and the one deciding the on-chain minimum that
+  // protects the user. A bound derived from a duplicated rate is not a bound.
+  const port = new FakePort();
+  const tokensIn = 5_000n * 10n ** 18n;
+
+  const result = handleQuote(port, {
+    token: TOKEN,
+    side: "SELL",
+    amount: tokensIn,
+    slippageBps: 0n, // no tolerance, so the bound IS the quoted net
+    deadline: 9_999_999_999n,
+    chainId: 999,
+  });
+
+  if (!result.ok) throw new Error("expected success");
+
+  const grossOut = port.quoteSell(MARKET, tokensIn)!.grossOut!;
+  const expected = toRawForPayout(
+    computeFees("SELL", toNormalized(grossOut, baseMarket.quoteDecimals)).net,
+    baseMarket.quoteDecimals,
+  );
+
+  check(
+    "the sell minimum equals the canonical fee computation exactly",
+    result.data.review.minimumReceived === expected,
+    `api ${result.data.review.minimumReceived} vs canonical ${expected}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 5c. Timestamps are real, never zero ---------------------------------");
+
+{
+  // §279: a zero here would claim 1970, and a UI rendering "updated Xs ago"
+  // would show 56 years rather than failing visibly.
+  const port = new FakePort();
+
+  const explore = handleExplore(port, {});
+  const detail = handleMarket(port, TOKEN);
+  const sb = handleStockback(port, TOKEN, ACCOUNT);
+
+  check("the envelope carries a real server time", explore.freshness.serverTime === port.now);
+
+  if (!detail.ok || !sb.ok) throw new Error("expected success");
+
+  const allSourced = [
+    detail.data.price,
+    detail.data.distributed,
+    detail.data.curveCollateral,
+    detail.data.graduationProgressBps,
+    detail.data.holderCount,
+    sb.data.estimatedAccrued,
+    sb.data.claimable,
+    sb.data.lifetimeClaimed,
+  ];
+
+  check("every value carries the real server time", allSourced.every((v) => v.asOf === port.now));
+  check("no value anywhere carries a zero timestamp", allSourced.every((v) => v.asOf > 0));
+}
+
 
 // ---------------------------------------------------------------------------
 console.log("\n--- 6. Refusals are explicit -------------------------------------------");

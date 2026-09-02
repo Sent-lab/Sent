@@ -354,11 +354,18 @@ export class Gateway {
   }
 }
 
-/** Build the envelope every message set carries. */
+/**
+ * Build the envelope every message set carries.
+ *
+ * `serverTime` is a required argument rather than a zero default. A zero would
+ * claim 1970, and a client rendering "updated Xs ago" would show 56 years — a
+ * silent lie in the field built to prevent exactly that (§279).
+ */
 export function buildFreshness(
   headBlock: bigint,
   indexedBlock: bigint,
   connected: boolean,
+  serverTime: number,
   finalizedBlock?: bigint,
 ): FreshnessEnvelope {
   const lag = headBlock > indexedBlock ? Number(headBlock - indexedBlock) : 0;
@@ -368,6 +375,6 @@ export function buildFreshness(
     headBlock: headBlock.toString(),
     lagBlocks: lag,
     ...(finalizedBlock !== undefined ? { finalizedBlock: finalizedBlock.toString() } : {}),
-    serverTime: 0, // set by the transport; kept out of pure logic
+    serverTime,
   };
 }

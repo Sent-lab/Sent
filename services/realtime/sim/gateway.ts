@@ -57,7 +57,8 @@ function trade(block: number): RetainedMessage {
   return { blockNumber: BigInt(block), channel: CH, message };
 }
 
-const freshness = buildFreshness(100n, 100n, true);
+const NOW = 1_700_000_500;
+const freshness = buildFreshness(100n, 100n, true, NOW);
 
 console.log("\nSENT — Realtime Gateway Audit (§63, §239, §83)");
 console.log("=".repeat(74));
@@ -322,16 +323,16 @@ console.log("\n--- 5. Unsubscribe and lifecycle --------------------------------
 console.log("\n--- 6. Freshness envelope ------------------------------------------------");
 
 {
-  check("a caught-up gateway reports LIVE", buildFreshness(100n, 100n, true).state === "LIVE");
-  check("a lagging gateway does not report LIVE", buildFreshness(200n, 100n, true).state !== "LIVE");
+  check("a caught-up gateway reports LIVE", buildFreshness(100n, 100n, true, NOW).state === "LIVE");
+  check("a lagging gateway does not report LIVE", buildFreshness(200n, 100n, true, NOW).state !== "LIVE");
   check(
     "a disconnected gateway reports RECONNECTING however small the lag",
-    buildFreshness(100n, 100n, false).state === "RECONNECTING",
+    buildFreshness(100n, 100n, false, NOW).state === "RECONNECTING",
   );
-  check("lag is reported numerically", buildFreshness(150n, 100n, true).lagBlocks === 50);
+  check("lag is reported numerically", buildFreshness(150n, 100n, true, NOW).lagBlocks === 50);
   check(
     "the finalized boundary is carried when known",
-    buildFreshness(150n, 100n, true, 130n).finalizedBlock === "130",
+    buildFreshness(150n, 100n, true, NOW, 130n).finalizedBlock === "130",
   );
 }
 

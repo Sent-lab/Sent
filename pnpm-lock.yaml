@@ -12,6 +12,9 @@ importers:
         specifier: ^2.56.3
         version: 2.56.3(typescript@5.9.3)
     devDependencies:
+      '@types/node':
+        specifier: ^26.4.1
+        version: 26.4.1
       turbo:
         specifier: ^2.3.3
         version: 2.10.12
@@ -21,7 +24,11 @@ importers:
 
   packages/contracts: {}
 
+  packages/database: {}
+
   packages/economics: {}
+
+  packages/realtime: {}
 
   packages/sdk:
     dependencies:
@@ -36,6 +43,22 @@ importers:
         version: 2.56.3(typescript@5.9.3)
 
   packages/stockback:
+    dependencies:
+      viem:
+        specifier: ^2.56.3
+        version: 2.56.3(typescript@5.9.3)
+
+  services/api: {}
+
+  services/indexer:
+    dependencies:
+      viem:
+        specifier: ^2.56.3
+        version: 2.56.3(typescript@5.9.3)
+
+  services/realtime: {}
+
+  services/stockback:
     dependencies:
       viem:
         specifier: ^2.56.3
@@ -97,6 +120,9 @@ packages:
     cpu: [arm64]
     os: [win32]
 
+  '@types/node@26.4.1':
+    resolution: {integrity: sha512-k97ENvZWtvA6yqz5/FS6a7duDgOPEeOQOc2iKS/nY6mX6qJUKtLnWzQS+Xj6tXweyj6ZcTAK2Qecetnvi9nCLA==}
+
   abitype@1.2.3:
     resolution: {integrity: sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg==}
     peerDependencies:
@@ -132,6 +158,9 @@ packages:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
     hasBin: true
+
+  undici-types@8.3.0:
+    resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
   viem@2.56.3:
     resolution: {integrity: sha512-vUObq3GO7D3lz9gPNEE/xd5jIUnMbeVDWewh252o54pDEDlW4pDe6FEd/qTGL5RyK52cGHMM7kQ3wjxhilEvkQ==}
@@ -196,6 +225,10 @@ snapshots:
   '@turbo/windows-arm64@2.10.12':
     optional: true
 
+  '@types/node@26.4.1':
+    dependencies:
+      undici-types: 8.3.0
+
   abitype@1.2.3(typescript@5.9.3):
     optionalDependencies:
       typescript: 5.9.3
@@ -231,6 +264,8 @@ snapshots:
       '@turbo/windows-arm64': 2.10.12
 
   typescript@5.9.3: {}
+
+  undici-types@8.3.0: {}
 
   viem@2.56.3(typescript@5.9.3):
     dependencies:

@@ -32,8 +32,11 @@ import {
 import {
   buildBuyIntent,
   buildSellIntent,
+  toNormalized,
+  toRawForPayout,
   type TransactionIntent,
 } from "../../../packages/sdk/src/intent.ts";
+import { computeFees } from "../../../packages/economics/src/fees.ts";
 
 // ---------------------------------------------------------------------------
 // Port — what the API needs from the projection
@@ -89,6 +92,8 @@ export interface StockbackRow {
 
 export interface DataPort {
   headBlock(): bigint;
+  /** Unix seconds. Required, so a response can never claim an epoch timestamp. */
+  serverTime(): number;
   indexedBlock(): bigint;
   finalizedBlock(): bigint | undefined;
   chainConnected(): boolean;
@@ -140,6 +145,9 @@ export type ApiResult<T> = ApiResponse<T> | ApiError;
 const MAX_LIMIT = 100;
 
 function envelope(port: DataPort): FreshnessEnvelope {
+  // `serverTime` is read from the port rather than defaulted. A zero here would
+  // claim 1970, and a UI rendering "updated Xs ago" would show 56 years — a
+  // silent lie in the one field built to prevent lying about freshness (§279).
   const head = port.headBlock();
   const indexed = port.indexedBlock();
   const lag = head > indexed ? Number(head - indexed) : 0;
@@ -150,7 +158,7 @@ function envelope(port: DataPort): FreshnessEnvelope {
     headBlock: head.toString(),
     lagBlocks: lag,
     ...(finalized !== undefined ? { finalizedBlock: finalized.toString() } : {}),
-    serverTime: 0,
+    serverTime: port.serverTime(),
   };
 }
 
@@ -162,8 +170,15 @@ function fail(port: DataPort, code: string, message: string, retryable = false):
   return { ok: false, code, message, retryable, freshness: envelope(port) };
 }
 
-function sourced(value: string, provenance: Provenance, block: bigint): Sourced {
-  return { value, provenance, asOfBlock: block.toString(), asOf: 0 };
+/**
+ * Attach provenance to a value.
+ *
+ * `asOf` is a required argument for the same reason `serverTime` is: a zero
+ * default would claim 1970, and a component rendering "as of" would show a date
+ * from before the web existed rather than failing visibly (§279).
+ */
+function sourced(value: string, provenance: Provenance, block: bigint, asOf: number): Sourced {
+  return { value, provenance, asOfBlock: block.toString(), asOf };
 }
 
 // ---------------------------------------------------------------------------
@@ -205,15 +220,16 @@ export function handleExplore(port: DataPort, options: Partial<ExploreOptions>):
       symbol: row.symbol,
       quoteSymbol: row.quoteSymbol,
       status: row.status,
-      price: sourced(row.price.toString(), "INDEXED", row.lastBlock),
+      price: sourced(row.price.toString(), "INDEXED", row.lastBlock, port.serverTime()),
+      // CALCULATED, not INDEXED: derived from indexed values rather than read
+      // from a contract, and §87 requires that distinction to survive the wire.
       graduationProgressBps: sourced(
         ((row.distributed * 10_000n) / row.qG).toString(),
-        // CALCULATED, not INDEXED: it is derived from indexed values rather than
-        // read from a contract, and §87 requires that distinction to survive.
         "CALCULATED",
         row.lastBlock,
+        port.serverTime(),
       ),
-      holderCount: sourced(String(row.holderCount), "INDEXED", row.lastBlock),
+      holderCount: sourced(String(row.holderCount), "INDEXED", row.lastBlock, port.serverTime()),
       creator: row.creator,
       launchedAt: row.launchedAt,
     })),
@@ -263,15 +279,11 @@ export function handleMarket(port: DataPort, token: string): ApiResult<MarketDet
     quoteSymbol: row.quoteSymbol,
     quoteDecimals: row.quoteDecimals,
     status: row.status,
-    price: sourced(row.price.toString(), "INDEXED", row.lastBlock),
-    distributed: sourced(row.distributed.toString(), "INDEXED", row.lastBlock),
-    curveCollateral: sourced(row.curveCollateral.toString(), "INDEXED", row.lastBlock),
-    graduationProgressBps: sourced(
-      ((row.distributed * 10_000n) / row.qG).toString(),
-      "CALCULATED",
-      row.lastBlock,
-    ),
-    holderCount: sourced(String(row.holderCount), "INDEXED", row.lastBlock),
+    price: sourced(row.price.toString(), "INDEXED", row.lastBlock, port.serverTime()),
+    distributed: sourced(row.distributed.toString(), "INDEXED", row.lastBlock, port.serverTime()),
+    curveCollateral: sourced(row.curveCollateral.toString(), "INDEXED", row.lastBlock, port.serverTime()),
+    graduationProgressBps: sourced(((row.distributed * 10_000n) / row.qG).toString(), "CALCULATED", row.lastBlock, port.serverTime()),
+    holderCount: sourced(String(row.holderCount), "INDEXED", row.lastBlock, port.serverTime()),
     authentic: true,
   });
 }
@@ -399,7 +411,17 @@ export function handleQuote(port: DataPort, request: QuoteRequest): ApiResult<Tr
 
   // The sell bound is on the NET payout, which is what the user receives — not on
   // the curve's gross output, which they never see.
-  const netEstimate = (quote.grossOut * 9_700n) / 10_000n;
+  //
+  // The net comes from the canonical fee implementation, NOT from a rate written
+  // here. An earlier version computed `grossOut * 9700 / 10000`, which was a
+  // third implementation of the sell fee after the contract and the SDK — and it
+  // was computing `minQuoteOut`, the bound that protects the user on-chain. A
+  // protection derived from a duplicated rate is not a protection.
+  const netNormalized = computeFees(
+    "SELL",
+    toNormalized(quote.grossOut, row.quoteDecimals),
+  ).net;
+  const netEstimate = toRawForPayout(netNormalized, row.quoteDecimals);
   const minQuoteOut = (netEstimate * (10_000n - request.slippageBps)) / 10_000n;
 
   return ok(
@@ -461,9 +483,9 @@ export function handleStockback(
   return ok(port, {
     market: row.market,
     account: account.toLowerCase(),
-    estimatedAccrued: sourced(stockback.estimatedAccrued.toString(), "ESTIMATED", indexed),
-    claimable: sourced(stockback.claimable.toString(), "INDEXED", indexed),
-    lifetimeClaimed: sourced(stockback.lifetimeClaimed.toString(), "INDEXED", indexed),
+    estimatedAccrued: sourced(stockback.estimatedAccrued.toString(), "ESTIMATED", indexed, port.serverTime()),
+    claimable: sourced(stockback.claimable.toString(), "INDEXED", indexed, port.serverTime()),
+    lifetimeClaimed: sourced(stockback.lifetimeClaimed.toString(), "INDEXED", indexed, port.serverTime()),
     epochSequence: stockback.epochSequence.toString(),
     epochEndsAt: stockback.epochEndsAt,
     ...(stockback.proof !== undefined ? { proof: stockback.proof } : {}),
