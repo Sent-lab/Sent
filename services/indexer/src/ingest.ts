@@ -38,6 +38,7 @@ import {
   getCursor,
   setCursor,
   recordBlock,
+  markFinalized,
   rollbackTo,
   insertMarket,
   insertTrade,
@@ -234,6 +235,16 @@ export class Indexer {
       }
 
       await setCursor(tx, to, first.hash);
+
+      // Settle everything the tracker now considers unreachable by a reorg.
+      // Inside the same transaction as the cursor: a block marked settled while
+      // the cursor stayed behind would let the finalizer act on a range this
+      // indexer has not committed to.
+      // `undefined` while the chain is shallower than the confirmation depth —
+      // early on a fresh chain, or right after a full reindex. Nothing is settled
+      // yet, and marking anything would be a claim the tracker has not made.
+      const settled = this.tracker.finalizedBelow(this.config.confirmations);
+      if (settled !== undefined) await markFinalized(tx, settled);
     });
 
     this.tracker.commit(ref);
