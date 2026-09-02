@@ -120,6 +120,8 @@ contract LaunchpadFactory is ReentrancyGuard {
     error InvalidReferencePrice();
     error RouterNotSet();
     error LaunchFeeTransferFailed();
+    error DecimalsDriftedFromRegistry(uint8 registered, uint8 reported);
+    error DecimalsUnavailable(address quoteAsset);
 
     modifier onlyGovernance() {
         if (msg.sender != governance) revert NotGovernance();
@@ -197,6 +199,20 @@ contract LaunchpadFactory is ReentrancyGuard {
 
         uint256 p0 = referencePriceToP0(params.xStockUsdWad, params.quoteAsset);
 
+        // Decimals come from the REGISTRY, not from the token.
+        //
+        // The registry value is what governance verified through the eight 420
+        // gates. Asking the token directly would trust an asset that may lie,
+        // may have been upgraded, or may simply have been mis-registered - and a
+        // wrong decimals value silently corrupts every normalisation this market
+        // ever performs, for its entire life.
+        //
+        // The token is still consulted, but only to detect drift: a disagreement
+        // means the verified record is stale, and the launch must stop rather
+        // than proceed on either value.
+        uint8 quoteDecimals = REGISTRY.getAsset(params.quoteAsset).decimals;
+        _assertDecimalsMatchRegistry(params.quoteAsset, quoteDecimals);
+
         token = address(new LaunchToken{salt: effectiveSalt}(params.name, params.symbol, msg.sender));
         if (token != predicted) revert PredictedAddressMismatch(predicted, token);
 
@@ -204,7 +220,7 @@ contract LaunchpadFactory is ReentrancyGuard {
             new LaunchMarket{salt: effectiveSalt}(
                 token,
                 params.quoteAsset,
-                IERC20Metadata(params.quoteAsset).decimals(),
+                quoteDecimals,
                 msg.sender,
                 address(FEE_VAULT),
                 address(REWARD_VAULT),
@@ -241,6 +257,18 @@ contract LaunchpadFactory is ReentrancyGuard {
         emit TokenLaunched(
             token, market, msg.sender, params.quoteAsset, params.name, params.symbol, p0, effectiveSalt
         );
+    }
+
+    /// @dev Reverts if the asset's own `decimals()` disagrees with the verified
+    ///      registry record. A token that does not implement `decimals()` at all
+    ///      could not have passed the §420 gates, so an absent value is treated as
+    ///      drift too.
+    function _assertDecimalsMatchRegistry(address quoteAsset, uint8 registered) private view {
+        try IERC20Metadata(quoteAsset).decimals() returns (uint8 reported) {
+            if (reported != registered) revert DecimalsDriftedFromRegistry(registered, reported);
+        } catch {
+            revert DecimalsUnavailable(quoteAsset);
+        }
     }
 
     // -----------------------------------------------------------------------
