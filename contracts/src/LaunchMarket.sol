@@ -442,7 +442,24 @@ contract LaunchMarket is ReentrancyGuard {
 
         status = Status.GRADUATING;
 
-        uint256 tokenAmount = IERC20(TOKEN).balanceOf(address(this));
+        // The reserve is DERIVED FROM CURVE STATE, never read as a balance.
+        //
+        // This contract treats collateral as a liability rather than a balance
+        // everywhere else, and reading balanceOf here was the one place that
+        // broke the rule — at the single most consequential moment in the
+        // protocol.
+        //
+        // With a balance read, anyone could send TOKEN to the market before it
+        // graduated: the token side of the mint inflated while collateral stayed
+        // fixed, so the pool opened at the wrong ratio. A test donating a normal
+        // position doubled the migrated amount, which would have halved the
+        // opening price. §15 makes spot price continuity a HARD invariant, and
+        // the donor loses their tokens either way — so this was cheap griefing
+        // against every graduating market, with nobody profiting from it.
+        //
+        // Donated tokens now stay stranded in the dead market instead, which is
+        // the donor's own loss and harms nobody.
+        uint256 tokenAmount = Curve.TOTAL_SUPPLY - distributed;
         uint256 quoteAmount = curveCollateral;
         uint256 dust = graduationDust;
 

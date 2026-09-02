@@ -293,6 +293,48 @@ contract LaunchMarketTest is Test {
         market.sell(1e18, 0, block.timestamp + 1);
     }
 
+    /// @dev §15 makes spot price continuity a HARD INVARIANT: the pool must open
+    ///      at the curve's final marginal price.
+    ///
+    ///      The migrated TOKEN amount must therefore come from curve state, not
+    ///      from balanceOf. Reading the balance lets anyone donate TOKEN to the
+    ///      market before graduation, inflating the token side of the mint while
+    ///      collateral stays fixed — which distorts the ratio and breaks the
+    ///      opening price.
+    ///
+    ///      The donor loses their tokens either way, so this is not profitable.
+    ///      It is close to free griefing against every graduating market, which
+    ///      is worse: nobody has to gain for the invariant to be broken.
+    function test_donatedTokenCannotDistortTheMigrationRatio() public {
+        // Someone dumps TOKEN into the market before it graduates.
+        _buy(alice, 40e18);
+        uint256 donation = token.balanceOf(alice);
+        vm.prank(alice);
+        token.transfer(address(market), donation);
+
+        assertGt(donation, 0, "the donation must actually be non-trivial");
+
+        _buyToEndpoint(bob);
+
+        (,,, uint256 qG) = market.curve();
+        uint256 expectedReserve = token.totalSupply() - qG;
+
+        assertEq(
+            router.lastTokenAmount(),
+            expectedReserve,
+            "migration must carry the curve reserve, not the contract balance"
+        );
+
+        // The donated tokens stay behind rather than joining the LP. The donor
+        // loses them, which is their own doing, and the pool opens at the right
+        // ratio, which is what section 15 protects.
+        assertEq(
+            token.balanceOf(address(market)),
+            donation,
+            "the donation is stranded, not migrated"
+        );
+    }
+
     function test_graduationMigratesEverythingAndZeroesCollateral() public {
         _walkToGraduation();
 
