@@ -1,0 +1,169 @@
+# SENT
+
+**Launch. Pair. Create market.**
+
+A permissionless fixed-supply token launchpad on HyperEVM, where every market is
+quoted against an official xStock — a tokenized equity — rather than a
+stablecoin or the native gas token.
+
+A market opens at a $2,000 reference market cap, trades two-way on a bonding
+curve, and **graduates automatically at $50,000** into permanently locked
+HyperSwap V3 liquidity. Holders earn **Stockback**: a share of every trade paid
+back to them in the market's own paired xStock, weighted by how much they held
+and for how long.
+
+Creator allocation is 0%. Platform allocation is 0%. Nobody deposits liquidity.
+
+---
+
+## Status
+
+> **Pre-audit and pre-deployment. Nothing here is live, and no contract has
+> touched mainnet.**
+
+| | |
+|---|---|
+| Contracts | Core protocol complete except the graduation router |
+| Backend | Indexer, projection, API, realtime gateway, Stockback pipeline |
+| Frontend | Not started |
+| External audit | Not started |
+| Deployment | None |
+
+**Not yet resolvable** — these depend on external facts that have not been
+confirmed, and the project deliberately refuses to guess them:
+
+- canonical xStock ERC-20 addresses on HyperEVM
+- a HyperSwap primitive that locks LP principal while preserving fee rights
+- the launch-time reference price source
+
+Every open dependency is tracked in [`docs/VERIFY-LEDGER.md`](docs/VERIFY-LEDGER.md)
+with its evidence class. Nothing in production may depend on an unverified row.
+
+---
+
+## How it works
+
+**Pre-graduation.** A creator names a token, picks an official xStock pair, and
+pays about a dollar plus gas. The factory deploys a 1,000,000,000 fixed-supply
+ERC-20 through creator-bound CREATE2 and opens a market against the chosen
+xStock. The whole supply goes to the market, which releases it along a linear
+curve. Buys cost 2%, sells 3% — a 1% core fee split 65/35 between creator and
+platform, plus a Stockback contribution of 1% on buys and 2% on sells that goes
+entirely to holders.
+
+**Graduation.** When the marginal price reaches 25× the launch price, the market
+graduates inside the triggering trade. There is no manual trigger for anyone.
+The endpoint is chosen so that curve collateral exactly equals the value of the
+remaining supply at the final price — which is why the HyperSwap position needs
+no creator or treasury top-up, and why a full-range mint consumes both sides with
+no meaningful dust.
+
+**Post-graduation.** The curve closes permanently. The token address never
+changes. LP principal is locked forever; the creator keeps 65% of eligible fee
+revenue for the life of the market.
+
+**Stockback.** Rewards are time-weighted over 24-hour epochs — amount held times
+time held — so a snapshot buy pays almost nothing. Independent attestors compute
+the same distribution from the same chain events and sign a cumulative Merkle
+commitment. Anyone may submit it; the submitter earns nothing. A guardian can
+freeze claims before a suspicious root activates, and only governance can
+release that freeze.
+
+---
+
+## Repository
+
+```
+contracts/        Solidity, Foundry tests, invariant suites
+packages/
+  economics/      Canonical curve, fee and V3 geometry math
+  stockback/      TWAB engine and Merkle distribution
+  sdk/            TransactionIntent builder — the only place calldata is built
+  contracts/      Generated ABIs
+  realtime/       Shared event schema and the freshness contract
+  database/       PostgreSQL schema
+services/
+  indexer/        Reorg-safe ingestion and the state projection
+  api/            HTTP handlers
+  realtime/       WebSocket gateway
+  stockback/      TWAB to Merkle commitment pipeline
+docs/             Comprehension pass, verify ledger, decision log, conventions
+```
+
+---
+
+## Two rules the whole codebase is built around
+
+**One canonical source.** Curve math, fee math, Stockback accounting, creator
+identity, transaction building and address config each exist in exactly one
+place. Where a second implementation is unavoidable — Solidity on-chain and
+TypeScript for the SDK and indexer — the two are **differential-tested against
+each other** so they cannot drift.
+
+**What the user reviews is what they sign.** A quote is not a number, it is a
+complete signable transaction. The API returns an intent built by the SDK; the
+review rows carry the exact figures, computed by the same code the contract runs.
+A Foundry test submits SDK-generated calldata byte for byte to a real market and
+asserts the on-chain outcome equals what the review showed.
+
+---
+
+## Running it
+
+```bash
+pnpm install
+pnpm typecheck
+pnpm sim:all
+```
+
+Contracts need [Foundry](https://getfoundry.sh):
+
+```bash
+forge test --root contracts
+FOUNDRY_PROFILE=inv forge test --root contracts
+```
+
+Fixtures shared between TypeScript and Solidity are committed. CI regenerates
+them and fails on any diff, so the two halves cannot drift silently:
+
+```bash
+pnpm fixtures:all
+```
+
+---
+
+## What is actually verified
+
+Tests are not the point; the properties are. These are proven rather than
+asserted:
+
+- the graduation endpoint reproduces the reference outcomes exactly, and its
+  collateral equals the remaining supply valued at the final price
+- a full-range V3 mint consumes both sides with 0 ppb dust, at every enabled fee
+  tier and in both token orderings
+- curve and fee math agree between Solidity and TypeScript across 459 cases,
+  spanning the regime where a naive `uint256` port overflows
+- Merkle proofs built off-chain actually pay out against the real vault
+- five independent attestors, given the same events in five different orders,
+  produce a byte-identical root
+- the off-chain projection reproduces on-chain state from real logs
+- collateral is a liability, never a balance: donating either asset changes
+  nothing about what the curve owes or what graduation migrates
+
+---
+
+## Security
+
+Not audited. Do not deploy this.
+
+If you find something, please open an issue — the commit history is deliberately
+explicit about bugs found and fixed during development, and that record is more
+useful than a clean-looking history.
+
+---
+
+## License
+
+[Business Source License 1.1](LICENSE). Converts to GPL-2.0-or-later on
+2030-09-02. Reading, auditing, research and integrations are expressly
+permitted; running a competing launchpad is not.
