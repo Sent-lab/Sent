@@ -116,6 +116,8 @@ contract HolderRewardVault is ReentrancyGuard {
     event AttestorAdded(address indexed attestor);
     event AttestorRemoved(address indexed attestor);
     event QuorumUpdated(uint256 from, uint256 to);
+    event GovernanceTransferred(address indexed from, address indexed to);
+    event VaultInitialised(address indexed governance, address indexed factory, uint256 chainId);
 
     error NotGovernance();
     error NotFactory();
@@ -153,6 +155,11 @@ contract HolderRewardVault is ReentrancyGuard {
                 address(this)
             )
         );
+
+        // Bootstrap event: the indexer rebuilds all state from chain events
+        // (§138), so the starting configuration must be in the log too, not only
+        // in constructor arguments an indexer would have to decode separately.
+        emit VaultInitialised(governance_, factory_, block.chainid);
     }
 
     // -----------------------------------------------------------------------
@@ -343,6 +350,7 @@ contract HolderRewardVault is ReentrancyGuard {
 
     function transferGovernance(address newGovernance) external onlyGovernance {
         if (newGovernance == address(0)) revert ZeroAddress();
+        emit GovernanceTransferred(governance, newGovernance);
         governance = newGovernance;
     }
 

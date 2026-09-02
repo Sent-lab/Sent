@@ -133,6 +133,16 @@ contract LaunchMarket is ReentrancyGuard {
     );
 
     event CrossingBuy(uint256 preGradGross, uint256 postGradGross, uint256 totalTokensOut);
+    event RouterSet(address indexed router);
+    event MarketInitialised(
+        address indexed token,
+        address indexed quoteAsset,
+        address indexed creator,
+        uint8 quoteDecimals,
+        uint256 p0,
+        uint256 pg,
+        uint256 qG
+    );
 
     // -----------------------------------------------------------------------
     // Errors
@@ -188,6 +198,10 @@ contract LaunchMarket is ReentrancyGuard {
 
         curve = Curve.params(p0_);
         status = Status.PRE_GRAD;
+
+        emit MarketInitialised(
+            token_, quoteAsset_, creator_, quoteDecimals_, curve.p0, curve.pg, curve.qG
+        );
     }
 
     /// @notice Wire the graduation router. Factory only, once.
@@ -195,6 +209,7 @@ contract LaunchMarket is ReentrancyGuard {
         if (msg.sender != FACTORY) revert NotFactory();
         if (router_ == address(0)) revert ZeroAddress();
         router = IGraduationRouter(router_);
+        emit RouterSet(router_);
     }
 
     // -----------------------------------------------------------------------

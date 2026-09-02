@@ -61,6 +61,8 @@ contract LaunchToken is ERC20 {
     ///         nothing in this contract reads it. Write-once, factory only.
     address public market;
 
+    event MarketSet(address indexed market);
+
     error ZeroAddress();
     error NotFactory();
     error MarketAlreadySet();
@@ -89,5 +91,6 @@ contract LaunchToken is ERC20 {
         if (market != address(0)) revert MarketAlreadySet();
         if (market_ == address(0)) revert ZeroAddress();
         market = market_;
+        emit MarketSet(market_);
     }
 }
