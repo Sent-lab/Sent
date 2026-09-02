@@ -17,10 +17,15 @@
     "sim:v3": "node --experimental-strip-types packages/economics/sim/graduation-v3.ts",
     "sim:stockback": "node --experimental-strip-types packages/stockback/sim/stockback.ts",
     "sim:all": "pnpm sim && pnpm sim:v3 && pnpm sim:stockback",
-    "fixtures": "node --experimental-strip-types packages/economics/sim/fixtures.ts"
+    "fixtures": "node --experimental-strip-types packages/economics/sim/fixtures.ts",
+    "fixtures:merkle": "node --experimental-strip-types packages/stockback/sim/merkle-fixtures.ts",
+    "fixtures:all": "pnpm fixtures && pnpm fixtures:merkle"
   },
   "devDependencies": {
     "turbo": "^2.3.3",
     "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "viem": "^2.56.3"
   }
 }

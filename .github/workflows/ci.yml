@@ -32,7 +32,8 @@ jobs:
       - name: Differential fixtures are current
         run: |
           node --experimental-strip-types packages/economics/sim/fixtures.ts
-          git diff --exit-code contracts/test/fixtures/economics.json
+          node --experimental-strip-types packages/stockback/sim/merkle-fixtures.ts
+          git diff --exit-code contracts/test/fixtures/
 
   workspace:
     name: Typecheck / lint / build

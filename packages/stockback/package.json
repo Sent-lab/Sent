@@ -4,9 +4,15 @@
   "private": true,
   "type": "module",
   "description": "Canonical Stockback TWAB and distribution math. Single source per Masterplan 1064.",
-  "exports": { ".": "./src/twab.ts" },
+  "exports": {
+    ".": "./src/twab.ts",
+    "./merkle": "./src/merkle.ts"
+  },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --experimental-strip-types sim/stockback.ts"
+  },
+  "dependencies": {
+    "viem": "^2.56.3"
   }
 }
