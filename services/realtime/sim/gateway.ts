@@ -18,7 +18,7 @@ import {
   buildFreshness,
   type RetainedMessage,
 } from "../src/gateway.ts";
-import { channelKey, type ServerMessage, type TradeMessage } from "../../../packages/realtime/src/schema.ts";
+import { channelKey, type ServerMessage, type TradeMessage } from "@sent/realtime";
 
 let passed = 0;
 const failures: string[] = [];

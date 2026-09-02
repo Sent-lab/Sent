@@ -15,9 +15,9 @@
  * Run: pnpm sim:determinism
  */
 
-import { EPOCH_DURATION_SECONDS, type BalanceEvent } from "../../../packages/stockback/src/twab.ts";
+import { EPOCH_DURATION_SECONDS, type BalanceEvent } from "@sent/stockback";
 import { computeDistribution, proofFor, bucketByEpoch, type EpochInput } from "../src/distribution.ts";
-import { verifyProof, encodeLeaf } from "../../../packages/stockback/src/merkle.ts";
+import { verifyProof, encodeLeaf } from "@sent/stockback/merkle";
 
 let passed = 0;
 const failures: string[] = [];

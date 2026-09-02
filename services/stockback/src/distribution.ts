@@ -36,13 +36,13 @@ import {
   makeExclusionSet,
   type BalanceEvent,
   type ExclusionSet,
-} from "../../../packages/stockback/src/twab.ts";
+} from "@sent/stockback";
 import {
   buildDistributionTree,
   getProof,
   type DistributionTree,
   type Entitlement,
-} from "../../../packages/stockback/src/merkle.ts";
+} from "@sent/stockback/merkle";
 
 export interface EpochInput {
   readonly epochId: bigint;

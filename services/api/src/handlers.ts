@@ -28,15 +28,15 @@ import {
   type FreshnessEnvelope,
   type Provenance,
   type Sourced,
-} from "../../../packages/realtime/src/schema.ts";
+} from "@sent/realtime";
 import {
   buildBuyIntent,
   buildSellIntent,
   toNormalized,
   toRawForPayout,
   type TransactionIntent,
-} from "../../../packages/sdk/src/intent.ts";
-import { computeFees } from "../../../packages/economics/src/fees.ts";
+} from "@sent/sdk";
+import { computeFees } from "@sent/economics";
 
 // ---------------------------------------------------------------------------
 // Port — what the API needs from the projection

@@ -32,7 +32,7 @@ import {
   type ClientMessage,
   type ServerMessage,
   type FreshnessEnvelope,
-} from "../../../packages/realtime/src/schema.ts";
+} from "@sent/realtime";
 
 export interface SessionOptions {
   /** Messages buffered for a slow client before it is told to resnapshot. */

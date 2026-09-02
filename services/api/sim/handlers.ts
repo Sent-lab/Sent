@@ -21,8 +21,8 @@ import {
   type StockbackRow,
   type QuoteResult,
 } from "../src/handlers.ts";
-import { intentFingerprint, toNormalized, toRawForPayout } from "../../../packages/sdk/src/intent.ts";
-import { computeFees } from "../../../packages/economics/src/fees.ts";
+import { intentFingerprint, toNormalized, toRawForPayout } from "@sent/sdk";
+import { computeFees } from "@sent/economics";
 
 let passed = 0;
 const failures: string[] = [];
