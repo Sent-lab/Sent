@@ -77,15 +77,31 @@ export function bigOrNull(value: unknown, field = "value"): bigint | null {
   return value === null || value === undefined ? null : big(value, field);
 }
 
-/** BYTEA -> lower-case 0x address. */
-export function addr(value: unknown, field = "address"): `0x${string}` {
+/** BYTEA -> lower-case 0x string, any length. For hashes and roots. */
+export function hexBytes(value: unknown, field = "value"): `0x${string}` {
   if (value instanceof Uint8Array) {
     return `0x${Buffer.from(value).toString("hex")}` as `0x${string}`;
   }
   if (typeof value === "string") {
     return (value.startsWith("0x") ? value.toLowerCase() : `0x${value}`) as `0x${string}`;
   }
-  throw new TypeError(`${field}: cannot read ${typeof value} as an address`);
+  throw new TypeError(`${field}: cannot read ${typeof value} as hex`);
+}
+
+/**
+ * BYTEA -> lower-case 0x address, length-checked.
+ *
+ * The check is the point. Every identifier in this schema is a BYTEA, so an
+ * address column and a hash column are indistinguishable to the driver: reading
+ * `tx_hash` where `market` was meant produces a plausible-looking 0x string that
+ * silently matches nothing. Twenty bytes or it is not an address.
+ */
+export function addr(value: unknown, field = "address"): `0x${string}` {
+  const hex = hexBytes(value, field);
+  if (hex.length !== 42) {
+    throw new TypeError(`${field}: expected a 20-byte address, got ${(hex.length - 2) / 2} bytes`);
+  }
+  return hex;
 }
 
 /** 0x string -> Buffer, for BYTEA parameters. */
