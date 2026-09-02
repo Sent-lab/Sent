@@ -427,11 +427,33 @@ export async function insertBalanceEvent(
     ],
   );
 
+  // TWO statements, and they cannot be collapsed into one.
+  //
+  // The obvious form — INSERT ... ON CONFLICT DO UPDATE SET balance = balance +
+  // EXCLUDED.balance — is broken here. PostgreSQL evaluates CHECK constraints on
+  // the PROPOSED insert tuple before it resolves the conflict, so a negative
+  // delta trips `balances_non_negative` with the raw delta as the failing row,
+  // even when the account holds plenty and the update would have landed at a
+  // perfectly positive number.
+  //
+  // That would have made every sell and every transfer-out throw inside the
+  // indexer's ingest transaction: the block never commits, the cursor never
+  // advances, and the indexer retries the same range forever. The first sell on
+  // the first market would have stopped indexing permanently.
+  //
+  // Seeding zero always satisfies the constraint, and the UPDATE that follows is
+  // checked on its own result — so a real negative balance still fails, which is
+  // what the constraint is for.
   await db.query(
     `INSERT INTO balances (market, account, balance, last_block)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (market, account) DO UPDATE
-       SET balance = balances.balance + EXCLUDED.balance, last_block = EXCLUDED.last_block`,
+     VALUES ($1, $2, 0, $3)
+     ON CONFLICT (market, account) DO NOTHING`,
+    [toBytes(e.market), toBytes(e.account), e.blockNumber.toString()],
+  );
+
+  await db.query(
+    `UPDATE balances SET balance = balance + $3, last_block = $4
+     WHERE market = $1 AND account = $2`,
     [toBytes(e.market), toBytes(e.account), e.delta.toString(), e.blockNumber.toString()],
   );
 }
