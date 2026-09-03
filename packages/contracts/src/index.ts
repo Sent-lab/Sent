@@ -5,5 +5,7 @@ export { launchMarketAbi } from "./LaunchMarket.abi.ts";
 export { launchTokenAbi } from "./LaunchToken.abi.ts";
 export { feeVaultAbi } from "./FeeVault.abi.ts";
 export { referencePriceAdapterAbi } from "./ReferencePriceAdapter.abi.ts";
+export { graduationRouterAbi } from "./GraduationRouter.abi.ts";
+export { permanentLiquidityLockAbi } from "./PermanentLiquidityLock.abi.ts";
 export { holderRewardVaultAbi } from "./HolderRewardVault.abi.ts";
 export { xStockRegistryAbi } from "./XStockRegistry.abi.ts";
