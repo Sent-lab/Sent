@@ -233,6 +233,21 @@ STATUS:             UNVERIFIED — analytic side proven Day 1 (`pnpm sim`), tick
 If exact geometry demands a material economic change, that is a **product escalation** under
 §416, not an engineering fix.
 
+**No escalation is needed.** §415 locks V1 to the full range, which removes the tick-policy
+choice entirely — there is no range to select, so there is nothing to tune and nothing that
+could demand an economic change.
+
+At full range the mint consumes both sides in the ratio `amount1/amount0 = P`, and the §8
+endpoint puts the remaining supply at exactly the collateral that came with it: 342.105M
+TOKEN at `pg` against the ~$17,105 the curve accumulated reaching it. That is not a fit — the
+endpoint was derived to make it true, and `V3Math.t.sol` asserts the balance directly.
+
+What is left open is the tick side against a real pool: the router hands both balances to the
+position manager and lets IT compute liquidity, rather than deriving amounts from a ratio,
+which is what §416 forbids. The leftover is bounded by test at one part in ten thousand of the
+migration and goes to the lock (§417). Confirming that bound against HyperSwap's own
+`NonfungiblePositionManager` is the remaining fork-test.
+
 ---
 
 ## V-09 — Delegated-position permanent lock + creator fee-right custody · **UNVERIFIED · P0 (C-07)**
@@ -244,13 +259,46 @@ WHY IT MATTERS:     two LOCKED rules meet here — permanent LP principal lock (
                     post-grad fee rights (§11, §413)
 HOW TO VERIFY:      inspect NonfungiblePositionManager capabilities; fork-test collect() while
                     decreaseLiquidity() is unreachable
-BLOCKS:             GraduationRouter custody design, §178.4 release gate
+BLOCKS:             §178.4 release gate. The custody design is no longer blocked — see below.
 OWNER:              Stream A / I
-STATUS:             UNVERIFIED
+STATUS:             UNVERIFIED — the primitive question is ANSWERED; the addresses are not
 ```
 
 If no venue primitive provides this, the lock must be a purpose-built non-withdrawable holder
 contract — an architecture decision with security consequences, to be escalated, not improvised.
+
+**No venue primitive provides this, and the escalation is resolved.**
+
+Uniswap V3 — and HyperSwap, its fork — offers an NFT holder exactly two states, and neither is
+the one §17 and §11 require together:
+
+| | |
+|---|---|
+| Hold the NFT | `decreaseLiquidity` stays reachable. The principal is un-withdrawn, not locked — a promise rather than a property. |
+| Burn the NFT | `collect` dies with it, ending the creator's post-graduation fee rights. |
+
+There is no third state, so `PermanentLiquidityLock` is the purpose-built contract this row
+anticipated. Its security consequence is stated rather than buried: **the lock IS the
+guarantee.** If it can be made to move the NFT or reduce liquidity, §17's permanence is a
+claim and not a fact.
+
+What it does not have: an owner, governance, a guardian, a pause, an upgrade path, an
+initialiser, `execute`, `delegatecall`, an ERC-721 transfer, an approval, or any call to
+`decreaseLiquidity` or `burn`. Not gated — **absent**. A gate is a key somebody holds. One test
+asserts that against the ABI, which is the strongest form the claim can take.
+
+`collect` takes no recipient: it pays the market the position was minted for, recorded when
+the NFT arrived and never writable again. A recipient argument would be a "send a stranger's
+fees anywhere" function with a harmless name. It is permissionless, because §414 requires that
+accrued rights are never lost to unavailable collection — a permissioned collector is a party
+who can stop paying the creator by doing nothing.
+
+§413 recommends FeeVault custody; this is a dedicated contract because FeeVault has governance,
+and §17's permanence should not depend on a key. Custody with no keys is strictly stronger than
+custody behind good ones.
+
+**Still owner-blocked:** the three HyperSwap addresses. Two are immutable in the router's
+constructor, so they cannot be guessed and corrected later.
 
 ---
 

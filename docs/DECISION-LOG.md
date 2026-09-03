@@ -449,3 +449,91 @@ positionally must be regenerated. Markets launched before this have no metadata 
 report `null` rather than an empty description — the two are different and only one of
 them should render a blank field.
 **Approved by:** owner.
+
+---
+
+## D-014 — Permanent LP is a purpose-built lock, not a venue primitive
+
+**Class:** CHOOSE (architecture, escalated by V-09's own terms)
+**Date:** Day 7
+
+**Decision:** graduated positions are held by `PermanentLiquidityLock`, a contract with no
+owner, no governance, no pause, no upgrade path, no `execute`, no ERC-721 transfer and no call
+to `decreaseLiquidity` or `burn`. Its entire external surface is `collect(tokenId)`, which pays
+the market the position was minted for and takes no recipient.
+
+**Reason:** V-09 asks whether a V3 position can have principal permanently locked while fee
+rights stay exercisable. It cannot, with the position manager alone — holding the NFT keeps
+`decreaseLiquidity` reachable, burning it kills `collect`, and there is no third state. V-09's
+own text anticipates this: *"If no venue primitive provides this, the lock must be a
+purpose-built non-withdrawable holder contract — an architecture decision with security
+consequences, to be escalated, not improvised."*
+
+The security consequence, stated: **the lock is the guarantee.** §17's permanence is a property
+of this contract's absent functions, not of anyone's restraint. A gate would be a key somebody
+holds; absence is not.
+
+§413 recommends FeeVault custody. This is a dedicated contract instead, because FeeVault has a
+treasury setter and a governance transfer — putting the NFT there would make §17 depend on a
+key. §413's actual requirement (non-arbitrary custody, no transfer path) is met more completely
+here than it could be there.
+
+Collection is permissionless. §414 requires that accrued rights are never lost because
+collection is unavailable, and a permissioned collector is a party who can stop paying the
+creator by doing nothing. There is nothing to gain by calling it: every destination is fixed
+before the call.
+
+**Economic impact:** none. It changes who can move the principal, and the answer is nobody.
+**Security impact:** positive, and concentrated. This contract is now the single thing standing
+between "permanent liquidity" and a promise — which is the right place for an auditor to spend
+their time.
+**UX impact:** none.
+**Migration impact:** none. There is no migration path, deliberately — one would be a
+withdrawal path with a longer name.
+**Approved by:** implementation agent, under V-09's escalation clause. **The three HyperSwap
+addresses remain owner-blocked** and cannot be guessed: two are immutable in the router's
+constructor.
+
+---
+
+## D-015 — Graduation opens a full-range 1% position
+
+**Class:** CHOOSE (§415 default, applied)
+**Date:** Day 7
+
+**Decision:** every graduation mints the widest tick range the pool supports, at the 1% fee
+tier, and asserts the pool's actual price equals the curve's closing price before minting.
+
+**Reason:** §415 locks V1 to the widest supported range, and the reasoning survives restating:
+nobody can reposition this position, ever. A concentrated range the price walks out of is
+liquidity stranded permanently, on a market whose entire promise is that its liquidity cannot
+be pulled.
+
+Full range also makes §416's arithmetic land rather than approximating it. At the §8 endpoint
+the remaining supply is worth exactly the collateral that came with it, which is precisely the
+ratio a full-range mint at `pg` consumes — the endpoint was derived to make that true, and it
+is asserted directly rather than assumed.
+
+1% is the widest standard tier and the right one for a pool that is one day old. A new launch
+is volatile and thinly traded; 0.05% or 0.3% would price that risk like a stablecoin pair's,
+for an LP that can never withdraw. V-07 confirmed the tier is enabled with a tick spacing of
+200 — the one input here that is verified rather than chosen.
+
+**The price assertion is load-bearing, not defensive.**
+`createAndInitializePoolIfNecessary` is idempotent: a pool that already exists keeps its own
+price and silently ignores the requested one. Anyone can create a pool for any pair at any
+price for the cost of one transaction, and every graduating market is a known target well in
+advance. Without the check the entire migration mints into a pool a stranger priced, and the
+first trade takes the difference. The graduation reverts instead — under §16 that means no
+GRADUATED status and no partial migration, which is the correct failure.
+
+Dust goes to the lock (§417): never creator, never platform, never the caller. Bounded by test
+at one part in ten thousand of the migration.
+
+**Economic impact:** the fee tier is the market's post-graduation revenue rate. 1% is
+deliberate and is the widest available.
+**Security impact:** positive — the price check closes a front-running vector with no other
+defence.
+**UX impact:** none.
+**Migration impact:** none.
+**Approved by:** implementation agent (§415 states the default; this applies it).
