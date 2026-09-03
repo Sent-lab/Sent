@@ -1,0 +1,90 @@
+/* §22: the tape is the surface where "real-time" is most visible. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+/*
+ * The connection state, beside the data it describes rather than as a global
+ * banner (§211). Reserved width so the label changing does not shift the header.
+ */
+.status {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.status[data-state="open"] { color: var(--up); }
+.status[data-state="connecting"] { color: var(--info); }
+.status[data-state="closed"] { color: var(--warn); }
+.status[data-state="degraded"] { color: var(--down); }
+
+/* Not an error style: nothing failed, the list is simply incomplete and says
+   which trades are missing and how to get them back (§42). */
+.degraded {
+  padding: var(--s-2) var(--s-3);
+  border-left: 2px solid var(--down);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  line-height: var(--leading-normal);
+}
+
+.empty {
+  padding: var(--s-8);
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.tableWrap {
+  overflow-x: auto;
+  margin-inline: calc(-1 * var(--s-4));
+  padding-inline: var(--s-4);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-dim);
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.table td {
+  padding-block: var(--s-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table td:not(:first-child):not(:nth-child(5)) {
+  text-align: right;
+}

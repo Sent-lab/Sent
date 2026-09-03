@@ -29,14 +29,13 @@ import {
   formatCompact,
   formatFixed,
   placesFor,
-  formatRelativeTime,
   truncateAddress,
-  truncateHash,
 } from "../../../lib/format.ts";
 import { FreshnessBadge } from "../../../components/Freshness.tsx";
 import { GraduationProgress, type MarketStatus } from "../../../components/GraduationProgress.tsx";
 import { TradePanel } from "../../../components/TradePanel.tsx";
 import { ChartPanel } from "../../../components/ChartPanel.tsx";
+import { LiveTape } from "../../../components/LiveTape.tsx";
 
 import styles from "./terminal.module.css";
 import type { JSX } from "react";
@@ -97,8 +96,6 @@ export default async function TerminalPage({
   const collateral = safeBigint(market.curveCollateral.value);
   const holders = safeBigint(market.holderCount.value);
   const distributed = safeBigint(market.distributed.value);
-
-  const now = Math.floor(Date.now() / 1000);
 
   return (
     <div className={`${styles.page} container-wide`} data-mode="trading">
@@ -200,45 +197,14 @@ export default async function TerminalPage({
       {/* --- Activity + details ------------------------------------------ */}
       <div className={styles.lower}>
         <section className={styles.activity} aria-label="Recent trades">
-          <h2 className={styles.sectionTitle}>Activity</h2>
-
-          {tapeResult === null || !isOk(tapeResult) ? (
-            <p className={styles.state}>The tape is reconnecting.</p>
-          ) : tapeResult.data.length === 0 ? (
-            <p className={styles.state}>No trades yet. The first one will appear here.</p>
-          ) : (
-            <div className={styles.tableWrap}>
-              <table className={styles.table}>
-                <thead>
-                  <tr>
-                    <th scope="col">Side</th>
-                    <th scope="col">Size</th>
-                    <th scope="col">Notional</th>
-                    <th scope="col">Stockback</th>
-                    <th scope="col">Trader</th>
-                    <th scope="col">When</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tapeResult.data.map((trade) => (
-                    <tr key={`${trade.txHash}-${trade.blockNumber}`}>
-                      <td className={trade.side === "BUY" ? "up" : "down"}>{trade.side}</td>
-                      <td className="num">{formatCompact(BigInt(trade.tokens), 18)}</td>
-                      <td className="num">{formatCompact(BigInt(trade.notional), decimals)}</td>
-                      {/* §316: the fee split is served in full and shown in
-                          full. Aggregating it here would hide the one number a
-                          holder is actually earning. */}
-                      <td className="num dim">{formatCompact(BigInt(trade.stockback), decimals)}</td>
-                      <td className="mono dim">{truncateAddress(trade.trader)}</td>
-                      <td className="dim" title={truncateHash(trade.txHash)}>
-                        {formatRelativeTime(trade.timestamp, now)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          {/* Server-rendered rows, then live ones prepended over the socket. The
+              tape is the surface where §22's "no manual refresh" is most
+              visible, and the one where a silent gap is least acceptable. */}
+          <LiveTape
+            market={market.market}
+            quoteDecimals={decimals}
+            initial={tapeResult !== null && isOk(tapeResult) ? tapeResult.data : []}
+          />
         </section>
 
         <section className={styles.details} aria-label="Market details">
