@@ -3,8 +3,8 @@
 Where the defects in this codebase have actually been, written down so the next
 person reviewing it looks in the right places rather than the obvious ones.
 
-Twenty defects were found and fixed during the build. **None of them was found
-by a unit test.** Every one came from running real components against each
+Thirty-one defects were found and fixed during the build. **None of them was
+found by a unit test.** Every one came from running real components against each
 other. That is not an argument against the unit tests — they are what makes the
 pure cores trustworthy, and several of them caught real errors during
 development. It is an argument about where the *remaining* risk sits.
@@ -13,8 +13,8 @@ development. It is an argument about where the *remaining* risk sits.
 
 ## Shape 1 — the seam
 
-Fifteen of the twenty lived between two components that were each correct, and
-each individually tested.
+Twenty-two of the thirty-one lived between two components that were each
+correct, and each individually tested.
 
 | Where | What it did |
 |---|---|
@@ -33,6 +33,12 @@ each individually tested.
 | Settlement boundary | Read from the reorg tracker, which is advanced after the transaction commits, so it always described the previous range. |
 | `fee_accruals` | The table shipped in the first migration and nothing ever wrote to it. The indexer watched the factory, the reward vault and every market — never the fee vault — so a creator's earnings had no source. A populated schema made it look like they did. |
 | Two decimal scales | Once the fee vault WAS watched, its raw token amounts landed beside the market's normalized ones: 174432 in `fee_accruals` and 174431738875981363 in `trades`, for the same fee. Both correct on their own side, differing by 10^12 in one database. |
+| `stockback_commitments` | Keyed `(market, epoch_sequence)` with `dataset_hash NOT NULL` — neither value is in the vault's event. The table could not be written from a log at all, so `getActiveCommitment` returned NULL forever and every holder's claimable figure was zero regardless of what the vault would pay. |
+| `stockback_claims` | Also never written. `getClaimedTotal` returned zero forever, so a holder who had already been paid was offered the same amount again — a claim the vault reverts. It points the opposite way from the one above, which is why neither looked broken. |
+| `xstock_assets` | The registry projection: never written, and never read either, so nothing in the product looked wrong. §168 sources "Active xStock Pairs" from it and had nothing to source. |
+| `fee_claims` | §21's event family is "FeesAccrued / FeesClaimed" and only the accrual half was indexed. No figure was wrong — claimable comes from the vault — but a creator saw "earned 4.2, claimable 0" with no way to tell a past withdrawal from a failure. |
+| The `account` channel | Declared in the `Channel` union with nothing ever broadcasting to it. A wallet could subscribe and wait forever. |
+| `MARKET_COLUMNS` | Adding the 24h window put two LATERAL-join columns into a shared SELECT list, and one of its three readers was not given the join. `/accounts` 500'd. Caught the same day, and only because the e2e exercises the endpoint. |
 
 **What to do about it.** `tests/e2e/stack.ts` exists because of this list. It
 deploys real contracts, launches, trades, performs a real reorg, graduates, and
@@ -44,7 +50,7 @@ ever handed it real output from the thing upstream".
 
 ## Shape 2 — the placeholder
 
-Seven defects, all the same:
+Ten defects, all the same:
 
 ```
 priceAfter: 0n          // every trade priced at zero; a flat tape and a flat chart
@@ -54,6 +60,9 @@ claimable: 0n           //   ↑ and this one carried a comment explaining why
 log.blockNumber ?? 0n   // a pending log written as a trade in block zero
 CLAIM_CREATOR_FEES      // an IntentKind with no builder: earnings shown, no way to withdraw
 <button disabled>       //   ↑ and a Connect button still saying wallet support was off
+StockbackMessage        // a realtime message type nothing ever published
+referenceMarketCapUsd   // declared in the realtime schema, produced by nobody
+VOLUME: trade_count     // a sort labelled "volume" that ranked by number of trades
 ```
 
 Each was defensible when written. Each typechecked forever. Each outlived the
@@ -82,9 +91,17 @@ was what kept anyone from re-checking.
 
 ---
 
+The `VOLUME` sort deserves its own note, because it is the placeholder shape at
+its most quiet. `s.trade_count` is a real column holding a real number, and the
+sort worked: it returned rows in an order. It just ranked a market with a
+hundred dust trades above one with a single large one — the opposite of what its
+own label promised — and nothing about it could fail.
+
+---
+
 ## Shape 3 — correct, but not at scale
 
-One so far, and it is the reason `tests/load/scale.ts` exists.
+Three, and the first is the reason `tests/load/scale.ts` exists.
 
 `getProof` rebuilds the entire Merkle tree from its leaves on every call and
 finds the leaf by scanning. That is fine for the handful of holders every test
@@ -108,6 +125,64 @@ unbounded dimension:
 `tests/load/scale.ts` covers the first two. The third is covered by the reorg
 and catch-up paths in the e2e, though not at a size that would expose a
 quadratic.
+
+The other two in this shape are the same idea one level up, and both are about
+memory rather than time:
+
+**Nine unbounded caches.** The API held plain `Map`s with no eviction, every one
+keyed by something a caller controls. The quote cache is keyed on the amount, so
+a user moving a slider creates a key per keystroke and anyone with curl can
+create as many as they like. Correct answers, forever, until the process is
+killed — and the symptom is an API that gets slower for a day and then dies,
+which reads as a leak somewhere else entirely.
+
+**No rate limiting.** `POST /quote` goes to the chain by design (§423), so every
+unauthenticated request spends an RPC call on a shared provider quota. One bot
+with a retry loop and no backoff exhausts it, and quoting stops working for
+everybody while the API itself looks perfectly healthy.
+
+---
+
+## The largest group: a table with a reader and no writer
+
+Five of the seams above are the same thing, and it is worth naming separately
+because it is the only failure here that a schema makes *look* deliberate:
+
+```
+stockback_exclusions   read by the finalizer, written by nobody
+stockback_commitments  read by the API, unwritable by its own schema
+stockback_claims       read by the API, written by nobody
+fee_accruals           read by the API, written by nobody
+xstock_assets          read by nobody, written by nobody
+fee_claims             did not exist
+```
+
+A migration that creates a table is a statement that the data exists. Every
+query against these was correct, every join was right, and every one returned
+zero rows forever — which is a perfectly ordinary answer.
+
+**The worst of them.** `stockback_exclusions` is §323's list of addresses that
+must never earn Stockback, and §324 states it as an invariant:
+`DEX_POOL_WEIGHT = 0`. Empty, it meant the market contract entered the TWAB as a
+holder — and the market contract holds every token nobody has bought yet, the
+whole billion at launch and 35% of it even at the graduation threshold. At 1%
+distributed it would have taken 99% of the epoch's pool.
+
+Every pre-graduation distribution would have been arithmetically correct, would
+have satisfied the §364 conservation invariant, and would have paid the bonding
+curve instead of the holders.
+
+The e2e never saw it because it only finalizes AFTER graduation, by which point
+the curve's balance is zero.
+
+**What to do about it.** For each table, ask two questions that are easy to
+answer and easy to skip: what writes this, and what would it look like if
+nothing did. The second is the one that matters — four of these six answered
+"an empty list", "a zero", or "no active root", all of which are values the
+product renders without complaint.
+
+The e2e now asserts the CONTENTS of each of them against the chain that produced
+them, rather than asserting that a query succeeds.
 
 ---
 
@@ -156,6 +231,12 @@ and `assertProductionConfigReady` enforces that at startup on chain 999.
 Stated so it is not mistaken for covered:
 
 - the connected-wallet path against a real browser extension
+- post-graduation candle aggregation from HyperSwap, and the stitched pre/post
+  history §178.8 requires. Blocked on V-06/V-09 — there is no router deployed to
+  read swaps from.
+- the realtime tape under socket load. `tests/load/concurrency.ts` covers four
+  workers over one queue; the gateway's backpressure is covered by its own
+  simulation but has never had real sockets on it.
 - several INDEXERS against one chain. `tests/load/concurrency.ts` covers workers
   and finalizers — four workers over one queue with a peak overlap of four, no
   job executed twice — but two indexers writing one projection is a different

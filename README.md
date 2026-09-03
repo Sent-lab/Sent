@@ -44,6 +44,8 @@ confirmed, and the project deliberately refuses to guess them:
 - a HyperSwap primitive that locks LP principal while preserving fee rights
 - the launch-time reference price source
 
+The read surface is documented in [`docs/API.md`](docs/API.md).
+
 Every open dependency is tracked in [`docs/VERIFY-LEDGER.md`](docs/VERIFY-LEDGER.md)
 with its evidence class. Nothing in production may depend on an unverified row.
 
@@ -103,7 +105,7 @@ infra/            Container image, local stack, migrations, alerting
 tests/
   integration/    The projection SQL against a real PostgreSQL
   e2e/            The whole stack against a real chain
-docs/             Comprehension pass, verify ledger, decision log, conventions
+docs/             API reference, comprehension pass, verify ledger, decisions
 ```
 
 ---
@@ -194,10 +196,15 @@ asserted:
 
 ## Where the bugs have actually been
 
-Sixteen defects were found and fixed during the build, and none of them was
-caught by a unit test. They fell into three shapes — a seam between two
+Thirty-one defects were found and fixed during the build, and none of them was
+caught by a unit test. They fell into four shapes — a seam between two
 components that were each individually correct, a placeholder that outlived the
-reason it was written, and code that was correct but quadratic.
+reason it was written, code that was correct but quadratic, and a failed read
+that renders exactly like a real answer.
+
+The largest single group is a table that was read by something and written by
+nothing. Five of them, including one that would have paid every pre-graduation
+Stockback reward to the bonding curve instead of to holders.
 
 [`docs/REVIEW-NOTES.md`](docs/REVIEW-NOTES.md) lists every one of them and what
 the pattern implies for reviewing this codebase. It is the first thing worth
