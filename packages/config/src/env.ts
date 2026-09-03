@@ -200,6 +200,64 @@ export function realtimeEnv(env: Env = process.env): RealtimeEnv {
   };
 }
 
+export interface KeeperEnv {
+  readonly pollIntervalMs: number;
+  /**
+   * Hex private key of the finalising account, or null to run watch-only.
+   *
+   * Nullable ON PURPOSE, and the keeper starts either way. See the note in
+   * `services/keeper/src/main.ts`: watching is useful without signing, and a
+   * keeper that refused to boot without a key would mean the alert that says
+   * "nobody is finalising" is the first thing to go missing when nobody is.
+   */
+  readonly privateKey: `0x${string}` | null;
+  /** Blocks a market may wait before the wait itself is the fault. */
+  readonly stalledAfterBlocks: bigint;
+  /** Refuse to send when the account is this far from being able to pay. */
+  readonly minBalanceWei: bigint;
+}
+
+export function keeperEnv(env: Env = process.env): KeeperEnv {
+  const raw = env.KEEPER_PRIVATE_KEY;
+
+  let privateKey: `0x${string}` | null = null;
+
+  if (raw !== undefined && raw !== "") {
+    /*
+     * Validated by shape here rather than by whatever viem says when it is
+     * handed nonsense at send time. A malformed key that only fails on the
+     * first real finalise fails at the worst possible moment - a market is
+     * already stalled, which is why the send was being attempted.
+     *
+     * The value is NEVER logged, echoed in an error, or included in the
+     * ConfigError message. The message says the variable's name and its
+     * expected shape, which is everything an operator needs and nothing an
+     * incident report should carry.
+     */
+    if (!/^0x[0-9a-fA-F]{64}$/.test(raw)) {
+      throw new ConfigError(
+        "KEEPER_PRIVATE_KEY must be 0x followed by 64 hex characters (the value is not shown)",
+      );
+    }
+    privateKey = raw as `0x${string}`;
+  }
+
+  const stalled = integer(env, "KEEPER_STALLED_AFTER_BLOCKS", 600);
+  if (stalled < 1) {
+    throw new ConfigError(`KEEPER_STALLED_AFTER_BLOCKS must be at least 1, got ${stalled}`);
+  }
+
+  return {
+    pollIntervalMs: integer(env, "KEEPER_POLL_INTERVAL_MS", 15_000),
+    privateKey,
+    stalledAfterBlocks: BigInt(stalled),
+    // Roughly one large-lane finalise at a generous gas price. A keeper that
+    // sends with too little just burns the attempt and leaves the market
+    // exactly as stuck, while looking like it tried.
+    minBalanceWei: BigInt(optional(env, "KEEPER_MIN_BALANCE_WEI", "100000000000000000")),
+  };
+}
+
 /**
  * Load everything a process needs, and fail with ALL the problems at once.
  *

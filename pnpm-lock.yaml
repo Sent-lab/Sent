@@ -189,6 +189,24 @@ importers:
         specifier: ^2.56.3
         version: 2.56.3(typescript@5.9.3)
 
+  services/keeper:
+    dependencies:
+      '@sent/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@sent/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@sent/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@sent/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      viem:
+        specifier: ^2.21.0
+        version: 2.56.3(typescript@5.9.3)
+
   services/realtime:
     dependencies:
       '@sent/config':

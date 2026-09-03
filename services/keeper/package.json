@@ -1,0 +1,22 @@
+{
+  "name": "@sent/keeper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Finalises graduations that HyperEVM's default block lane cannot fit (D-016, V-20).",
+  "dependencies": {
+    "@sent/config": "workspace:*",
+    "@sent/contracts": "workspace:*",
+    "@sent/database": "workspace:*",
+    "@sent/observability": "workspace:*",
+    "viem": "^2.21.0"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types sim/keeper.ts",
+    "start": "node --experimental-strip-types src/main.ts"
+  },
+  "exports": {
+    ".": "./src/keeper.ts"
+  }
+}
