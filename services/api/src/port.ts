@@ -46,6 +46,7 @@ import {
   distributionStatus,
   marketHeat,
   livePresence,
+  marketsAwaitingFinalisation,
   type ExploreSort,
 } from "@sent/database";
 import { launchMarketAbi, launchpadFactoryAbi, feeVaultAbi } from "@sent/contracts";
@@ -66,6 +67,7 @@ import type {
   PlatformStatsRow,
   EpochsRow,
   PulseRow,
+  PendingGraduationRow,
 } from "./handlers.ts";
 
 const STATUS_NAMES = ["PRE_GRAD", "GRADUATING", "GRADUATED"] as const;
@@ -215,6 +217,10 @@ export class PostgresPort implements DataPort {
     return this.cachedQuotes.get(`sell:${market.toLowerCase()}:${tokensIn}`) ?? null;
   }
 
+  listAwaitingFinalisation(): readonly PendingGraduationRow[] {
+    return this.cachedPending;
+  }
+
   // -------------------------------------------------------------------------
   // Async loaders
   //
@@ -235,6 +241,25 @@ export class PostgresPort implements DataPort {
   private readonly cachedCounts = new BoundedCache<number>(CACHE_LIMITS.counts);
   private cachedStats: PlatformStatsRow | null = null;
   private cachedPulse: PulseRow | null = null;
+
+  /*
+   * Not a BoundedCache. The pending set is bounded by the protocol itself - a
+   * market passes through GRADUATING once, briefly - so it is a whole small
+   * list rather than a keyed lookup that could grow. If it is ever large, that
+   * is the alert firing, not a cache to size.
+   */
+  private cachedPending: readonly PendingGraduationRow[] = [];
+
+  async loadPendingGraduations(): Promise<void> {
+    const rows = await marketsAwaitingFinalisation(this.db);
+    this.cachedPending = rows.map((r) => ({
+      market: r.market,
+      token: r.token,
+      symbol: r.symbol,
+      graduatingAtBlock: r.graduatingAtBlock,
+      waitingBlocks: r.waitingBlocks,
+    }));
+  }
   private readonly cachedEpochs = new BoundedCache<EpochsRow>(CACHE_LIMITS.epochs);
 
   /** Resolved once from the factory, then remembered. */

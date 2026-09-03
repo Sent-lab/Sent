@@ -44,6 +44,7 @@ import {
   handlePlatformStats,
   handlePulse,
   handleHealth,
+  handlePendingGraduations,
   EXPLORE_SORTS,
   type ExploreOptions,
 } from "./handlers.ts";
@@ -302,6 +303,23 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
     // against; returning 503 with a body is how a load balancer learns to stop
     // sending traffic without the body becoming a lie.
     return reply.code(result.data.serving ? 200 : 503).send(result);
+  });
+
+  /*
+   * D-016's operational dependency, exposed rather than buried in a metric.
+   *
+   * The keeper polls it, the operator alerts on `stalled`, and a UI can offer
+   * the finalise to whoever is looking at a stalled market. A permissionless
+   * call that only one party's tooling can find is permissionless on paper.
+   */
+  scope.get("/graduations/pending", async (_request, reply) => {
+    await port.loadPendingGraduations();
+    const result = handlePendingGraduations(port);
+
+    // 200 either way. An empty list is the healthy answer, not an absence, and
+    // a keeper that treats 404 as "nothing to do" would treat a routing mistake
+    // as the same thing.
+    return reply.code(200).send(result);
   });
 
   scope.get("/markets", async (request, reply) => {
@@ -612,7 +630,13 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
 const SORTS = EXPLORE_SORTS;
-const STATUSES = ["PRE_GRAD", "GRADUATED"] as const;
+/*
+ * GRADUATING is filterable, because it is now a state a market rests in
+ * (D-016). Leaving it out would make the one status an operator most needs to
+ * list - markets whose curve has closed and whose holders cannot act - the only
+ * one the API could not be asked about.
+ */
+const STATUSES = ["PRE_GRAD", "GRADUATING", "GRADUATED"] as const;
 
 /** Unknown or absent sort falls back to the default rather than erroring. */
 function parseSort(value: string | undefined): ExploreOptions["sort"] {
@@ -622,9 +646,11 @@ function parseSort(value: string | undefined): ExploreOptions["sort"] {
 }
 
 /** An unrecognised status filters nothing, rather than filtering everything. */
-function parseStatus(value: string | undefined): "PRE_GRAD" | "GRADUATED" | null {
+function parseStatus(
+  value: string | undefined,
+): "PRE_GRAD" | "GRADUATING" | "GRADUATED" | null {
   return STATUSES.includes(value as (typeof STATUSES)[number])
-    ? (value as "PRE_GRAD" | "GRADUATED")
+    ? (value as "PRE_GRAD" | "GRADUATING" | "GRADUATED")
     : null;
 }
 

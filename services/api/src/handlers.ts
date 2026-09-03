@@ -143,6 +143,17 @@ export interface DataPort {
   /** Quote from the canonical curve, as the market itself would compute it. */
   quoteBuy(market: string, grossQuoteIn: bigint): QuoteResult | null;
   quoteSell(market: string, tokensIn: bigint): QuoteResult | null;
+
+  /** Markets whose curve has closed and whose position is not minted (D-016). */
+  listAwaitingFinalisation(): readonly PendingGraduationRow[];
+}
+
+export interface PendingGraduationRow {
+  readonly market: string;
+  readonly token: string;
+  readonly symbol: string;
+  readonly graduatingAtBlock: bigint;
+  readonly waitingBlocks: bigint;
 }
 
 export interface CreatorRow {
@@ -240,7 +251,7 @@ export type ExploreSortName = (typeof EXPLORE_SORTS)[number];
 
 export interface ExploreOptions {
   readonly sort: ExploreSortName;
-  readonly status?: "PRE_GRAD" | "GRADUATED";
+  readonly status?: "PRE_GRAD" | "GRADUATING" | "GRADUATED";
   readonly quoteAsset?: string;
   readonly limit: number;
   /** Name, ticker, or an exact address (§95.21). */
@@ -1406,6 +1417,24 @@ export function handleQuote(port: DataPort, request: QuoteRequest): ApiResult<Tr
   const row = port.getMarket(request.token.toLowerCase());
   if (row === null) return fail(port, "MARKET_NOT_FOUND", `no launched market for token ${request.token}`);
 
+  if (row.status === "GRADUATING") {
+    /*
+     * The curve is closed and the pool does not exist yet (D-016).
+     *
+     * This needs its own refusal. Falling through to MARKET_GRADUATED would
+     * send the user to a HyperSwap pool that has not been created — a refusal
+     * that names a venue which is not there is worse than one that says
+     * nothing, because the user goes looking.
+     */
+    return fail(
+      port,
+      "MARKET_AWAITING_FINALISATION",
+      "this market's curve has closed and its HyperSwap position is not minted yet; " +
+        "trading resumes when anyone finalises it",
+      true,
+    );
+  }
+
   if (row.status !== "PRE_GRAD") {
     // §19: after graduation the curve is permanently closed and HyperSwap is the
     // canonical venue. Quoting the curve here would offer a trade that cannot
@@ -1546,6 +1575,62 @@ export interface HealthResponse {
   readonly finalizedBlock?: string;
   /** False when the projection is too far behind to serve trading decisions. */
   readonly serving: boolean;
+}
+
+/**
+ * Markets waiting on a finaliser.
+ *
+ * D-016 made graduation two transactions, which introduced an operational
+ * dependency the protocol did not previously have: something must call
+ * `finalizeGraduation`. It is permissionless so that no single party can
+ * withhold it, and the SDK builds the intent so a holder can do it from the UI
+ * — but a market nobody finalises is stuck in the ONE state where its holders
+ * cannot act at all. The curve is shut and the pool does not exist.
+ *
+ * So this is an endpoint rather than an internal metric. The keeper reads it,
+ * the operator alerts on it, and a UI can offer the finalise to whoever is
+ * looking at a stalled market. All three want the same list.
+ *
+ * `waitingBlocks` is what a threshold is set against. A market passes through
+ * this state once and briefly, so a large value means nobody finalised — not
+ * that the market is busy.
+ */
+export interface PendingGraduationsResponse {
+  readonly pending: readonly {
+    readonly market: string;
+    readonly token: string;
+    readonly symbol: string;
+    readonly graduatingAtBlock: string;
+    readonly waitingBlocks: string;
+  }[];
+  /** True when at least one market has been waiting long enough to be a fault. */
+  readonly stalled: boolean;
+}
+
+/**
+ * Roughly ten minutes at HyperEVM's block times, and deliberately generous.
+ *
+ * The finalise needs the large block lane, which is produced about once in 120
+ * blocks. A market waiting a few hundred blocks is waiting for a lane, not for
+ * a rescue; one waiting thousands has been forgotten.
+ */
+export const STALLED_AFTER_BLOCKS = 600n;
+
+export function handlePendingGraduations(
+  port: DataPort,
+): ApiResponse<PendingGraduationsResponse> {
+  const rows = port.listAwaitingFinalisation();
+
+  return ok(port, {
+    pending: rows.map((r) => ({
+      market: r.market,
+      token: r.token,
+      symbol: r.symbol,
+      graduatingAtBlock: r.graduatingAtBlock.toString(),
+      waitingBlocks: r.waitingBlocks.toString(),
+    })),
+    stalled: rows.some((r) => r.waitingBlocks > STALLED_AFTER_BLOCKS),
+  });
 }
 
 export function handleHealth(port: DataPort): ApiResponse<HealthResponse> {

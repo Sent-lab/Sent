@@ -15,6 +15,8 @@ import {
   handleQuote,
   handleStockback,
   handleHealth,
+  handlePendingGraduations,
+  STALLED_AFTER_BLOCKS,
   type DataPort,
   type CandleBar,
   handleCandles,
@@ -23,6 +25,7 @@ import {
   type TradeRow,
   type StockbackRow,
   type QuoteResult,
+  type PendingGraduationRow,
   type CreatorRow,
   type AccountRow,
   type PlatformStatsRow,
@@ -369,6 +372,9 @@ class FakePort implements DataPort {
       crossesGraduation: false,
       priceImpactBps: 17n,
     };
+  }
+  listAwaitingFinalisation(): readonly PendingGraduationRow[] {
+    return [];
   }
 }
 
@@ -1374,6 +1380,90 @@ console.log("\n--- 17. §95.20: on-chain metadata ------------------------------
   // be twenty-five extra requests on one explore page.
   check("explore cards carry metadata too", page.data.items[0]?.metadata !== null);
   check("filtered the same way", page.data.items[0]?.metadata?.unsafeLinksRemoved === 1);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 18. A market between its two graduation transactions ----------------");
+
+{
+  /*
+   * D-016 introduced a state where a market has NO venue: the curve is closed
+   * and the pool does not exist. Everything an API says about such a market has
+   * to account for that, and the failure mode is a refusal that sounds helpful
+   * while sending the user somewhere that is not there.
+   */
+  class PendingPort extends FakePort {
+    override getMarket(token: string): MarketRow | null {
+      const row = super.getMarket(token);
+      return row === null ? null : { ...row, status: "GRADUATING" };
+    }
+    override listAwaitingFinalisation(): readonly PendingGraduationRow[] {
+      return [
+        {
+          market: MARKET,
+          token: TOKEN,
+          symbol: "TEST",
+          graduatingAtBlock: 1_000n,
+          waitingBlocks: 12n,
+        },
+        {
+          market: MARKET,
+          token: TOKEN,
+          symbol: "STUCK",
+          graduatingAtBlock: 10n,
+          waitingBlocks: STALLED_AFTER_BLOCKS + 1n,
+        },
+      ];
+    }
+  }
+
+  const port = new PendingPort();
+
+  const quoted = handleQuote(port, {
+    token: TOKEN,
+    side: "BUY",
+    amount: 1_000_000n,
+    slippageBps: 100n,
+    deadline: 9_999_999_999n,
+    chainId: 999,
+  });
+
+  check("a quote against a closed curve is refused", quoted.ok === false);
+
+  if (!quoted.ok) {
+    /*
+     * Its own code, and this is the point of the test. Falling through to
+     * MARKET_GRADUATED would tell the user to trade on a HyperSwap pool that
+     * has not been created - a refusal that names a venue which is not there is
+     * worse than one that says nothing, because the user goes looking for it.
+     */
+    check(
+      "with its own code, not MARKET_GRADUATED",
+      quoted.code === "MARKET_AWAITING_FINALISATION",
+    );
+    check("marked retryable, because it genuinely will be", quoted.retryable === true);
+    check(
+      "and the message does not send the user to a pool that does not exist",
+      !quoted.message.includes("HyperSwap pool"),
+    );
+  }
+
+  const pending = handlePendingGraduations(port);
+  if (!pending.ok) throw new Error("expected success");
+
+  check("the pending list is served", pending.data.pending.length === 2);
+  check(
+    "with the wait in blocks, which is what a threshold is set against",
+    pending.data.pending[0]?.waitingBlocks === "12",
+  );
+  check("and one of them is flagged as stalled", pending.data.stalled === true);
+
+  // An empty list is the healthy answer, not an absence. A keeper that saw a
+  // 404 would treat a routing mistake and a quiet protocol identically.
+  const quiet = handlePendingGraduations(new FakePort());
+  if (!quiet.ok) throw new Error("expected success");
+  check("nothing pending still answers", quiet.data.pending.length === 0);
+  check("and is not stalled", quiet.data.stalled === false);
 }
 
 // ---------------------------------------------------------------------------

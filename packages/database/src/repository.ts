@@ -954,17 +954,30 @@ export async function markGraduating(db: Db, market: string, block: bigint): Pro
 export async function marketsAwaitingFinalisation(
   db: Db,
   limit = 50,
-): Promise<readonly { market: `0x${string}`; graduatingAtBlock: bigint; waitingBlocks: bigint }[]> {
+): Promise<
+  readonly {
+    market: `0x${string}`;
+    token: `0x${string}`;
+    symbol: string;
+    graduatingAtBlock: bigint;
+    waitingBlocks: bigint;
+  }[]
+> {
   const rows = await db.query<{
     market: Buffer;
+    token: Buffer;
+    symbol: string;
     graduating_at_block: string;
     waiting_blocks: string;
   }>(
     `SELECT ms.market,
+            m.token,
+            m.symbol,
             ms.graduating_at_block,
             GREATEST(COALESCE((SELECT MAX(number) FROM blocks), ms.graduating_at_block)
                      - ms.graduating_at_block, 0) AS waiting_blocks
        FROM market_state ms
+       JOIN markets m ON m.market = ms.market
       WHERE ms.graduating_at_block IS NOT NULL
         AND ms.status <> 2
       ORDER BY ms.graduating_at_block ASC
@@ -974,6 +987,8 @@ export async function marketsAwaitingFinalisation(
 
   return rows.map((r) => ({
     market: addr(r.market, "market"),
+    token: addr(r.token, "token"),
+    symbol: r.symbol,
     graduatingAtBlock: BigInt(r.graduating_at_block),
     waitingBlocks: BigInt(r.waiting_blocks),
   }));
