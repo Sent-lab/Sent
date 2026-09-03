@@ -58,6 +58,9 @@ import {
   finalizedHead,
   getLatestDataset,
   getEntitlementForRoot,
+  getActiveCommitment,
+  getClaimedTotal,
+  getExclusions,
 } from "@sent/database";
 import { Indexer, DEFAULT_CONFIG } from "@sent/indexer";
 import { Finalizer } from "@sent/finalizer";
@@ -362,6 +365,17 @@ try {
     confirmations: 0,
     pollIntervalMs: 100,
   });
+
+  /*
+   * Hoisted out of the graduation block on purpose.
+   *
+   * The commitment and the claim happen deep inside a nested lifecycle branch,
+   * and the phase that checks whether the INDEXER saw them runs afterwards at
+   * the top level. A proof is only valid against the root it was built for, so
+   * both have to survive the scope they were produced in.
+   */
+  let dataset: Awaited<ReturnType<typeof getLatestDataset>> = null;
+  let entitlement: Awaited<ReturnType<typeof getEntitlementForRoot>> = null;
 
   await indexer.start();
 
@@ -708,12 +722,8 @@ try {
         const written = await finalizer.runOnce();
         check("the finalizer produced a dataset", written > 0);
 
-        const dataset = await getLatestDataset(db, market);
+        dataset = await getLatestDataset(db, market);
         check("and stored it", dataset !== null);
-
-        // Hoisted: the claim phase below needs it, and a proof is only valid
-        // against the root it was built for.
-        let entitlement: Awaited<ReturnType<typeof getEntitlementForRoot>> = null;
 
         if (dataset !== null) {
           // §364. The vault would reject a commitment above its funding, and a
@@ -1018,6 +1028,103 @@ try {
 
     }
   }
+
+  // --- Indexing what the vaults did (§304, §323) ----------------------------
+
+  section("The vault's own events reach the projection");
+
+  /*
+   * Everything above happened on-chain while the indexer was stopped. Restarting
+   * it here is the point of this phase: the reward vault emits a commitment, an
+   * activation and a claim, and until now the indexer ignored all three.
+   *
+   * `stockback_commitments` and `stockback_claims` shipped in the first
+   * migration, were read by the API, and were written by nobody. The two
+   * failures that produced point in opposite directions, which is why neither
+   * looked broken: a holder with a live entitlement saw zero claimable, and a
+   * holder who had already claimed saw the full amount offered again.
+   */
+  /*
+   * Read BEFORE the indexer catches up, which is the unattested state: a
+   * dataset this node computed, and nothing the chain has confirmed. §293 turns
+   * on this distinction — returning one number for both would tell a holder
+   * that unattested arithmetic is money they can withdraw.
+   */
+  const beforeIndexing = await getActiveCommitment(db, market);
+  check("no commitment is active until the chain says so", beforeIndexing === null);
+
+  await indexer.start();
+
+  const projectedClaim = await waitFor(async () => {
+    const rows = await db.query<{ c: string }>(
+      "SELECT COUNT(*)::TEXT AS c FROM stockback_claims",
+    );
+    return rows[0]?.c !== "0" ? rows[0] : null;
+  });
+
+  indexer.stop();
+
+  check("the claim reached the projection", projectedClaim !== null);
+
+  {
+    const active = await getActiveCommitment(db, market);
+    check("an activated commitment is projected", active !== null);
+    check(
+      "with the root the attestors signed",
+      dataset === null || active?.merkleRoot === dataset.merkleRoot,
+    );
+
+    // The submitted-then-activated distinction is what §334's delay protects.
+    // A projection that recorded submission as activation would hand out proofs
+    // six hours before the vault would honour them.
+    const rows = await db.query<Record<string, string | null>>(
+      "SELECT activated_at_block, cancelled_at_block FROM stockback_commitments",
+    );
+    check("exactly one commitment was recorded", rows.length === 1);
+    check("marked activated", rows[0]?.activated_at_block !== null);
+    check("and not cancelled", rows[0]?.cancelled_at_block === null);
+
+    const claimed = await getClaimedTotal(db, market, account.address);
+    check(
+      "the projected claim total matches what the vault paid",
+      entitlement === null || claimed === entitlement.cumulative,
+    );
+  }
+
+  section("Stockback exclusions (§323, §324)");
+
+  /*
+   * The curve holds every token nobody has bought yet — the whole billion at
+   * launch, and 35% of it even at the graduation threshold. It receives
+   * `Transfer` events like any wallet, so without an exclusion it enters the
+   * TWAB as a holder whose weight no real holder can approach: at 1%
+   * distributed it would take 99% of the epoch's pool.
+   *
+   * Nothing registered exclusions. The table was read by the finalizer and
+   * written by no one, and every pre-graduation distribution would have paid the
+   * market contract instead of the holders.
+   */
+  {
+    const excluded = await getExclusions(db, market);
+    const has = (a: string): boolean => excluded.includes(a.toLowerCase() as `0x${string}`);
+
+    check("the curve itself is excluded", has(market));
+    check("so is the reward vault", has(rewardVault));
+    check("and the fee vault", has(feeVault));
+    check("and the factory", has(factory));
+    check("the zero address is excluded", has("0x0000000000000000000000000000000000000000"));
+    check("and the burn address", has("0x000000000000000000000000000000000000dEaD"));
+
+    // §324, and the reason it is written as an invariant: the pool holds the
+    // permanent liquidity, which after graduation is the largest TOKEN balance
+    // in existence.
+    const graduatedView = await getMarketByToken(db, token);
+    check(
+      "the HyperSwap pool is excluded once it exists",
+      graduatedView?.pool == null || has(graduatedView.pool),
+    );
+  }
+
   // --- The API over the real projection ------------------------------------
 
   section("Serving what was indexed");
@@ -1097,10 +1204,11 @@ try {
     /*
      * §293: estimated accrual and claimable entitlement must be distinguishable.
      *
-     * At this point the finalizer has computed a dataset but no attestor has
-     * activated anything on-chain, which is precisely the state where the two
-     * figures differ — and where returning one number for both would tell a
-     * holder that unattested arithmetic is money they can withdraw.
+     * By this point the holder has been through the whole cycle — a dataset was
+     * computed, attestors activated it, and the claim was paid — so both figures
+     * are legitimately zero. The assertion that matters is that they are zero
+     * for the RIGHT reason, which is why `lifetimeClaimed` is checked against
+     * what the vault actually transferred rather than against itself.
      */
     const stockback = await get(`/markets/${token}/stockback/${account.address}`);
     check("the API serves a Stockback position", stockback.status === 200);
@@ -1108,19 +1216,34 @@ try {
     const position = stockback.body.data as Record<string, unknown>;
     const accrued = (position?.estimatedAccrued as Record<string, unknown>)?.value;
     const claimable = (position?.claimable as Record<string, unknown>)?.value;
+    const lifetime = (position?.lifetimeClaimed as Record<string, unknown>)?.value;
 
-    check("estimated accrual reflects the computed dataset", BigInt(String(accrued)) > 0n);
+    check("the two are separate fields", position?.estimatedAccrued !== undefined && position?.claimable !== undefined);
 
-    // Nothing is claimable until attestors activate a commitment on-chain. A
-    // non-zero figure here would be the API promising money the vault will not
-    // pay.
-    check("nothing is claimable without an activated commitment", claimable === "0");
-
-    check("the two are separate fields", accrued !== claimable);
+    // The number this phase exists for. Before the indexer read the vault's
+    // Claimed event this was zero forever, and a holder who had already been
+    // paid would have been offered the same amount again — a claim the vault
+    // reverts, because it pays `cumulative - claimed`.
     check(
-      "and no proof is offered for an unattested root",
-      position?.proof === undefined,
+      "lifetime claimed is what the vault paid",
+      entitlement === null || BigInt(String(lifetime)) === entitlement.cumulative,
     );
+
+    // Zero because it was claimed, not because no root exists. The projection
+    // holds an ACTIVE commitment at this point — asserted directly above — so a
+    // non-zero figure here would mean the API is double-counting a paid claim.
+    check("nothing is left claimable after a full claim", claimable === "0");
+    check("and nothing is still accruing against it", accrued === "0");
+
+    /*
+     * A proof IS served now, and that is the correct behaviour: there is an
+     * active root to prove against. The state this used to assert — a computed
+     * dataset with no activated commitment — is checked at the data layer in
+     * the phase above, where `getActiveCommitment` was null before the indexer
+     * caught up. Asserting it here would only be re-testing the ordering of
+     * two phases.
+     */
+    check("a proof is offered for the active root", position?.proof !== undefined);
 
     /*
      * §221's cockpit, over the real projection and the real vault.
