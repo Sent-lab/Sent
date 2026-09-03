@@ -121,7 +121,8 @@ and `assertProductionConfigReady` enforces that at startup on chain 999.
 Stated so it is not mistaken for covered:
 
 - the connected-wallet path against a real browser extension
-- concurrency: nothing here has been run with several indexers, workers or API
-  replicas at once. The job queue claims with `FOR UPDATE SKIP LOCKED` and the
-  finalizer is idempotent by construction, but neither has been contended.
+- several INDEXERS against one chain. `tests/load/concurrency.ts` covers workers
+  and finalizers — four workers over one queue with a peak overlap of four, no
+  job executed twice — but two indexers writing one projection is a different
+  question, and the cursor is a single row.
 - anything requiring the external facts above

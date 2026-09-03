@@ -264,6 +264,9 @@ importers:
       '@sent/stockback-service':
         specifier: workspace:*
         version: link:../../services/stockback
+      '@sent/worker':
+        specifier: workspace:*
+        version: link:../../services/worker
 
 packages:
 

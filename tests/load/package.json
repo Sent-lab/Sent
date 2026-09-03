@@ -7,9 +7,10 @@
   "dependencies": {
     "@sent/database": "workspace:*",
     "@sent/stockback": "workspace:*",
-    "@sent/stockback-service": "workspace:*"
+    "@sent/stockback-service": "workspace:*",
+    "@sent/worker": "workspace:*"
   },
   "scripts": {
-    "test": "node --experimental-strip-types scale.ts"
+    "test": "node --experimental-strip-types scale.ts && node --experimental-strip-types concurrency.ts"
   }
 }
