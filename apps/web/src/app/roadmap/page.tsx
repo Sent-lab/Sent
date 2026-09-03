@@ -84,8 +84,8 @@ const ITEMS: readonly Item[] = [
   },
   {
     title: "Creator control centre",
-    state: "NEXT",
-    body: "Fee accrual, claims and per-market analytics for people who have launched a token.",
+    state: "BUILDING",
+    body: "Launches, graduation progress and fee earnings for anyone who has launched a token, with claims sent straight to the fee vault. Two fee figures, never one: what the vault will pay now, and what has been earned all time.",
   },
   {
     title: "xStock registry",

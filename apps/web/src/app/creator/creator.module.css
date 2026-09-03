@@ -1,0 +1,395 @@
+/* §221: a creator's cockpit. Trading mode — dense, calm, no admin chrome. */
+
+.page {
+  padding-block: var(--s-10) var(--s-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-6);
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+
+.headMain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.title {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.subtitle {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+/* --- earnings ------------------------------------------------------------ */
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--border);
+  overflow: hidden;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-4);
+  min-width: 0;
+  background: var(--bg-raised);
+}
+
+.metricLabel {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.metricValue {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: 1;
+  /* Reserved so the row does not grow when a figure replaces the dash (§80). */
+  min-height: 1em;
+}
+
+.metricDetail {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  line-height: var(--leading-normal);
+}
+
+.assets {
+  list-style: none;
+  margin: var(--s-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.asset {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  font-size: var(--text-xs);
+}
+
+.assetAmount {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.assetSymbol {
+  color: var(--text-dim);
+}
+
+.assetsEmpty {
+  margin-top: var(--s-2);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+/* --- claim --------------------------------------------------------------- */
+
+.claim,
+.launches {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.sectionTitle {
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.claimEmpty,
+.launchesEmpty {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  line-height: var(--leading-normal);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+
+.claimList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.claimRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface);
+}
+
+.claimAmount {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.claimValue {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.claimSymbol {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.claimButton {
+  flex: none;
+  padding: var(--s-2) var(--s-5);
+  border: 1px solid var(--volt-deep);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--volt);
+  color: #050607;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.claimButton:hover:not(:disabled) {
+  background: var(--volt-glow);
+}
+
+.claimButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.claimNote {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  line-height: var(--leading-normal);
+}
+
+/* --- launches ------------------------------------------------------------ */
+
+.launchList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--s-3);
+}
+
+.launch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface);
+  min-width: 0;
+}
+
+.launchHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.launchName {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.launchName:hover .launchTitle {
+  color: var(--text);
+}
+
+.launchSymbol {
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.launchTitle {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launchQuote {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.launchMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.launchStat {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-1);
+  font-size: var(--text-xs);
+}
+
+.launchStatValue {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.launchStatLabel {
+  color: var(--text-dim);
+}
+
+.launchAction {
+  font-size: var(--text-xs);
+  color: var(--volt);
+  text-decoration: none;
+}
+
+.launchAction:hover {
+  text-decoration: underline;
+}
+
+.launchesCta {
+  padding: var(--s-2) var(--s-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text);
+  font-size: var(--text-sm);
+  text-decoration: none;
+}
+
+.launchesCta:hover {
+  background: var(--surface-hover);
+}
+
+/* --- connect / actions --------------------------------------------------- */
+
+.connect {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+
+.connectTitle {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.connectBody {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  line-height: var(--leading-normal);
+  max-width: 62ch;
+}
+
+.connectNote {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.connectCta {
+  padding: var(--s-3) var(--s-6);
+  border: 1px solid var(--volt-deep);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--volt);
+  color: #050607;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.connectCta:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+}
+
+.actionPrimary,
+.action {
+  padding: var(--s-3) var(--s-5);
+  border-radius: var(--radius-sm, 6px);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.actionPrimary {
+  border: 1px solid var(--volt-deep);
+  background: var(--volt);
+  color: #050607;
+}
+
+.action {
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}
+
+.action:hover {
+  background: var(--surface-hover);
+}
+
+.error {
+  font-size: var(--text-sm);
+  color: var(--down);
+  line-height: var(--leading-normal);
+}

@@ -30,6 +30,7 @@ import type {
   MarketDetail,
   TapeItem,
   StockbackResponse,
+  CreatorResponse,
   HealthResponse,
 } from "@sent/api/handlers";
 import type { IntentKind, IntentRow } from "@sent/sdk";
@@ -40,6 +41,7 @@ export type {
   MarketDetail,
   TapeItem,
   StockbackResponse,
+  CreatorResponse,
   HealthResponse,
   IntentKind,
   IntentRow,
@@ -228,6 +230,13 @@ export function getStockback(
   options?: RequestOptions,
 ): Promise<ApiResult<StockbackResponse>> {
   return request<StockbackResponse>(`/markets/${token}/stockback/${account}`, options);
+}
+
+export function getCreator(
+  address: string,
+  options?: RequestOptions,
+): Promise<ApiResult<CreatorResponse>> {
+  return request<CreatorResponse>(`/creators/${address}`, options);
 }
 
 export function getHealth(options?: RequestOptions): Promise<ApiResult<HealthResponse>> {

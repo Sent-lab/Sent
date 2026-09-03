@@ -55,7 +55,7 @@ const SECTIONS = [
   },
   {
     title: "My launches",
-    body: "Markets you created, with their graduation progress and fee accrual.",
+    body: "Markets you created, with their graduation progress and fee accrual. Live now on the creator page.",
   },
   {
     title: "Earnings",
@@ -89,14 +89,15 @@ export default function AccountPage(): JSX.Element {
       </section>
 
       <div className={styles.connect} role="status">
-        <p className={styles.connectTitle}>No wallet connected</p>
+        <p className={styles.connectTitle}>Holdings are not wired yet</p>
         <p className={styles.connectBody}>
-          Wallet connection is not enabled in this build. Once it is, this page reads your
-          positions from the chain — SENT never custodies anything, so there is no account
-          to create and nothing to sign up for.
+          Positions and P&amp;L on this page still need a per-account holdings read, which is
+          not built. Creator earnings and launches ARE live — they moved to the creator page
+          rather than waiting for the rest of this one. SENT never custodies anything, so
+          there is no account to create and nothing to sign up for.
         </p>
-        <Link href="/explore" className={styles.connectCta}>
-          Explore markets
+        <Link href="/creator" className={styles.connectCta}>
+          Open the creator page
         </Link>
       </div>
 
