@@ -379,9 +379,23 @@ export class PostgresPort implements DataPort {
 
     const vault = await this.resolveFeeVault();
 
-    const claimable: { asset: `0x${string}`; symbol: string; amount: bigint }[] = [];
+    /*
+     * An RPC failure must not become a zero.
+     *
+     * Omitting the asset that failed would leave an empty list, which the page
+     * renders as "nothing to claim" — indistinguishable from the truth, and the
+     * creator has no way to tell they are looking at a failed read rather than
+     * an empty balance.
+     *
+     * So a failure discards the WHOLE list and clears the vault address, which
+     * is the page's existing signal for "claiming is unavailable right now".
+     * Partial truth about money is worse than a stated gap.
+     */
+    let claimable: { asset: `0x${string}`; symbol: string; amount: bigint }[] | null = [];
 
-    if (vault !== null) {
+    if (vault === null) {
+      claimable = null;
+    } else {
       for (const accrual of accruals) {
         try {
           const balance = (await this.client.readContract({
@@ -391,21 +405,24 @@ export class PostgresPort implements DataPort {
             args: [address as `0x${string}`, accrual.asset],
           })) as bigint;
 
-          if (balance > 0n) {
-            claimable.push({ asset: accrual.asset, symbol: this.symbolOf(accrual.asset), amount: balance });
+          if (balance > 0n && claimable !== null) {
+            claimable.push({
+              asset: accrual.asset,
+              symbol: this.symbolOf(accrual.asset),
+              amount: balance,
+            });
           }
         } catch {
-          // An RPC failure must not turn into a zero. A zero here reads as
-          // "nothing to claim", which is a lie the creator cannot tell apart
-          // from the truth — so the asset is simply omitted, and the page shows
-          // the accrued figure with the freshness envelope saying why.
+          claimable = null;
+          break;
         }
       }
     }
 
     this.cachedCreators.set(address.toLowerCase(), {
       launches: views.map((v) => this.toRow(v)),
-      claimable,
+      feeVault: claimable === null ? null : vault,
+      claimable: claimable ?? [],
       accrued: accruals.map((a) => ({
         asset: a.asset,
         symbol: this.symbolOf(a.asset),

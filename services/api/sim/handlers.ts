@@ -136,6 +136,7 @@ class FakePort implements DataPort {
   }
   creator: CreatorRow | null = {
     launches: [baseMarket],
+    feeVault: "0x6666666666666666666666666666666666666666",
     claimable: [
       { asset: "0x5555555555555555555555555555555555555555", symbol: "NVDAx", amount: 250n },
     ],

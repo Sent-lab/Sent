@@ -115,6 +115,14 @@ export interface DataPort {
 export interface CreatorRow {
   readonly launches: readonly MarketRow[];
   /**
+   * The vault the claimable figures were read from.
+   *
+   * Returned so the claim a creator signs targets the same contract the balance
+   * came from. A client holding its own vault address could show one contract's
+   * balance over a button that calls another.
+   */
+  readonly feeVault: string | null;
+  /**
    * Payable right now, read from the vault (§423).
    *
    * Not the sum of indexed accruals: a fee already claimed is still an accrual,
@@ -399,6 +407,8 @@ export interface CreatorLaunch {
 
 export interface CreatorResponse {
   readonly creator: string;
+  /** Where a claim is sent. Null when the chain could not be reached. */
+  readonly feeVault: string | null;
   readonly launches: readonly CreatorLaunch[];
   /** Payable now, from the vault. */
   readonly claimable: readonly { asset: string; symbol: string; amount: string }[];
@@ -430,6 +440,7 @@ export function handleCreator(port: DataPort, address: string): ApiResult<Creato
   if (row === null) {
     return ok(port, {
       creator: address.toLowerCase(),
+      feeVault: null,
       launches: [],
       claimable: [],
       accrued: [],
@@ -438,6 +449,7 @@ export function handleCreator(port: DataPort, address: string): ApiResult<Creato
 
   return ok(port, {
     creator: address.toLowerCase(),
+    feeVault: row.feeVault,
     launches: row.launches.map((m) => ({
       token: m.token,
       market: m.market,
