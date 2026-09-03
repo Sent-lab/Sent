@@ -1573,6 +1573,43 @@ try {
     const versionedMarket = await get(`/v1/markets/${token}`);
     check("including market detail", versionedMarket.status === 200);
 
+    /*
+     * §333's public dataset and §367's status, over the real projection.
+     *
+     * The e2e has run one epoch all the way through: computed, submitted,
+     * activated, claimed. So every field here has a real value behind it —
+     * which is the only way to tell a working join from one that returns
+     * nothing and looks tidy doing it.
+     */
+    const epochs = await get(`/markets/${token}/epochs`);
+    check("the API serves the distribution history", epochs.status === 200);
+
+    const ep = epochs.body.data as Record<string, unknown>;
+    const list2 = (ep.epochs ?? []) as Record<string, unknown>[];
+    check("with the epoch the finalizer computed", list2.length >= 1);
+
+    const newest = list2[0];
+    check("carrying the root that was attested", newest?.merkleRoot === dataset?.merkleRoot);
+    check("and its dataset hash", newest?.datasetHash === dataset?.datasetHash);
+
+    // §333's inputs, not just the outputs. Without them the dataset cannot be
+    // independently re-derived, which is the whole reason it is published.
+    check("the eligible holder count is published", Number(newest?.eligibleHolders) > 0);
+    check("so is the total weight", BigInt(String(newest?.totalWeight)) > 0n);
+    check("and the pool it was paid from", BigInt(String(newest?.pool)) > 0n);
+
+    // The line §293 draws: this root WAS activated on-chain, and the projection
+    // saw it, so the epoch is attested rather than merely computed.
+    check("the epoch is marked attested", newest?.attested === true);
+
+    const status = ep.status as Record<string, unknown>;
+    check("§367 reports FINALIZED", status?.state === "FINALIZED");
+    check("the current epoch is read from the clock", BigInt(String(status?.currentEpochId)) > 0n);
+
+    // Funded minus claimed. The holder claimed everything they were owed, so
+    // what remains is dust and unattested funding — never negative.
+    check("outstanding is never negative", BigInt(String(status?.outstanding)) >= 0n);
+
     const health = await get("/health");
     check("health answers", health.status === 200 || health.status === 503);
     check("with a freshness envelope", health.body.freshness !== undefined);

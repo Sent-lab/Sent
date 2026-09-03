@@ -1177,6 +1177,204 @@ export async function creatorAccruals(
 }
 
 // ---------------------------------------------------------------------------
+// Distribution transparency (§333, §367)
+// ---------------------------------------------------------------------------
+
+export interface EpochView {
+  readonly epochSequence: bigint;
+  readonly epochId: bigint;
+  /** Unix seconds. Derived from the epoch id — epochs are fixed 24h windows. */
+  readonly startTime: number;
+  readonly endTime: number;
+  readonly pool: bigint;
+  readonly allocated: bigint;
+  readonly carryForward: bigint;
+  readonly eligibleHolders: number;
+  readonly totalWeight: bigint;
+  readonly merkleRoot: `0x${string}`;
+  readonly datasetHash: `0x${string}`;
+  readonly totalCumulative: bigint;
+  readonly cumulativeRewardFunded: bigint;
+  readonly holderCount: number;
+  readonly computedAt: number;
+  /** Whether an attestor quorum activated this root on-chain. */
+  readonly attested: boolean;
+}
+
+const EPOCH_SECONDS = 86_400n;
+
+/**
+ * Every epoch this node has computed for a market (§333, §346).
+ *
+ * §333 lists what the public dataset must contain, and the point of it is
+ * independent verification: someone who does not trust this service should be
+ * able to re-derive the root. So the row carries the inputs (weights, funding,
+ * window) alongside the outputs (root, hash), not just the outputs.
+ *
+ * `attested` is a JOIN against the on-chain commitments rather than a stored
+ * flag. §293's distinction lives or dies on it: an epoch this node computed and
+ * an epoch the chain honours are different things, and a boolean written by the
+ * finalizer would be the finalizer's opinion of the chain rather than the chain.
+ */
+export async function listEpochs(
+  db: Db,
+  market: string,
+  limit = 30,
+): Promise<EpochView[]> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT d.epoch_sequence, d.merkle_root, d.dataset_hash, d.total_cumulative,
+            d.total_funded, d.holder_count, d.computed_at,
+            a.epoch_id, a.pool, a.allocated, a.carry_forward,
+            a.eligible_holders, a.total_weight,
+            c.activated_at_block
+     FROM stockback_datasets d
+       LEFT JOIN stockback_epoch_allocations a
+         ON a.market = d.market AND a.epoch_id = d.epoch_sequence
+       LEFT JOIN stockback_commitments c
+         ON c.market = d.market
+        AND c.merkle_root = d.merkle_root
+        AND c.cancelled_at_block IS NULL
+     WHERE d.market = $1
+     ORDER BY d.epoch_sequence DESC
+     LIMIT $2`,
+    [toBytes(market), Math.max(1, Math.min(limit, 365))],
+  );
+
+  return rows.map(toEpochView);
+}
+
+/** One epoch, by its sequence. Null when this node never computed it. */
+export async function getEpoch(
+  db: Db,
+  market: string,
+  epochSequence: bigint,
+): Promise<EpochView | null> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT d.epoch_sequence, d.merkle_root, d.dataset_hash, d.total_cumulative,
+            d.total_funded, d.holder_count, d.computed_at,
+            a.epoch_id, a.pool, a.allocated, a.carry_forward,
+            a.eligible_holders, a.total_weight,
+            c.activated_at_block
+     FROM stockback_datasets d
+       LEFT JOIN stockback_epoch_allocations a
+         ON a.market = d.market AND a.epoch_id = d.epoch_sequence
+       LEFT JOIN stockback_commitments c
+         ON c.market = d.market
+        AND c.merkle_root = d.merkle_root
+        AND c.cancelled_at_block IS NULL
+     WHERE d.market = $1 AND d.epoch_sequence = $2`,
+    [toBytes(market), epochSequence.toString()],
+  );
+
+  const [only] = rows;
+  return only === undefined ? null : toEpochView(only);
+}
+
+/**
+ * The one row mapping both readers use.
+ *
+ * Written once because the two queries differ only in their WHERE clause. Two
+ * copies is how a list and a detail view start reporting different fields for
+ * the same epoch, and the difference would look like a data problem.
+ */
+function toEpochView(r: Record<string, unknown>): EpochView {
+  const sequence = big(r.epoch_sequence, "epoch_sequence");
+  const epochId = bigOrNull(r.epoch_id) ?? sequence;
+
+  return {
+    epochSequence: sequence,
+    epochId,
+    // Epochs are fixed 24h windows on a shared 00:00 UTC boundary (§329), so
+      // the window is a property of the id rather than something to store — and
+      // a stored copy is one more thing that can disagree with the bucketing.
+    startTime: Number(epochId * EPOCH_SECONDS),
+    endTime: Number((epochId + 1n) * EPOCH_SECONDS),
+    pool: bigOrNull(r.pool) ?? 0n,
+    allocated: bigOrNull(r.allocated) ?? 0n,
+    carryForward: bigOrNull(r.carry_forward) ?? 0n,
+    eligibleHolders: Number(r.eligible_holders ?? 0),
+    totalWeight: bigOrNull(r.total_weight) ?? 0n,
+    merkleRoot: hexBytes(r.merkle_root, "merkle_root"),
+    datasetHash: hexBytes(r.dataset_hash, "dataset_hash"),
+    totalCumulative: big(r.total_cumulative, "total_cumulative"),
+    cumulativeRewardFunded: big(r.total_funded, "total_funded"),
+    holderCount: Number(r.holder_count),
+    computedAt: Number(big(r.computed_at, "computed_at")),
+    attested: r.activated_at_block !== null && r.activated_at_block !== undefined,
+  };
+}
+
+export interface DistributionStatus {
+  /** The epoch currently accumulating, from the clock rather than from a row. */
+  readonly currentEpochId: bigint;
+  readonly lastFinalizedSequence: bigint | null;
+  readonly lastFinalizedAt: number | null;
+  /** True while a root is submitted but not yet activated (§334). */
+  readonly finalizing: boolean;
+  readonly attestedSequence: bigint | null;
+  readonly totalFunded: bigint;
+  readonly totalClaimed: bigint;
+  /** Funded minus claimed: what the vault still owes against activated roots. */
+  readonly outstanding: bigint;
+}
+
+/**
+ * §367's public status for one market.
+ *
+ * The current epoch comes from the CLOCK, not from a row. §329 defines an epoch
+ * as a fixed window on a shared boundary, so it exists whether or not anything
+ * has happened in it — deriving it from the newest dataset would report the last
+ * epoch that had activity as if it were the current one, and on a quiet market
+ * that could be days ago.
+ *
+ * `outstanding` is funded minus claimed, which is what the vault still owes. It
+ * is deliberately not "what is claimable": money funded into an epoch nobody has
+ * attested yet is owed to holders but payable to nobody, and collapsing the two
+ * is how a status page reports a solvency problem that does not exist.
+ */
+export async function distributionStatus(
+  db: Db,
+  market: string,
+  now?: number,
+): Promise<DistributionStatus> {
+  const clock = BigInt(now ?? Math.floor(Date.now() / 1000));
+
+  const row = await db.queryOne<Record<string, unknown>>(
+    `SELECT
+       (SELECT MAX(epoch_sequence) FROM stockback_datasets WHERE market = $1)  AS last_sequence,
+       (SELECT MAX(computed_at) FROM stockback_datasets WHERE market = $1)     AS last_at,
+       (SELECT COUNT(*) FROM stockback_commitments
+         WHERE market = $1 AND activated_at_block IS NULL
+           AND cancelled_at_block IS NULL)::TEXT                               AS pending,
+       (SELECT d.epoch_sequence FROM stockback_commitments c
+          JOIN stockback_datasets d
+            ON d.market = c.market AND d.merkle_root = c.merkle_root
+         WHERE c.market = $1 AND c.activated_at_block IS NOT NULL
+           AND c.cancelled_at_block IS NULL
+         ORDER BY c.submitted_at_block DESC LIMIT 1)                           AS attested_sequence,
+       (SELECT COALESCE(MAX(total_funded), 0) FROM stockback_funding WHERE market = $1)::TEXT
+                                                                               AS total_funded,
+       (SELECT COALESCE(SUM(amount), 0) FROM stockback_claims WHERE market = $1)::TEXT
+                                                                               AS total_claimed`,
+    [toBytes(market)],
+  );
+
+  const funded = big(row?.total_funded ?? "0", "total_funded");
+  const claimed = big(row?.total_claimed ?? "0", "total_claimed");
+
+  return {
+    currentEpochId: clock / EPOCH_SECONDS,
+    lastFinalizedSequence: bigOrNull(row?.last_sequence),
+    lastFinalizedAt: row?.last_at == null ? null : Number(big(row.last_at, "last_at")),
+    finalizing: Number(row?.pending ?? "0") > 0,
+    attestedSequence: bigOrNull(row?.attested_sequence),
+    totalFunded: funded,
+    totalClaimed: claimed,
+    outstanding: funded > claimed ? funded - claimed : 0n,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Accounts (§64, §347)
 // ---------------------------------------------------------------------------
 

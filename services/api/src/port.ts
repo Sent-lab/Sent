@@ -40,6 +40,8 @@ import {
   accountStockback,
   listClaimsByAccount,
   platformStats,
+  listEpochs,
+  distributionStatus,
   type ExploreSort,
 } from "@sent/database";
 import { launchMarketAbi, launchpadFactoryAbi, feeVaultAbi } from "@sent/contracts";
@@ -55,6 +57,7 @@ import type {
   CreatorRow,
   AccountRow,
   PlatformStatsRow,
+  EpochsRow,
 } from "./handlers.ts";
 
 const STATUS_NAMES = ["PRE_GRAD", "GRADUATING", "GRADUATED"] as const;
@@ -174,6 +177,10 @@ export class PostgresPort implements DataPort {
     return this.cachedStats;
   }
 
+  getEpochs(market: string): EpochsRow | null {
+    return this.cachedEpochs.get(market.toLowerCase()) ?? null;
+  }
+
   countMarkets(options: ExploreOptions): number {
     return this.cachedCounts.get(cacheKey(options)) ?? 0;
   }
@@ -209,6 +216,7 @@ export class PostgresPort implements DataPort {
   private readonly cachedAccounts = new Map<string, AccountRow>();
   private readonly cachedCounts = new Map<string, number>();
   private cachedStats: PlatformStatsRow | null = null;
+  private readonly cachedEpochs = new Map<string, EpochsRow>();
 
   /** Resolved once from the factory, then remembered. */
   private feeVault: `0x${string}` | null = null;
@@ -286,6 +294,24 @@ export class PostgresPort implements DataPort {
       })),
       launchCount: launches.length,
     });
+  }
+
+  /**
+   * A market's distribution history and §367 status.
+   *
+   * The status is read in the same round trip as the epochs, not derived from
+   * them. `currentEpochId` comes from the clock — §329 makes an epoch a fixed
+   * window that exists whether or not anything happened in it, so deriving it
+   * from the newest dataset would report the last epoch with activity as the
+   * current one, which on a quiet market could be days ago.
+   */
+  async loadEpochs(market: string, limit = 30): Promise<void> {
+    const [epochs, status] = await Promise.all([
+      listEpochs(this.db, market, limit),
+      distributionStatus(this.db, market),
+    ]);
+
+    this.cachedEpochs.set(market.toLowerCase(), { epochs, status });
   }
 
   /**

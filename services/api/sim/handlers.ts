@@ -26,7 +26,9 @@ import {
   type CreatorRow,
   type AccountRow,
   type PlatformStatsRow,
+  type EpochsRow,
   handleCreator,
+  handleEpochs,
   handleAccount,
   handlePlatformStats,
 } from "../src/handlers.ts";
@@ -213,6 +215,61 @@ class FakePort implements DataPort {
   /** The fake listing holds one market, so a page is one long. */
   countMarkets(): number {
     return this.market ? 1 : 0;
+  }
+
+  epochs: EpochsRow | null = {
+    epochs: [
+      {
+        epochSequence: 12n,
+        epochId: 12n,
+        startTime: 1_036_800,
+        endTime: 1_123_200,
+        pool: 1_000n,
+        allocated: 995n,
+        carryForward: 5n,
+        eligibleHolders: 3,
+        totalWeight: 10_000n,
+        merkleRoot: `0x${"ab".repeat(32)}`,
+        datasetHash: `0x${"cd".repeat(32)}`,
+        totalCumulative: 995n,
+        cumulativeRewardFunded: 1_000n,
+        holderCount: 3,
+        computedAt: 1_700_000_000,
+        attested: true,
+      },
+      {
+        epochSequence: 13n,
+        epochId: 13n,
+        startTime: 1_123_200,
+        endTime: 1_209_600,
+        pool: 500n,
+        allocated: 500n,
+        carryForward: 0n,
+        eligibleHolders: 3,
+        totalWeight: 9_000n,
+        merkleRoot: `0x${"ef".repeat(32)}`,
+        datasetHash: `0x${"12".repeat(32)}`,
+        totalCumulative: 1_495n,
+        cumulativeRewardFunded: 1_500n,
+        holderCount: 3,
+        computedAt: 1_700_086_400,
+        attested: false,
+      },
+    ],
+    status: {
+      currentEpochId: 14n,
+      lastFinalizedSequence: 13n,
+      lastFinalizedAt: 1_700_086_400,
+      finalizing: false,
+      attestedSequence: 12n,
+      totalFunded: 1_500n,
+      totalClaimed: 400n,
+      outstanding: 1_100n,
+    },
+  };
+
+  getEpochs(): EpochsRow | null {
+    return this.epochs;
   }
   quoteBuy(_m: string, amount: bigint): QuoteResult | null {
     return {
@@ -879,6 +936,97 @@ console.log("\n--- 13. \u00a795.21: search and paging --------------------------
 
   const text = handleExplore(port, { query: "TEST", limit: 10 });
   check("a ticker query is accepted", text.ok);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 14. \u00a7333/\u00a7367: distribution transparency -------------------------");
+
+{
+  const port = new FakePort();
+  const result = handleEpochs(port, TOKEN);
+
+  if (!result.ok) throw new Error("expected success");
+
+  check("epochs are listed", result.data.epochs.length === 2);
+
+  /*
+   * \u00a7333's dataset exists so someone who does not trust this service can
+   * re-derive the root. That needs the INPUTS, not just the root: the pool, the
+   * eligible holder count and the total weight are what make the total
+   * reproducible. A response carrying only a root is asking to be believed.
+   */
+  const newest = result.data.epochs[0];
+  check("with the pool they were paid from", newest?.pool === "1000");
+  check("the eligible holder count", newest?.eligibleHolders === 3);
+  check("and the total weight", newest?.totalWeight === "10000");
+  check("plus the dataset hash", newest?.datasetHash?.startsWith("0xcdcd") === true);
+
+  // Dust is holder money the commitment deliberately does not pay out, so a
+  // number that is withheld on purpose has to be visible (\u00a7327).
+  check("carry-forward dust is shown", newest?.carryForward === "5");
+
+  /*
+   * The line \u00a7293 draws, one epoch at a time.
+   *
+   * The newer epoch is computed and unattested; the older one is active. Both
+   * are real arithmetic and only one of them pays anything.
+   */
+  check("an attested epoch says so", newest?.attested === true);
+  check("and an unattested one says so too", result.data.epochs[1]?.attested === false);
+
+  // \u00a7367's three states, from two independent facts: whether a root is pending
+  // and whether one is active.
+  check("the status reports FINALIZED", result.data.status.state === "FINALIZED");
+  check("naming the attested sequence", result.data.status.attestedSequence === "12");
+
+  /*
+   * The current epoch comes from the CLOCK. \u00a7329 makes it a fixed window that
+   * exists whether or not anything happened in it — taking it from the newest
+   * dataset would report the last epoch with activity as the current one, which
+   * on a quiet market could be days ago.
+   */
+  check("the current epoch is ahead of the last finalized", result.data.status.currentEpochId === "14");
+
+  // Owed, not payable. Money funded into an epoch nobody has attested belongs
+  // to holders and can be claimed by no one; collapsing the two would report a
+  // solvency problem that does not exist.
+  check("outstanding is funded minus claimed", result.data.status.outstanding === "1100");
+}
+
+{
+  const port = new FakePort();
+  port.epochs = null;
+
+  const first = handleEpochs(port, TOKEN);
+  // Every market looks like this on its first day.
+  check("a market with no finalized epoch is not an error", first.ok);
+  check("and reports OPEN", first.ok && first.data.status.state === "OPEN");
+
+  port.market = null;
+  const missing = handleEpochs(port, TOKEN);
+  check("an unknown market is still a named 404", !missing.ok && missing.code === "MARKET_NOT_FOUND");
+}
+
+{
+  const port = new FakePort();
+  port.epochs = {
+    epochs: [],
+    status: {
+      currentEpochId: 14n,
+      lastFinalizedSequence: 13n,
+      lastFinalizedAt: 1_700_086_400,
+      finalizing: true,
+      attestedSequence: 12n,
+      totalFunded: 1_500n,
+      totalClaimed: 400n,
+      outstanding: 1_100n,
+    },
+  };
+
+  // A pending root outranks an active one in the state label: \u00a7334's delay is
+  // running, and that is the fact a reader needs to see.
+  const result = handleEpochs(port, TOKEN);
+  check("a pending commitment reports FINALIZING", result.ok && result.data.status.state === "FINALIZING");
 }
 
 // ---------------------------------------------------------------------------

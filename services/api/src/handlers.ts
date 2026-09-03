@@ -108,6 +108,7 @@ export interface DataPort {
   getStockback(market: string, account: string): StockbackRow | null;
   getAccount(address: string): AccountRow | null;
   getPlatformStats(): PlatformStatsRow | null;
+  getEpochs(market: string): EpochsRow | null;
   /** How many markets the last `listMarkets` filter matched, before its limit. */
   countMarkets(options: ExploreOptions): number;
 
@@ -224,6 +225,39 @@ export interface AccountRow {
   }[];
   /** Markets this address launched. Counted, not listed — /creators lists them. */
   readonly launchCount: number;
+}
+
+export interface EpochRow {
+  readonly epochSequence: bigint;
+  readonly epochId: bigint;
+  readonly startTime: number;
+  readonly endTime: number;
+  readonly pool: bigint;
+  readonly allocated: bigint;
+  readonly carryForward: bigint;
+  readonly eligibleHolders: number;
+  readonly totalWeight: bigint;
+  readonly merkleRoot: string;
+  readonly datasetHash: string;
+  readonly totalCumulative: bigint;
+  readonly cumulativeRewardFunded: bigint;
+  readonly holderCount: number;
+  readonly computedAt: number;
+  readonly attested: boolean;
+}
+
+export interface EpochsRow {
+  readonly epochs: readonly EpochRow[];
+  readonly status: {
+    readonly currentEpochId: bigint;
+    readonly lastFinalizedSequence: bigint | null;
+    readonly lastFinalizedAt: number | null;
+    readonly finalizing: boolean;
+    readonly attestedSequence: bigint | null;
+    readonly totalFunded: bigint;
+    readonly totalClaimed: bigint;
+    readonly outstanding: bigint;
+  };
 }
 
 export interface PlatformStatsRow {
@@ -724,6 +758,136 @@ export function handleAccount(port: DataPort, address: string): ApiResult<Accoun
       blockNumber: c.blockNumber.toString(),
     })),
     launchCount: row.launchCount,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Distribution transparency (§333, §367)
+// ---------------------------------------------------------------------------
+
+export interface EpochItem {
+  readonly epochSequence: string;
+  readonly epochId: string;
+  readonly startTime: number;
+  readonly endTime: number;
+  /** What the epoch had to give out, before rounding. */
+  readonly pool: string;
+  readonly allocated: string;
+  /** Rounding dust rolled into the next epoch (§327). */
+  readonly carryForward: string;
+  readonly eligibleHolders: number;
+  readonly totalWeight: string;
+  readonly merkleRoot: string;
+  readonly datasetHash: string;
+  readonly totalCumulative: string;
+  readonly cumulativeRewardFunded: string;
+  readonly holderCount: number;
+  readonly computedAt: number;
+  /**
+   * Whether an attestor quorum activated this root on-chain.
+   *
+   * The line between "this node computed it" and "the chain honours it" (§293).
+   * An unattested epoch's numbers are real arithmetic and pay nothing.
+   */
+  readonly attested: boolean;
+}
+
+export interface EpochsResponse {
+  readonly market: string;
+  readonly epochs: readonly EpochItem[];
+  /** §367's public distribution status. */
+  readonly status: {
+    readonly currentEpochId: string;
+    readonly state: "OPEN" | "FINALIZING" | "FINALIZED";
+    readonly lastFinalizedSequence: string | null;
+    readonly lastFinalizedAt: number | null;
+    readonly attestedSequence: string | null;
+    readonly totalFunded: string;
+    readonly totalClaimed: string;
+    readonly outstanding: string;
+  };
+}
+
+/**
+ * A market's distribution history and status (§333, §367).
+ *
+ * §333's dataset exists so that someone who does not trust this service can
+ * re-derive the root themselves, which is why the inputs travel with the
+ * outputs: the pool, the eligible holder count and the total weight are what
+ * make the total reproducible, and a response carrying only a root would be
+ * asking to be believed.
+ *
+ * §367's three states are collapsed from two independent facts — whether a root
+ * is pending, and whether one is active — because they are what a reader
+ * actually needs:
+ *
+ *   OPEN        nothing submitted; the current epoch is still accumulating
+ *   FINALIZING  a root is on-chain, waiting out §334's activation delay
+ *   FINALIZED   a root is active and entitlements against it are payable
+ */
+export function handleEpochs(port: DataPort, token: string): ApiResult<EpochsResponse> {
+  const market = port.getMarket(token.toLowerCase());
+  if (market === null) {
+    return fail(port, "MARKET_NOT_FOUND", `No market for token ${token}`);
+  }
+
+  const row = port.getEpochs(market.market);
+
+  // A market that has never had an epoch finalized is not an error — it is
+  // every market on its first day (§209).
+  if (row === null) {
+    return ok(port, {
+      market: market.market,
+      epochs: [],
+      status: {
+        currentEpochId: "0",
+        state: "OPEN" as const,
+        lastFinalizedSequence: null,
+        lastFinalizedAt: null,
+        attestedSequence: null,
+        totalFunded: "0",
+        totalClaimed: "0",
+        outstanding: "0",
+      },
+    });
+  }
+
+  const state = row.status.finalizing
+    ? ("FINALIZING" as const)
+    : row.status.attestedSequence !== null
+      ? ("FINALIZED" as const)
+      : ("OPEN" as const);
+
+  return ok(port, {
+    market: market.market,
+    epochs: row.epochs.map((e) => ({
+      epochSequence: e.epochSequence.toString(),
+      epochId: e.epochId.toString(),
+      startTime: e.startTime,
+      endTime: e.endTime,
+      pool: e.pool.toString(),
+      allocated: e.allocated.toString(),
+      carryForward: e.carryForward.toString(),
+      eligibleHolders: e.eligibleHolders,
+      totalWeight: e.totalWeight.toString(),
+      merkleRoot: e.merkleRoot,
+      datasetHash: e.datasetHash,
+      totalCumulative: e.totalCumulative.toString(),
+      cumulativeRewardFunded: e.cumulativeRewardFunded.toString(),
+      holderCount: e.holderCount,
+      computedAt: e.computedAt,
+      attested: e.attested,
+    })),
+    status: {
+      currentEpochId: row.status.currentEpochId.toString(),
+      state,
+      lastFinalizedSequence: row.status.lastFinalizedSequence?.toString() ?? null,
+      lastFinalizedAt: row.status.lastFinalizedAt,
+      attestedSequence: row.status.attestedSequence?.toString() ?? null,
+      totalFunded: row.status.totalFunded.toString(),
+      totalClaimed: row.status.totalClaimed.toString(),
+      outstanding: row.status.outstanding.toString(),
+    },
   });
 }
 

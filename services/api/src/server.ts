@@ -34,6 +34,7 @@ import {
   handleStockback,
   handleCreator,
   handleAccount,
+  handleEpochs,
   handlePlatformStats,
   handleHealth,
   EXPLORE_SORTS,
@@ -293,6 +294,28 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
 
     const result = handleCreator(port, address);
     return reply.code(result.ok ? 200 : 400).send(result);
+  });
+
+  /*
+   * §333's public dataset and §367's distribution status.
+   *
+   * On its own path segment rather than under /stockback, which already ends in
+   * `:account`. A static `epochs` would win against that parameter today and
+   * would keep winning — until someone adds a route and the precedence changes
+   * under a path that had been working. Distinct paths do not need the rule to
+   * hold.
+   */
+  scope.get("/markets/:token/epochs", async (request, reply) => {
+    const { token } = request.params as { token: string };
+    const q = request.query as Record<string, string | undefined>;
+    const limit = /^\d+$/.test(q.limit ?? "") ? Number(q.limit) : 30;
+
+    await port.loadMarket(token);
+    const market = port.getMarket(token);
+    if (market !== null) await port.loadEpochs(market.market, Math.min(Math.max(limit, 1), 365));
+
+    const result = handleEpochs(port, token);
+    return reply.code(result.ok ? 200 : 404).send(result);
   });
 
   scope.get("/markets/:token/stockback/:account", async (request, reply) => {
