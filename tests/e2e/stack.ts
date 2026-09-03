@@ -517,12 +517,93 @@ try {
       );
 
       // Every derived table cascades from `blocks`, so an orphaned block left
-      // behind would take its rows with it.
+      // behind would take its rows with it. Asserted here, before anything mines
+      // further — the graduation phase below moves the head again.
       const staleBlocks = await db.query<{ c: string }>(
         "SELECT COUNT(*)::TEXT AS c FROM blocks WHERE number > $1",
         [rewoundHead.toString()],
       );
       check("no block above the new head survived", staleBlocks[0]?.c === "0");
+
+      // --- Graduation ----------------------------------------------------
+
+      section("Graduating, and the projection following it");
+
+      /*
+       * The last untested seam. `markGraduated` has never seen a real Graduated
+       * event — every graduation test so far has been inside Foundry, where the
+       * indexer does not exist.
+       *
+       * It also exercises §411's crossing order: a buy large enough to finish
+       * the curve executes on the curve and then continues into the pool, and
+       * the market accepts only the portion that reaches qG on the curve leg.
+       */
+      const beforeStatus = (await getMarketByToken(db, token))?.status;
+      check("the market has not graduated yet", beforeStatus === 0);
+
+      // Far more than the curve can absorb, so the endpoint is certainly crossed.
+      await send(quote, quoteAbi, "mint", [account.address, ONE_QUOTE * 1_000_000n]);
+      await send(quote, quoteAbi, "approve", [market, ONE_QUOTE * 1_000_000n]);
+      await send(market, marketAbi, "buy", [ONE_QUOTE * 500_000n, 0n, deadline]);
+
+      const onChainStatus = (await publicClient.readContract({
+        address: market,
+        abi: marketAbi,
+        functionName: "status",
+      })) as number;
+
+      check("the market graduated on-chain", onChainStatus === 2);
+
+      await indexer.start();
+
+      const graduated = await waitFor(async () => {
+        const view = await getMarketByToken(db, token);
+        return view !== null && view.status === 2 ? view : null;
+      });
+
+      indexer.stop();
+
+      check("the projection saw the graduation", graduated !== null);
+
+      if (graduated !== null) {
+        // GRADUATING exists only inside a single transaction (§19). A persisted
+        // 1 would mean the indexer captured a partial state.
+        check("the status is GRADUATED, never GRADUATING", graduated.status === 2);
+
+        const onChainPool = (await publicClient.readContract({
+          address: market,
+          abi: marketAbi,
+          functionName: "pool",
+        })) as Address;
+
+        check("the pool address was recorded", graduated.pool === onChainPool.toLowerCase());
+        check("and it is not the market itself", graduated.pool !== market.toLowerCase());
+
+        // The graduating block's timestamp is what the §57 chart marker is
+        // placed from, so it has to be a real chain timestamp.
+        check("a graduation block was recorded", graduated.graduatedAtBlock !== null);
+        check("with the block's own timestamp", (graduated.graduatedAt ?? 0) > 0);
+
+        const gradBlock = await publicClient.getBlock({
+          blockNumber: graduated.graduatedAtBlock ?? 0n,
+        });
+        check(
+          "matching the chain exactly",
+          BigInt(graduated.graduatedAt ?? 0) === gradBlock.timestamp,
+        );
+
+        // A graduated market must refuse further curve trades. If the projection
+        // says GRADUATED while the market still fills on the curve, one of them
+        // is lying.
+        let refused = false;
+        try {
+          await send(market, marketAbi, "buy", [ONE_QUOTE, 0n, deadline]);
+        } catch {
+          refused = true;
+        }
+        check("the curve refuses a trade after graduation", refused);
+      }
+
     }
   }
 } finally {
