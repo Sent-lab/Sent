@@ -615,15 +615,23 @@ console.log("\n--- 5c. Timestamps are real, never zero -------------------------
 
 
 // ---------------------------------------------------------------------------
-console.log("\n--- 5d. A crossing order never looks like a complete quote ---------------");
+console.log("\n--- 5d. A crossing order is a complete quote, and says the curve closes --");
 
 {
-  // A crossing buy finishes the curve, graduates, then executes the remainder on
-  // HyperSwap. Only the curve leg is quotable, so presenting it as "you receive"
-  // would show a partial figure that reads as a total.
+  // A crossing buy fills on the curve up to the endpoint, closes it, and returns
+  // whatever the curve had no supply left to sell (D-016). So the output figure
+  // is whole - and the input figure is not, which is the thing this checks: a
+  // user who sends 1,000,000 and is charged 333,334 must see the 666,666 coming
+  // back before they sign, not discover it in their balance afterwards.
   class CrossingPort extends FakePort {
     override quoteBuy(_m: string, amount: bigint): QuoteResult | null {
-      return { tokensOut: amount * 10n ** 12n, crossesGraduation: true, priceImpactBps: 900n };
+      return {
+        tokensOut: amount * 10n ** 12n,
+        crossesGraduation: true,
+        // Two thirds of the input is more than the curve had left to sell.
+        refundedQuote: (amount * 2n) / 3n,
+        priceImpactBps: 900n,
+      };
     }
   }
 
@@ -641,19 +649,45 @@ console.log("\n--- 5d. A crossing order never looks like a complete quote ------
   const review = result.data.review;
 
   check("a crossing order is flagged as such", review.crossesGraduation === true);
-  check("its estimate is declared partial", review.estimateIsPartial === true);
 
-  // §14 requires one user-wide bound over blended execution. Until the router can
-  // quote the HyperSwap leg (V-06, V-09) the bound covers the curve leg only, so
-  // the post-grad portion is effectively unprotected. Surfaced, not hidden.
-  check("its bound is declared to cover only part of the route", review.boundCoversPartialRoute === true);
+  /*
+   * This block used to assert the opposite of what it asserts now, and the
+   * change is worth stating rather than quietly rewriting.
+   *
+   * A crossing order used to fill on the curve and then on HyperSwap, and only
+   * the first leg was quotable. So the review carried `estimateIsPartial`,
+   * `boundCoversPartialRoute`, a "You receive (curve leg only)" row and a
+   * "Slippage protection covers the curve leg only" warning. That was V-19:
+   * mitigation, surfaced honestly, and genuinely weaker than §14 asks for.
+   *
+   * D-016 removed the second leg. The curve leg IS the trade, so the estimate is
+   * whole and the bound covers all of it - and the caveats are gone rather than
+   * left in place always-false. A warning that can never be true is one users
+   * learn to click past, which costs them the warnings that are real.
+   */
+  check("the receive row is a whole figure, not a partial one", (() => {
+    const row = review.rows.find((r) => r.label === "You receive");
+    return row !== undefined && row.warning !== true;
+  })());
+  check(
+    "no row hedges about a HyperSwap leg any more",
+    review.rows.every((r) => !r.value.includes("HyperSwap leg")),
+  );
 
-  const receiveRow = review.rows.find((r) => r.label.startsWith("You receive"));
-  check("the receive row says it is the curve leg only", receiveRow?.label.includes("curve leg") === true);
-  check("and is marked as a warning rather than a plain figure", receiveRow?.warning === true);
+  // What replaces them: the user is told what comes back, before they sign.
+  check("the refund is carried on the review", review.refundedQuote === 666_666n);
+  const refundRow = review.rows.find((r) => r.label === "Refunded");
+  check("and is shown as its own row", refundRow !== undefined);
+  check(
+    "and the pay row does not present the whole input as spent",
+    review.rows.find((r) => r.label === "You pay")?.value.startsWith("up to") === true,
+  );
 
-  const protectionRow = review.rows.find((r) => r.label === "Slippage protection");
-  check("the weakened protection is stated explicitly", protectionRow !== undefined);
+  // §14: the user must know the venue is about to change under them.
+  check(
+    "the review says the curve closes",
+    review.rows.some((r) => r.value.includes("permanently closed")),
+  );
 
   // A non-crossing order must NOT carry any of these caveats, or they become
   // noise that users learn to ignore.
@@ -667,10 +701,15 @@ console.log("\n--- 5d. A crossing order never looks like a complete quote ------
   });
   if (!plain.ok) throw new Error("expected success");
 
-  check("an ordinary order carries no partial-estimate flag", plain.data.review.estimateIsPartial === undefined);
+  check("an ordinary order carries no refund", plain.data.review.refundedQuote === undefined);
+  check("an ordinary order is not flagged as crossing", plain.data.review.crossesGraduation !== true);
   check(
     "an ordinary order shows a plain receive row",
     plain.data.review.rows.find((r) => r.label === "You receive")?.warning !== true,
+  );
+  check(
+    "and states its cost exactly rather than as an upper bound",
+    plain.data.review.rows.find((r) => r.label === "You pay")?.value.startsWith("up to") === false,
   );
 }
 

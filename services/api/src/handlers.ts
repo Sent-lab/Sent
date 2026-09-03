@@ -206,6 +206,8 @@ export interface QuoteResult {
   readonly tokensOut?: bigint;
   readonly grossOut?: bigint;
   readonly crossesGraduation: boolean;
+  /** Quote the curve had no supply left to sell, returned in the same tx. */
+  readonly refundedQuote?: bigint;
   readonly priceImpactBps: bigint;
 }
 
@@ -1437,6 +1439,7 @@ export function handleQuote(port: DataPort, request: QuoteRequest): ApiResult<Tr
         tokenSymbol: row.symbol,
         expectedTokensOut: quote.tokensOut,
         crossesGraduation: quote.crossesGraduation,
+        ...(quote.refundedQuote !== undefined ? { refundedQuote: quote.refundedQuote } : {}),
         priceImpactBps: quote.priceImpactBps,
       }),
     );

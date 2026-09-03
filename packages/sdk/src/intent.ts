@@ -42,7 +42,8 @@ export type IntentKind =
   | "APPROVE_TOKEN"
   | "CLAIM_CREATOR_FEES"
   | "CLAIM_STOCKBACK"
-  | "LAUNCH";
+  | "LAUNCH"
+  | "FINALIZE_GRADUATION";
 
 /**
  * What the user is shown before signing.
@@ -60,29 +61,40 @@ export interface IntentReview {
   readonly fees?: FeeBreakdown;
   /** Minimum the user accepts. Enforced on-chain, not merely displayed. */
   readonly minimumReceived?: bigint;
-  /** True when this order finishes the curve and spills into HyperSwap (§411). */
+  /**
+   * True when this order finishes the curve and closes it (§411, D-016).
+   *
+   * It no longer means "spills into HyperSwap". A crossing order fills on the
+   * curve up to the endpoint and the remainder is REFUNDED, because at that
+   * instant the pool does not exist yet — there is no venue to route into and
+   * no price to route at.
+   */
   readonly crossesGraduation?: boolean;
   /**
-   * True when the expected output covers only PART of the route.
+   * Quote returned unspent, raw units. Only set on a crossing order.
    *
-   * A crossing order executes on the curve and then on HyperSwap, and the
-   * post-grad leg cannot be quoted without live venue state. Presenting the
-   * curve leg alone as "you receive" would understate the total and read as a
-   * complete figure — §411 requires a blended breakdown, so a UI must render
-   * this differently rather than showing a number that looks whole.
+   * Shown because a user who sends 100 and is charged 62 should see the 38
+   * before they sign, not discover it in their balance afterwards.
    */
-  readonly estimateIsPartial?: boolean;
-  /**
-   * True when `minimumReceived` bounds only part of the route.
-   *
-   * §14 requires ONE user-wide minimum covering blended execution. Until the
-   * graduation router can quote the HyperSwap leg (V-06, V-09), the bound is
-   * derived from the curve leg alone, which means the post-grad portion is
-   * effectively unprotected: it could return almost nothing and the trade would
-   * still clear. That is a real weakness, and it is surfaced rather than hidden.
-   */
-  readonly boundCoversPartialRoute?: boolean;
+  readonly refundedQuote?: bigint;
 }
+
+/*
+ * `estimateIsPartial` and `boundCoversPartialRoute` used to live here.
+ *
+ * They existed for V-19: a crossing order executed on the curve and then on
+ * HyperSwap, `minimumReceived` bounded only the first leg, and the second rode
+ * along unprotected. The flags surfaced that in the UI rather than hiding it,
+ * which was mitigation rather than a fix, and the ledger said so.
+ *
+ * D-016 removed the second leg. The curve leg IS the trade now, so the estimate
+ * is whole and the bound covers all of it — both flags are permanently false.
+ *
+ * They are deleted rather than kept and always-false. A flag that cannot be true
+ * is worse than none: every UI keeps a branch for a state that cannot occur, and
+ * the branch is never exercised, so nobody notices when it rots. V-19 is closed,
+ * not accepted.
+ */
 
 export interface IntentRow {
   readonly label: string;
@@ -124,6 +136,11 @@ export interface BuildBuyParams {
   /** Expected output, quoted by the market through the same curve code. */
   readonly expectedTokensOut: bigint;
   readonly crossesGraduation?: boolean;
+  /**
+   * Quote the curve had no supply left to sell, returned in the same
+   * transaction (D-016). Raw units. Only meaningful on a crossing order.
+   */
+  readonly refundedQuote?: bigint;
   /** Price impact in basis points, for the §232 warning. */
   readonly priceImpactBps?: bigint;
 }
@@ -309,6 +326,7 @@ export function buildBuyIntent(params: BuildBuyParams): TransactionIntent {
     tokenSymbol,
     expectedTokensOut,
     crossesGraduation,
+    refundedQuote,
     priceImpactBps,
   } = params;
 
@@ -326,25 +344,29 @@ export function buildBuyIntent(params: BuildBuyParams): TransactionIntent {
 
   const rows: IntentRow[] = [
     {
+      // On a crossing order this is the whole input, and the part the curve
+      // cannot sell comes straight back. The "Refunded" row below says how much,
+      // so the two read together rather than this one overstating the cost.
       label: "You pay",
-      value: `${formatUnits(grossQuoteIn, quoteDecimals)} ${quoteSymbol}`,
+      value:
+        crossesGraduation && refundedQuote !== undefined && refundedQuote > 0n
+          ? `up to ${formatUnits(grossQuoteIn, quoteDecimals)} ${quoteSymbol}`
+          : `${formatUnits(grossQuoteIn, quoteDecimals)} ${quoteSymbol}`,
       primary: true,
     },
-    crossesGraduation
-      ? {
-          // Never present a partial figure as a total. This order finishes the
-          // curve and then executes on HyperSwap, and only the first leg is
-          // quotable here.
-          label: "You receive (curve leg only)",
-          value: `at least ${formatUnits(expectedTokensOut, 18)} ${tokenSymbol}, plus a HyperSwap leg`,
-          primary: true,
-          warning: true,
-        }
-      : {
-          label: "You receive",
-          value: `${formatUnits(expectedTokensOut, 18)} ${tokenSymbol}`,
-          primary: true,
-        },
+    {
+      // One figure, whole, on both paths. This row used to be split: a crossing
+      // order showed "You receive (curve leg only) ... plus a HyperSwap leg",
+      // because the second leg could not be quoted here.
+      //
+      // There is no second leg any more (D-016), so the number is complete and
+      // is presented as one. Keeping the hedge would be worse than useless - it
+      // would warn about a risk the trade no longer carries, and a warning that
+      // is never real is one users learn to click past.
+      label: "You receive",
+      value: `${formatUnits(expectedTokensOut, 18)} ${tokenSymbol}`,
+      primary: true,
+    },
     // §316: the breakdown is shown in full. An aggregated "fee: 2%" hides which
     // part funds the creator and which part comes back to holders.
     { label: "Trading fee (1%)", value: fee(fees.coreFee) },
@@ -369,12 +391,20 @@ export function buildBuyIntent(params: BuildBuyParams): TransactionIntent {
   if (crossesGraduation) {
     rows.push({
       label: "Route",
-      value: "Finishes the curve, graduates, then HyperSwap",
+      value: "Finishes the curve and closes it",
       warning: true,
     });
+
+    if (refundedQuote !== undefined && refundedQuote > 0n) {
+      rows.push({
+        label: "Refunded",
+        value: `${formatUnits(refundedQuote, quoteDecimals)} ${quoteSymbol} — more than the curve had left to sell`,
+      });
+    }
+
     rows.push({
-      label: "Slippage protection",
-      value: "Covers the curve leg only — the HyperSwap leg is not yet quotable",
+      label: "After this trade",
+      value: "The curve is permanently closed. HyperSwap opens once the position is minted.",
       warning: true,
     });
   }
@@ -393,9 +423,7 @@ export function buildBuyIntent(params: BuildBuyParams): TransactionIntent {
       fees,
       minimumReceived: minTokensOut,
       ...(crossesGraduation !== undefined ? { crossesGraduation } : {}),
-      ...(crossesGraduation
-        ? { estimateIsPartial: true, boundCoversPartialRoute: true }
-        : {}),
+      ...(refundedQuote !== undefined ? { refundedQuote } : {}),
     },
   };
 }
@@ -920,4 +948,130 @@ export function assertIntentUnchanged(
       `TransactionIntent mutated between review and submission.\n  reviewed:   ${a}\n  submitting: ${b}`,
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// FINALIZE_GRADUATION (§16, §95.6, D-016)
+// ---------------------------------------------------------------------------
+
+const FINALIZE_GRADUATION_ABI = [
+  {
+    type: "function",
+    name: "finalizeGraduation",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [
+      { name: "pool", type: "address" },
+      { name: "positionId", type: "uint256" },
+    ],
+  },
+] as const;
+
+export interface BuildFinalizeGraduationParams {
+  readonly chainId: number;
+  readonly market: `0x${string}`;
+  readonly tokenSymbol: string;
+  /** TOKEN bound for the pool, raw. From the `GraduationPending` event. */
+  readonly tokenAmount: bigint;
+  /** Quote bound for the pool, raw. From the same event. */
+  readonly quoteAmount: bigint;
+  readonly quoteDecimals: number;
+  readonly quoteSymbol: string;
+  /** Blocks the market has been waiting. Review only. */
+  readonly waitingBlocks?: bigint;
+}
+
+/**
+ * Build the graduation finalise.
+ *
+ * WHY THIS IS A USER-FACING INTENT AND NOT JUST A KEEPER SCRIPT
+ * -------------------------------------------------------------
+ * §16 requires this call to be permissionless, and a permissionless call that
+ * only one party's tooling can construct is permissionless on paper. If the
+ * keeper is down, a holder of a stalled market must be able to finalise it from
+ * the UI — that is the whole reason the contract takes no arguments and reads no
+ * `msg.sender`.
+ *
+ * §694 then applies unchanged: what the UI reviews is what the SDK builds is
+ * what the wallet signs. So it goes through the same builder as every other
+ * action rather than being special-cased somewhere.
+ *
+ * THE REVIEW HAS TO BE HONEST ABOUT WHAT THE CALLER GETS
+ * ------------------------------------------------------
+ * Nothing. §16 lists the exclusions - no collateral, no LP, no creator rights,
+ * no economic privilege - and a review that showed a large TOKEN figure and a
+ * large quote figure without saying so would read exactly like a claim.
+ *
+ * The amounts are shown because they are what the caller is moving and the sums
+ * are large; they are labelled as destinations, not receipts.
+ *
+ * IT COSTS REAL GAS
+ * -----------------
+ * ~5.4M against the real HyperSwap deployment (V-20), which is why the split
+ * exists at all. That does not fit in HyperEVM's default block lane, so a wallet
+ * on the default lane cannot include this transaction. The review says so,
+ * because the alternative is a user signing something their wallet will hold
+ * forever without explaining why.
+ */
+export function buildFinalizeGraduationIntent(
+  params: BuildFinalizeGraduationParams,
+): TransactionIntent {
+  const {
+    chainId,
+    market,
+    tokenSymbol,
+    tokenAmount,
+    quoteAmount,
+    quoteDecimals,
+    quoteSymbol,
+    waitingBlocks,
+  } = params;
+
+  const data = encodeFunctionData({
+    abi: FINALIZE_GRADUATION_ABI,
+    functionName: "finalizeGraduation",
+    args: [],
+  });
+
+  const rows: IntentRow[] = [
+    {
+      label: "You receive",
+      value: "Nothing — this call pays no one",
+      primary: true,
+    },
+    {
+      label: "Into permanent liquidity",
+      value: `${formatUnits(tokenAmount, 18)} ${tokenSymbol} + ${formatUnits(quoteAmount, quoteDecimals)} ${quoteSymbol}`,
+    },
+    {
+      label: "Who owns it after",
+      value: "The lock. Nobody can withdraw it, including you and the creator.",
+    },
+    {
+      label: "Block lane",
+      value: "Needs the large lane — about 5.4M gas, over the default 3M limit",
+      warning: true,
+    },
+  ];
+
+  if (waitingBlocks !== undefined) {
+    rows.push({ label: "Waiting since", value: `${waitingBlocks} blocks ago` });
+  }
+
+  return {
+    kind: "FINALIZE_GRADUATION",
+    chainId,
+    to: market,
+    data,
+    value: 0n,
+    // No deadline. The escrow is frozen and its inputs cannot drift, so there is
+    // no stale-quote risk for a deadline to protect against — and a deadline on
+    // a call anyone may retry would just be a way to make retries fail.
+    deadline: 0n,
+    review: {
+      kind: "FINALIZE_GRADUATION",
+      summary: `Finalise ${tokenSymbol}'s graduation`,
+      rows,
+    },
+  };
 }

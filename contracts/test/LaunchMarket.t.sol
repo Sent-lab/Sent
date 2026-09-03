@@ -177,7 +177,7 @@ contract LaunchMarketTest is Test {
     function test_quoteMatchesExecution() public {
         uint256 gross = 20e18;
 
-        (uint256 quotedOut,,,, bool crosses) = market.quoteBuy(gross);
+        (uint256 quotedOut,,,, bool crosses,) = market.quoteBuy(gross);
         assertFalse(crosses);
 
         uint256 actual = _buy(alice, gross);
@@ -256,7 +256,7 @@ contract LaunchMarketTest is Test {
     // -----------------------------------------------------------------------
 
     function test_slippageBoundIsEnforcedOnBuy() public {
-        (uint256 quoted,,,,) = market.quoteBuy(10e18);
+        (uint256 quoted,,,,,) = market.quoteBuy(10e18);
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(LaunchMarket.SlippageExceeded.selector, quoted, quoted + 1));
@@ -451,6 +451,38 @@ contract LaunchMarketTest is Test {
             "and it really did cross"
         );
         assertLt(used, 1_500_000, "a crossing buy must fit in a default-lane block");
+    }
+
+    /// @dev §315, applied to the number a crossing quote is most likely to get
+    ///      wrong.
+    ///
+    ///      The refund depends on `_grossForNet`, whose fee function is not
+    ///      monotonic and cannot be inverted by a division - it is found by a
+    ///      corrected search. That makes it the one figure a second
+    ///      implementation would plausibly get almost right, so the quote and
+    ///      the fill are compared directly rather than assumed to agree.
+    function test_theQuotedRefundIsExactlyTheRefundPaid() public {
+        _buy(alice, 40e18);
+
+        uint256 remaining = _curveParams().qG - market.distributed();
+        uint256 netToEndpoint = Curve.quoteInFor(_curveParams(), market.distributed(), remaining);
+        uint256 overshoot = netToEndpoint * 3;
+
+        quote.mint(bob, overshoot);
+        vm.prank(bob);
+        quote.approve(address(market), type(uint256).max);
+
+        (uint256 quotedOut,,,, bool crosses, uint256 quotedRefund) = market.quoteBuy(overshoot);
+        assertTrue(crosses, "this order must actually cross");
+        assertGt(quotedRefund, 0, "and must actually have something to refund");
+
+        uint256 before = quote.balanceOf(bob);
+        vm.prank(bob);
+        uint256 got = market.buy(overshoot, 0, block.timestamp + 1);
+        uint256 refunded = quote.balanceOf(bob) - (before - overshoot);
+
+        assertEq(refunded, quotedRefund, "the quoted refund must be the refund paid");
+        assertEq(got, quotedOut, "and the quoted output must be the output given");
     }
 
     /// @dev The other half of the crossing order: what the buyer gets back.

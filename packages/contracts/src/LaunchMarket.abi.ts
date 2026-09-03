@@ -380,6 +380,11 @@ export const launchMarketAbi = [
         "name": "crosses",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "refundedQuote",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"

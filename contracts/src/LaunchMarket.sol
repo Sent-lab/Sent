@@ -726,7 +726,14 @@ contract LaunchMarket is ReentrancyGuard {
     function quoteBuy(uint256 grossQuoteIn)
         external
         view
-        returns (uint256 tokensOut, uint256 coreFee, uint256 stockback, uint256 netToCurve, bool crosses)
+        returns (
+            uint256 tokensOut,
+            uint256 coreFee,
+            uint256 stockback,
+            uint256 netToCurve,
+            bool crosses,
+            uint256 refundedQuote
+        )
     {
         uint256 grossNormalized = _normalize(grossQuoteIn);
         Fees.Breakdown memory f = Fees.forBuy(grossNormalized);
@@ -737,12 +744,42 @@ contract LaunchMarket is ReentrancyGuard {
         crosses = f.net >= netToEndpoint;
 
         if (crosses) {
-            // Only the curve leg is quotable here; the post-grad leg depends on
-            // live HyperSwap state and is quoted by the router.
-            return (remainingSupply, f.coreFee, f.stockback, netToEndpoint, true);
+            /*
+             * The refund is QUOTED, not left for a caller to work out.
+             *
+             * A crossing order returns whatever the curve had no supply left to
+             * sell (D-016), and it is often most of the input. A quote that
+             * reported only what the curve takes would tell a user their money
+             * is gone; one that reported the input as the cost would tell them
+             * it is spent. Neither is what happens.
+             *
+             * §315 is the reason it is computed HERE rather than in the SDK:
+             * the refund depends on `_grossForNet`, whose fee function is not
+             * monotonic and cannot be inverted by a division. Re-deriving it
+             * off-chain would be a second implementation of the one number a
+             * quote and a fill are most likely to disagree about.
+             *
+             * Deliberately mirrors `_executeCrossingBuy` line for line - the
+             * same clamp, the same subtraction, the same payout rounding.
+             */
+            uint256 preGradGross = _grossForNet(netToEndpoint);
+            if (preGradGross > grossNormalized) preGradGross = grossNormalized;
+
+            // Fees are quoted on what the curve leg actually charges, not on the
+            // whole input. The refunded part is never a fee basis (§411).
+            Fees.Breakdown memory crossing = Fees.forBuy(preGradGross);
+
+            return (
+                remainingSupply,
+                crossing.coreFee,
+                crossing.stockback,
+                netToEndpoint,
+                true,
+                _denormalizeForPayout(grossNormalized - preGradGross)
+            );
         }
 
-        return (Curve.tokensOutFor(curve, distributed, f.net), f.coreFee, f.stockback, f.net, false);
+        return (Curve.tokensOutFor(curve, distributed, f.net), f.coreFee, f.stockback, f.net, false, 0);
     }
 
     /// @notice Quote a sell, using the same functions execution uses.

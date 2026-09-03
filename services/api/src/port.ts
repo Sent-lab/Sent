@@ -431,11 +431,16 @@ export class PostgresPort implements DataPort {
           abi: launchMarketAbi,
           functionName: "quoteBuy",
           args: [amount],
-        })) as readonly [bigint, bigint, bigint, bigint, boolean];
+        })) as readonly [bigint, bigint, bigint, bigint, boolean, bigint];
 
         this.cachedQuotes.set(key, {
           tokensOut: result[0],
           crossesGraduation: result[4],
+          // Quoted by the contract, never derived here. It depends on a
+          // non-monotonic fee inversion, so re-deriving it in TypeScript would
+          // be a second implementation of the number a quote and a fill are
+          // most likely to disagree about (§315, D-016).
+          refundedQuote: result[5],
           priceImpactBps: estimateImpactBps(result[0], qG, distributed),
         });
         return;
@@ -451,6 +456,7 @@ export class PostgresPort implements DataPort {
       this.cachedQuotes.set(key, {
         grossOut: result[1],
         crossesGraduation: false,
+        refundedQuote: 0n,
         priceImpactBps: estimateImpactBps(amount, qG, distributed),
       });
     } catch {
