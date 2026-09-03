@@ -1,0 +1,120 @@
+/* §162: a changelog. Readable at length, scannable by date. */
+
+.page {
+  padding-block: var(--s-10) var(--s-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-8);
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  max-width: 68ch;
+}
+
+.title {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.subtitle {
+  font-size: var(--text-base);
+  color: var(--text-dim);
+  line-height: var(--leading-normal);
+}
+
+.entries {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-8);
+  /* A rail down the left ties the entries into one timeline without needing a
+     dot-and-line construction that would break at every text size. */
+  border-left: 1px solid var(--border);
+  padding-left: var(--s-6);
+}
+
+.entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  position: relative;
+}
+
+/* The marker on the rail. Sized in em so it tracks the text rather than
+   drifting when the root size changes. */
+.entry::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--s-6) - 3px);
+  top: 0.5em;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--volt);
+}
+
+.entryHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.date {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.entryTitle {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: var(--leading-tight);
+}
+
+.items {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  /* Measure capped: these entries run long, and a 120-character line is not
+     read, it is skimmed (§41). */
+  max-width: 84ch;
+}
+
+.items li {
+  position: relative;
+  padding-left: var(--s-4);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  line-height: var(--leading-normal);
+}
+
+.items li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.65em;
+  width: 4px;
+  height: 1px;
+  background: var(--border-strong);
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding-block: var(--s-8) var(--s-12);
+  }
+
+  .entries {
+    padding-left: var(--s-4);
+  }
+
+  .entry::before {
+    left: calc(-1 * var(--s-4) - 3px);
+  }
+}

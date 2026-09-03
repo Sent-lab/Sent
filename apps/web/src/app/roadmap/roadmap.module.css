@@ -1,0 +1,126 @@
+/*
+ * §223. Cinematic is allowed here, but the four prohibitions come first: no fake
+ * ETA, no fake completion percent, no scroll hijack, no obscured status text.
+ *
+ * So there is no progress bar anywhere on this page — a bar implies a
+ * measurement, and none of these items have one.
+ */
+
+.page {
+  padding-block: var(--s-10) var(--s-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-10);
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  max-width: 62ch;
+}
+
+.title {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.subtitle {
+  font-size: var(--text-base);
+  color: var(--text-dim);
+  line-height: var(--leading-normal);
+}
+
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-10);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.groupHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  padding-bottom: var(--s-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.groupTitle {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+/* Colour reinforces the word; it never replaces it. */
+.groupTitle[data-state="LIVE"] { color: var(--up); }
+.groupTitle[data-state="BUILDING"] { color: var(--volt); }
+.groupTitle[data-state="NEXT"] { color: var(--info); }
+.groupTitle[data-state="EXPLORING"] { color: var(--text-dim); }
+
+.groupCopy {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.items {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--s-4);
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  /* A left rule carries the state a second time, at the item level, without
+     needing a badge on every card. */
+  border-left-width: 2px;
+}
+
+.item[data-state="LIVE"] { border-left-color: var(--up); }
+.item[data-state="BUILDING"] { border-left-color: var(--volt); }
+.item[data-state="NEXT"] { border-left-color: var(--info); }
+.item[data-state="EXPLORING"] { border-left-color: var(--border-strong); }
+
+.itemTitle {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.itemBody {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  line-height: var(--leading-normal);
+}
+
+.footer {
+  padding-top: var(--s-6);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  line-height: var(--leading-normal);
+  max-width: 76ch;
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding-block: var(--s-8) var(--s-12);
+  }
+
+  .items {
+    grid-template-columns: 1fr;
+  }
+}
