@@ -3,7 +3,7 @@
 Where the defects in this codebase have actually been, written down so the next
 person reviewing it looks in the right places rather than the obvious ones.
 
-Sixteen defects were found and fixed during the build. **None of them was found
+Twenty defects were found and fixed during the build. **None of them was found
 by a unit test.** Every one came from running real components against each
 other. That is not an argument against the unit tests — they are what makes the
 pure cores trustworthy, and several of them caught real errors during
@@ -13,7 +13,7 @@ development. It is an argument about where the *remaining* risk sits.
 
 ## Shape 1 — the seam
 
-Thirteen of the sixteen lived between two components that were each correct, and
+Fifteen of the twenty lived between two components that were each correct, and
 each individually tested.
 
 | Where | What it did |
@@ -31,6 +31,8 @@ each individually tested.
 | `rollbackTo` | Recomputed `market_state` and left `balances` stale, so the recovery path from a reorg was itself unrecoverable. |
 | Balance event ordering | The credit side was offset by a million to avoid a key collision, silently reordering every block with more than one transfer. |
 | Settlement boundary | Read from the reorg tracker, which is advanced after the transaction commits, so it always described the previous range. |
+| `fee_accruals` | The table shipped in the first migration and nothing ever wrote to it. The indexer watched the factory, the reward vault and every market — never the fee vault — so a creator's earnings had no source. A populated schema made it look like they did. |
+| Two decimal scales | Once the fee vault WAS watched, its raw token amounts landed beside the market's normalized ones: 174432 in `fee_accruals` and 174431738875981363 in `trades`, for the same fee. Both correct on their own side, differing by 10^12 in one database. |
 
 **What to do about it.** `tests/e2e/stack.ts` exists because of this list. It
 deploys real contracts, launches, trades, performs a real reorg, graduates, and
@@ -42,7 +44,7 @@ ever handed it real output from the thing upstream".
 
 ## Shape 2 — the placeholder
 
-Five defects, four of them in the last stretch, all the same:
+Seven defects, all the same:
 
 ```
 priceAfter: 0n          // every trade priced at zero; a flat tape and a flat chart
@@ -50,6 +52,8 @@ quoteDecimals: 18       // a six-decimal xStock rendered a trillion times too sm
 estimatedAccrued: 0n    // holders with real entitlements shown nothing
 claimable: 0n           //   ↑ and this one carried a comment explaining why
 log.blockNumber ?? 0n   // a pending log written as a trade in block zero
+CLAIM_CREATOR_FEES      // an IntentKind with no builder: earnings shown, no way to withdraw
+<button disabled>       //   ↑ and a Connect button still saying wallet support was off
 ```
 
 Each was defensible when written. Each typechecked forever. Each outlived the
@@ -59,6 +63,13 @@ one once it reached the database.
 The one that carried an explanatory comment survived longest, which is the part
 worth internalising: **a documented placeholder reads as considered.** The
 comment said the Stockback service did not exist yet. It did by then.
+
+The Connect button is the same lesson at a larger scale. It was disabled with a
+paragraph explaining that §694's intent path was incomplete, so a wallet could
+sign something the review never showed. That was true when written. By the time
+it was noticed the trade panel beside it had been connecting and trading for
+weeks — the reasoning was sound, the condition had passed, and the paragraph
+was what kept anyone from re-checking.
 
 **What to do about it.** Two rules, applied to this repository:
 
@@ -100,6 +111,28 @@ quadratic.
 
 ---
 
+## Shape 4 — a failed read that looks like an answer
+
+One, and it is worth its own heading because it is the only defect here that
+would have produced a wrong number about money without anything being broken.
+
+`claimable` was built by asking the vault for each asset's balance and skipping
+any asset whose call threw. With one asset — the normal case — that leaves an
+empty list, which the page renders as "nothing to claim". Identical to a
+successful read of zero, and the creator has no way to tell which they are
+looking at.
+
+Nothing failed. The RPC error was caught, the page rendered, every type checked.
+
+**What to do about it.** A partial answer about a balance is worse than a stated
+gap. The failure now discards the whole list and clears the vault address, which
+the page already treats as "claiming is unavailable" — so the figure becomes an
+em dash with a reason rather than a zero. The rule generalises: when a read that
+feeds a number fails, ask what the empty value renders as, and whether a user
+could tell it apart from the real thing.
+
+---
+
 ## What is deliberately not implemented
 
 These are not placeholders. They are recorded refusals, and each names the
@@ -110,6 +143,8 @@ verification item blocking it:
 - The xStock allowlist, empty — V-02, V-03, V-05
 - Platform accounts, unset — C-08
 - `Logo.tsx` geometry, pending the official SVG export
+- `/account` holdings and P&L — needs a per-account position read that does not
+  exist. Creator earnings moved to `/creator` rather than waiting for it.
 
 §279 forbids a mock or placeholder standing in for any of them in production,
 and `assertProductionConfigReady` enforces that at startup on chain 999.
