@@ -782,6 +782,11 @@ export const launchMarketAbi = [
   },
   {
     "type": "error",
+    "name": "RouterAlreadySet",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RouterNotSet",
     "inputs": []
   },

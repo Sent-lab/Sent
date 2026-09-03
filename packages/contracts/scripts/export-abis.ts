@@ -23,6 +23,7 @@ const EXPORTED = [
   "LaunchMarket",
   "LaunchToken",
   "FeeVault",
+  "ReferencePriceAdapter",
   "HolderRewardVault",
   "XStockRegistry",
 ] as const;

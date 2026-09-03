@@ -18,7 +18,11 @@ import {
   realtimeEnv,
   loadAll,
 } from "../src/env.ts";
-import { assertProductionConfigReady, XSTOCK_ALLOWLIST } from "../src/chain.ts";
+import {
+  assertProductionConfigReady,
+  XSTOCK_ALLOWLIST,
+  REFERENCE_PRICE_FEEDS,
+} from "../src/chain.ts";
 
 let failures = 0;
 
@@ -271,6 +275,30 @@ section("Production readiness is still gated (§279)");
 
   check("mainnet config is not yet ready, and says so", refused);
   check("the xStock allowlist is still empty", XSTOCK_ALLOWLIST.length === 0);
+
+  /*
+   * The launch anchor, checked here rather than left to the contract's own
+   * revert.
+   *
+   * `ReferencePriceNotSet` arrives when a creator tries to launch, which is
+   * after the deployment looked successful. This is the same fact discovered at
+   * startup, where it is an operator's problem rather than a user's — and `p0`
+   * is immutable for the life of every market it prices, so there is no version
+   * of "we will fix it after the first launch".
+   */
+  check("no launch-anchor feed is configured yet (V-11)", REFERENCE_PRICE_FEEDS.length === 0);
+
+  let namesTheAnchor = false;
+  try {
+    assertProductionConfigReady();
+  } catch (error) {
+    namesTheAnchor = error instanceof Error && error.message.includes("V-11");
+  }
+
+  // The guard must SAY which dependency is missing. A refusal that lists four
+  // problems and omits the fifth is one an operator resolves and then meets
+  // again.
+  check("and the refusal names it", namesTheAnchor);
 }
 
 console.log(failures === 0 ? "\nconfig: all checks passed" : `\nconfig: ${failures} FAILED`);

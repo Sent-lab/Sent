@@ -196,8 +196,8 @@ asserted:
 
 ## Where the bugs have actually been
 
-Thirty-one defects were found and fixed during the build, and none of them was
-caught by a unit test. They fell into four shapes — a seam between two
+Thirty-two defects were found and fixed during the build, and none of them was
+caught by a unit test. They fell into five shapes — a seam between two
 components that were each individually correct, a placeholder that outlived the
 reason it was written, code that was correct but quadratic, and a failed read
 that renders exactly like a real answer.
@@ -205,6 +205,10 @@ that renders exactly like a real answer.
 The largest single group is a table that was read by something and written by
 nothing. Five of them, including one that would have paid every pre-graduation
 Stockback reward to the bonding curve instead of to holders.
+
+The most expensive single one was an argument nobody was checking: the launch
+price arrived as plain calldata, verified only against zero, and it fixes a
+market'''s starting price permanently.
 
 [`docs/REVIEW-NOTES.md`](docs/REVIEW-NOTES.md) lists every one of them and what
 the pattern implies for reviewing this codebase. It is the first thing worth

@@ -120,6 +120,39 @@ export const PLATFORM_ACCOUNTS = {
 } as const;
 
 /**
+ * The launch anchor's price feeds (§135, §402, V-11).
+ *
+ * EMPTY BY DESIGN, for the same reason the xStock allowlist is. `p0` is derived
+ * once from this price and is immutable for the market's entire life, so a
+ * guessed feed is not a degraded launch — it is a permanently mis-priced market
+ * whose graduation endpoint means something other than $50,000.
+ *
+ * §253 leaves the provider to engineering validation, and the criteria it lists
+ * are the ones that matter here: manipulation resistance first, then freshness
+ * and precision. A DEX spot price is disqualified on the first — the anchor
+ * would be settable by whoever is willing to move the pool for one block.
+ *
+ * Each entry needs a staleness bound and a sanity band alongside the address,
+ * and none of the three may be guessed: `maxAge` too loose accepts a price from
+ * a halted market, and a band too wide accepts a feed that is returning
+ * garbage.
+ */
+export const REFERENCE_PRICE_FEEDS: readonly ReferencePriceFeed[] = [];
+
+export interface ReferencePriceFeed {
+  /** The xStock this feed prices. Must also be on the allowlist. */
+  readonly asset: `0x${string}`;
+  /** The aggregator. V-11 — first-party confirmed only. */
+  readonly aggregator: `0x${string}`;
+  /** Seconds after which an answer is refused. Per asset, per §135. */
+  readonly maxAgeSeconds: number;
+  /** Inclusive sanity band in USD wad. Outside it the launch is blocked. */
+  readonly minUsdWad: bigint;
+  readonly maxUsdWad: bigint;
+  readonly verified: boolean;
+}
+
+/**
  * Guard used by production entry points. Fails loudly rather than degrading to a
  * default — §279 (no placeholders in production) and §699 (address integrity).
  */
@@ -130,6 +163,23 @@ export function assertProductionConfigReady(): void {
   if (HYPERSWAP_V3.positionManager === null) problems.push("position manager missing (V-06)");
   if (XSTOCK_ALLOWLIST.length === 0) problems.push("xStock allowlist empty (V-02/V-03/V-05)");
   if (PLATFORM_ACCOUNTS.governanceSafe === null) problems.push("platform accounts unset (C-08)");
+
+  /*
+   * The launch anchor.
+   *
+   * Checked here rather than left to the contract's own `ReferencePriceNotSet`,
+   * because that revert arrives when a creator tries to launch — which is after
+   * the deployment looked successful. This fails at startup, where it is an
+   * operator's problem rather than a user's.
+   */
+  if (REFERENCE_PRICE_FEEDS.length === 0) {
+    problems.push("no launch-anchor price feed configured (V-11)");
+  }
+
+  const unverifiedFeeds = REFERENCE_PRICE_FEEDS.filter((f) => !f.verified).map((f) => f.asset);
+  if (unverifiedFeeds.length > 0) {
+    problems.push(`unverified price feeds (V-11): ${unverifiedFeeds.join(", ")}`);
+  }
 
   if (problems.length > 0) {
     throw new Error(

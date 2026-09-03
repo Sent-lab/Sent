@@ -255,6 +255,109 @@ try {
   const router = await deploy("ProjRouter", [], "ProjectionFixture.t.sol");
   await send(factory, factoryAbi, "setRouter", [router]);
 
+  // --- The launch anchor (§135, §402) ------------------------------------
+
+  section("The launch anchor comes from a feed, not from the caller");
+
+  /*
+   * `xStockUsdWad` used to BE the anchor: a plain calldata argument, checked
+   * only for being non-zero. Any caller could anchor a market wherever they
+   * liked, and `p0` is immutable for that market's entire life — a price a
+   * thousand times too high produces a market that graduates for almost nothing
+   * and locks dust into a pool that is supposed to be permanent liquidity.
+   *
+   * On mainnet the feed is V-11 and unverified. Here a mock aggregator stands in
+   * so the path can be exercised; what is being tested is the FACTORY's refusal
+   * to price a market from anything else.
+   */
+  const referenceAbi = artifact("ReferencePriceAdapter").abi;
+
+  const priceFeed = await deploy(
+    "MockAggregator",
+    // $100.00 at eight decimals, which is what a Chainlink USD feed reports.
+    // Eight rather than eighteen deliberately: the adapter reads `decimals()`
+    // rather than assuming, and an eighteen-decimal mock would never exercise it.
+    [10_000_000_000n, 8],
+    "MockAggregator.sol",
+  );
+
+  const referencePrice = await deploy("ReferencePriceAdapter", [governance]);
+
+  const blockedBeforeAnchor = await publicClient
+    .simulateContract({
+      address: factory,
+      abi: factoryAbi,
+      functionName: "launch",
+      args: [
+        {
+          name: "Too Early",
+          symbol: "EARLY",
+          quoteAsset: quote,
+          userSalt: `0x${"99".repeat(32)}` as Hex,
+          launchIntentHash: `0x${"99".repeat(32)}` as Hex,
+          xStockUsdWad: 0n,
+          expectedToken: "0x0000000000000000000000000000000000000000" as Address,
+        },
+      ],
+      account: account.address,
+    })
+    .then(() => false)
+    .catch(() => true);
+
+  // §279: a refusal, not a placeholder. A factory with no anchor cannot launch.
+  check("a launch is refused before an anchor exists", blockedBeforeAnchor);
+
+  await send(referencePrice, referenceAbi, "configure", [
+    quote,
+    priceFeed,
+    3_600,
+    parseEther("1"),
+    parseEther("100000"),
+  ]);
+  await send(factory, factoryAbi, "setReferencePrice", [referencePrice]);
+
+  const anchored = (await publicClient.readContract({
+    address: referencePrice,
+    abi: referenceAbi,
+    functionName: "usdPriceWad",
+    args: [quote],
+  })) as bigint;
+
+  // Eight decimals in, wad out. The normalisation the adapter reads rather than
+  // assumes — getting it wrong here would scale every launch by 10^10.
+  check("the adapter normalises the feed to wad", anchored === parseEther("100"));
+
+  /*
+   * A caller cannot anchor where they like any more.
+   *
+   * The reviewed price is now a deviation bound, in the same shape as
+   * `minTokensOut` on a trade: it protects the creator from launching at a
+   * price they never saw, and it cannot MOVE the anchor.
+   */
+  const deviated = await publicClient
+    .simulateContract({
+      address: factory,
+      abi: factoryAbi,
+      functionName: "launch",
+      args: [
+        {
+          name: "Mispriced",
+          symbol: "MIS",
+          quoteAsset: quote,
+          userSalt: `0x${"88".repeat(32)}` as Hex,
+          launchIntentHash: `0x${"88".repeat(32)}` as Hex,
+          // A thousand times the feed. Before the adapter, this launched.
+          xStockUsdWad: parseEther("100000"),
+          expectedToken: "0x0000000000000000000000000000000000000000" as Address,
+        },
+      ],
+      account: account.address,
+    })
+    .then(() => false)
+    .catch(() => true);
+
+  check("a caller cannot anchor a market at a price of their choosing", deviated);
+
   // --- Launch ------------------------------------------------------------
 
   section("Launching a market");
@@ -265,6 +368,8 @@ try {
     quoteAsset: quote,
     userSalt: `0x${"11".repeat(32)}` as Hex,
     launchIntentHash: `0x${"22".repeat(32)}` as Hex,
+    // The price the creator reviewed, not the anchor. It must be within 5% of
+    // what the feed says or the launch is refused — see the phase above.
     xStockUsdWad: parseEther("100"),
     // Zero means "do not enforce a previewed address". The creator-bound salt is
     // covered by the factory's own tests; this is about the indexer.

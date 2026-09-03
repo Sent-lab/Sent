@@ -3,9 +3,10 @@
 Where the defects in this codebase have actually been, written down so the next
 person reviewing it looks in the right places rather than the obvious ones.
 
-Thirty-one defects were found and fixed during the build. **None of them was
+Thirty-two defects were found and fixed during the build. **None of them was
 found by a unit test.** Every one came from running real components against each
-other. That is not an argument against the unit tests — they are what makes the
+other — with one exception, which was found by being asked why something had not
+been done and checking instead of answering. That is not an argument against the unit tests — they are what makes the
 pure cores trustworthy, and several of them caught real errors during
 development. It is an argument about where the *remaining* risk sits.
 
@@ -186,6 +187,51 @@ them, rather than asserting that a query succeeds.
 
 ---
 
+## Shape 5 — the argument nobody was checking
+
+One, and it is the most expensive defect in this document.
+
+```solidity
+function referencePriceToP0(uint256 xStockUsdWad, address) public pure {
+    if (xStockUsdWad == 0) revert InvalidReferencePrice();
+    // ...that was the whole check
+}
+```
+
+`xStockUsdWad` is the xStock's USD price at launch. It arrived as plain
+calldata, from the caller, and the only thing verified about it was that it was
+not zero.
+
+`p0` is derived from it and is **immutable for the market's entire life**.
+Everything inherits it: `pg = 25 × p0`, the collateral the curve accumulates,
+and the real value of the permanent LP that graduation creates. A launch at a
+price a thousand times too low produces a market that can never realistically
+graduate. A thousand times too high produces one that graduates for almost
+nothing and locks dust into a pool that is supposed to hold permanent liquidity.
+
+§20 lists `ReferencePriceAdapter` in the contract architecture. §135 gives it a
+Definition of Done. §402 says the anchor is "required once when creating a
+market" and that "if invalid/stale, the launch is blocked". **The contract did
+not exist.** Seven files in `contracts/src`, and none of them was it.
+
+**Why every test passed.** Each one supplied a sensible price, because each was
+written to exercise something else — the curve, the salt, the fee split — and a
+sensible price is what you write when the price is not the subject. Nothing was
+testing the argument itself, because nothing was treating it as an input that
+could be wrong.
+
+**What to do about it.** The question that finds this class is not "is this
+value validated" — it obviously was, against zero. It is: **who chooses this
+value, and what happens if they choose badly.** For every argument that reaches
+storage and stays there, the answer has to be something other than "they
+wouldn't".
+
+The anchor now comes from a feed. The caller's number became an acceptance
+bound, in the same shape as `minTokensOut` on a trade: it protects the creator
+from launching at a price they never saw, and it cannot move the anchor.
+
+---
+
 ## Shape 4 — a failed read that looks like an answer
 
 One, and it is worth its own heading because it is the only defect here that
@@ -223,9 +269,13 @@ verification item blocking it:
   decision and no deployment target has been fixed for (§434). The half that
   does not need storage would be a text column nobody writes to, which is the
   shape of defect this document is mostly about.
-- `liveMarketCapUsd` (§403). Needs the live xStock/USD display feed, V-11. The
+- `liveMarketCapUsd` (§403). Needs the live xStock/USD DISPLAY feed, V-12. The
   field is ABSENT from the response rather than zero: an absent field renders as
   nothing, a zero renders as a market worth nothing.
+- The launch-anchor feed itself (V-11). The adapter, its refusals and the
+  factory's dependency on it are built and tested; which aggregator to point at
+  is a decision with §253's criteria attached, and manipulation resistance rules
+  out the easy answer. Every launch is refused until it is made.
 - `/account` holdings and P&L — needs a per-account position read that does not
   exist. Creator earnings moved to `/creator` rather than waiting for it.
 

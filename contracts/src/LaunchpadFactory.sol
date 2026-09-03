@@ -12,6 +12,7 @@ import {XStockRegistry} from "./XStockRegistry.sol";
 import {FeeVault} from "./FeeVault.sol";
 import {HolderRewardVault} from "./HolderRewardVault.sol";
 import {Curve} from "./lib/Curve.sol";
+import {IReferencePriceAdapter} from "./interfaces/IReferencePriceAdapter.sol";
 
 /// @title SENT LaunchpadFactory
 /// @notice Deploys markets and is the single source of token authenticity (§138).
@@ -71,6 +72,19 @@ contract LaunchpadFactory is ReentrancyGuard {
     /// @notice Where the graduation router lives. Markets inherit it at launch.
     address public router;
 
+    /// @notice The launch anchor's source (§135, §402).
+    ///
+    /// @dev Mutable for the same reason `router` is: V-11 is open, the feed is
+    ///      an engineering validation still to be done (§253), and a factory
+    ///      that had to be redeployed to change it would take every launched
+    ///      market's authenticity record with it.
+    ///
+    ///      Zero means no launch is possible. That is the correct failure and
+    ///      the same one `RouterNotSet` expresses — §279 forbids a placeholder
+    ///      standing in for an unverified dependency, and a refusal is not a
+    ///      placeholder.
+    address public referencePrice;
+
     /// @notice Launch fee, in the native gas token. §2 targets ~$1-2 equivalent.
     uint256 public launchFee;
 
@@ -107,6 +121,7 @@ contract LaunchpadFactory is ReentrancyGuard {
         bytes32 effectiveSalt
     );
     event RouterUpdated(address indexed from, address indexed to);
+    event ReferencePriceUpdated(address indexed from, address indexed to);
     event LaunchFeeUpdated(uint256 from, uint256 to);
     event TreasuryUpdated(address indexed from, address indexed to);
     event GovernanceTransferred(address indexed from, address indexed to);
@@ -118,6 +133,8 @@ contract LaunchpadFactory is ReentrancyGuard {
     error PredictedAddressMismatch(address predicted, address actual);
     error InsufficientLaunchFee(uint256 sent, uint256 required);
     error InvalidReferencePrice();
+    error ReferencePriceNotSet();
+    error ReferencePriceDeviated(uint256 reviewed, uint256 actual, uint256 toleranceBps);
     error RouterNotSet();
     error LaunchFeeTransferFailed();
     error DecimalsDriftedFromRegistry(uint8 registered, uint8 reported);
@@ -159,7 +176,12 @@ contract LaunchpadFactory is ReentrancyGuard {
         ///      Bound into the salt so a modified intent produces a different
         ///      address rather than silently launching something else.
         bytes32 launchIntentHash;
-        /// @dev Launch-time xStock/USD reference snapshot, wad (§8, §402).
+        /// @dev The xStock/USD price the creator REVIEWED, wad.
+        ///
+        ///      No longer the anchor. The anchor comes from the reference price
+        ///      adapter; this is the bound on how far the feed may have moved
+        ///      since the preview, in the same shape as `minTokensOut` on a
+        ///      trade. Zero opts out explicitly.
         uint256 xStockUsdWad;
         /// @dev The address the creator was shown in the preview. Enforced.
         address expectedToken;
@@ -177,6 +199,7 @@ contract LaunchpadFactory is ReentrancyGuard {
     {
         if (msg.value < launchFee) revert InsufficientLaunchFee(msg.value, launchFee);
         if (router == address(0)) revert RouterNotSet();
+        if (referencePrice == address(0)) revert ReferencePriceNotSet();
 
         // §420: only a fully verified official xStock may back a market. An empty
         // or unverified registry means no launch is possible at all — which is the
@@ -197,7 +220,38 @@ contract LaunchpadFactory is ReentrancyGuard {
             revert PredictedAddressMismatch(params.expectedToken, predicted);
         }
 
-        uint256 p0 = referencePriceToP0(params.xStockUsdWad, params.quoteAsset);
+        /*
+         * THE ANCHOR COMES FROM THE FEED, NOT FROM THE CALLER (§135, §402).
+         *
+         * `params.xStockUsdWad` used to BE the anchor. Any caller could pass any
+         * non-zero number, and the only check was that it was not zero — so a
+         * launch at a price a thousand times too low produced a `p0` a thousand
+         * times too high and a market that could never realistically graduate,
+         * while a price a thousand times too high produced one that graduated
+         * for almost nothing and locked dust into a pool that is supposed to be
+         * permanent liquidity.
+         *
+         * The adapter reverts on stale, non-positive, out-of-band or unreadable,
+         * which is §402's "if invalid/stale, the launch is blocked" expressed as
+         * the absence of any other path.
+         */
+        uint256 anchorUsdWad = IReferencePriceAdapter(referencePrice).usdPriceWad(params.quoteAsset);
+
+        /*
+         * And the caller's number becomes an ACCEPTANCE BOUND.
+         *
+         * The same shape as `minTokensOut` on a trade. The creator reviewed a
+         * preview at some price (§3 step 5); between review and mining, the feed
+         * moves. Without this the launch silently anchors at whatever the feed
+         * says now, and the creator's market is not the market they were shown —
+         * which is the §694 failure, one layer down from the calldata.
+         *
+         * Zero opts out, for a caller that genuinely wants the current price
+         * whatever it is. Explicit, because the safe default is to check.
+         */
+        _assertAnchorWithinTolerance(params.xStockUsdWad, anchorUsdWad);
+
+        uint256 p0 = referencePriceToP0(anchorUsdWad, params.quoteAsset);
 
         // Decimals come from the REGISTRY, not from the token.
         //
@@ -323,6 +377,30 @@ contract LaunchpadFactory is ReentrancyGuard {
     /// @dev Anchored ONCE, at launch, from the reference snapshot. The live USD
     ///      feed never re-anchors an existing market — §402 splits those roles
     ///      precisely so a display feed can never move a market's economics.
+    /// @notice How far the feed may have moved from the price the creator saw.
+    /// @dev 5%. Wide enough that an ordinary block delay on a volatile equity
+    ///      does not fail launches for no reason, narrow enough that a market
+    ///      cannot be anchored somewhere the creator would not recognise. §14's
+    ///      principle — the user picks the bound, nothing is implicit — is
+    ///      honoured by `xStockUsdWad` being the creator's own number; this is
+    ///      the ceiling on how far it may be from reality.
+    uint256 public constant ANCHOR_TOLERANCE_BPS = 500;
+
+    /// @dev Reverts when the feed has moved further than the tolerance from the
+    ///      price the creator reviewed. A zero `reviewed` opts out explicitly.
+    function _assertAnchorWithinTolerance(uint256 reviewed, uint256 actual) private pure {
+        if (reviewed == 0) return;
+
+        uint256 diff = reviewed > actual ? reviewed - actual : actual - reviewed;
+
+        // Against the ACTUAL price, not the reviewed one: the reviewed number is
+        // caller-supplied, and a denominator a caller controls is a tolerance a
+        // caller controls.
+        if (diff * 10_000 > actual * ANCHOR_TOLERANCE_BPS) {
+            revert ReferencePriceDeviated(reviewed, actual, ANCHOR_TOLERANCE_BPS);
+        }
+    }
+
     function referencePriceToP0(uint256 xStockUsdWad, address) public pure returns (uint256 p0) {
         if (xStockUsdWad == 0) revert InvalidReferencePrice();
 
@@ -370,6 +448,16 @@ contract LaunchpadFactory is ReentrancyGuard {
         if (router_ == address(0)) revert ZeroAddress();
         emit RouterUpdated(router, router_);
         router = router_;
+    }
+
+    /// @notice Point the launch anchor at a price adapter (§135, §402).
+    /// @dev Governance names a SOURCE. It cannot write a price — there is no
+    ///      function on the adapter that would let it, and §18 forbids an admin
+    ///      injecting a manual price to force a graduation.
+    function setReferencePrice(address adapter) external onlyGovernance {
+        if (adapter == address(0)) revert ZeroAddress();
+        emit ReferencePriceUpdated(referencePrice, adapter);
+        referencePrice = adapter;
     }
 
     function setLaunchFee(uint256 newFee) external onlyGovernance {

@@ -12,6 +12,8 @@ import {HolderRewardVault} from "../src/HolderRewardVault.sol";
 import {XStockRegistry} from "../src/XStockRegistry.sol";
 import {IGraduationRouter} from "../src/interfaces/IGraduationRouter.sol";
 import {Curve} from "../src/lib/Curve.sol";
+import {ReferencePriceAdapter} from "../src/ReferencePriceAdapter.sol";
+import {MockAggregator} from "./mocks/MockAggregator.sol";
 
 contract GuardQuote is ERC20 {
     uint8 private d;
@@ -79,6 +81,9 @@ contract GuardPathsTest is Test {
     uint256 constant FEE = 0.01 ether;
     uint256 constant XSTOCK_USD = 137.42e18;
 
+    ReferencePriceAdapter priceAdapter;
+    MockAggregator feed;
+
     function setUp() public {
         registry = new XStockRegistry(governance);
         quote = new GuardQuote(18);
@@ -89,6 +94,14 @@ contract GuardPathsTest is Test {
 
         vm.prank(governance);
         factory.setRouter(address(router));
+
+        feed = new MockAggregator(int256(XSTOCK_USD / 1e10), 8);
+        priceAdapter = new ReferencePriceAdapter(governance);
+
+        vm.startPrank(governance);
+        priceAdapter.configure(address(quote), address(feed), 1 hours, 1e18, 100_000e18);
+        factory.setReferencePrice(address(priceAdapter));
+        vm.stopPrank();
 
         vm.startPrank(governance);
         registry.registerAsset(address(quote), 18, 1385, 0);
@@ -155,13 +168,70 @@ contract GuardPathsTest is Test {
         bare.launch{value: FEE}(_params(bytes32(uint256(1))));
     }
 
-    function test_launchStopsOnAnInvalidReferencePrice() public {
+    /// @dev A zero `xStockUsdWad` no longer means "no price" — it means "do not
+    ///      check how far the feed has moved", which is a deliberate opt-out.
+    ///      The launch still succeeds, because the anchor comes from the feed.
+    function test_zeroReviewedPriceOptsOutOfTheDeviationCheck() public {
         LaunchpadFactory.LaunchParams memory p = _params(bytes32(uint256(1)));
         p.xStockUsdWad = 0;
 
         vm.prank(creator);
-        vm.expectRevert(LaunchpadFactory.InvalidReferencePrice.selector);
+        (, address market) = factory.launch{value: FEE}(p);
+        assertTrue(market != address(0), "the feed is the anchor; the bound is optional");
+    }
+
+    /// @dev §402: "if invalid/stale, the launch is blocked". The price a caller
+    ///      supplies can no longer make a market — only a live feed can.
+    function test_launchIsBlockedWhenTheFeedIsStale() public {
+        vm.warp(block.timestamp + 2 hours);
+
+        LaunchpadFactory.LaunchParams memory p = _params(bytes32(uint256(2)));
+        p.xStockUsdWad = 0;
+
+        vm.prank(creator);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ReferencePriceAdapter.StalePrice.selector,
+                address(quote),
+                block.timestamp - 2 hours,
+                uint32(1 hours)
+            )
+        );
         factory.launch{value: FEE}(p);
+    }
+
+    /// @dev The defect this whole path was built to close: a caller could pass
+    ///      any non-zero number and anchor the market wherever they liked.
+    function test_aCallerCannotAnchorTheMarketAtAPriceOfTheirChoosing() public {
+        LaunchpadFactory.LaunchParams memory p = _params(bytes32(uint256(3)));
+
+        // A thousand times the real price. Before the adapter this produced a
+        // market that graduated for almost nothing and locked dust into a pool
+        // meant to hold permanent liquidity.
+        p.xStockUsdWad = XSTOCK_USD * 1_000;
+
+        vm.prank(creator);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchpadFactory.ReferencePriceDeviated.selector,
+                XSTOCK_USD * 1_000,
+                XSTOCK_USD,
+                uint256(500)
+            )
+        );
+        factory.launch{value: FEE}(p);
+    }
+
+    function test_launchIsBlockedWithNoReferencePriceAdapter() public {
+        vm.prank(deployer);
+        LaunchpadFactory bare = new LaunchpadFactory(governance, treasury, address(registry), FEE);
+
+        vm.prank(governance);
+        bare.setRouter(address(router));
+
+        vm.prank(creator);
+        vm.expectRevert(LaunchpadFactory.ReferencePriceNotSet.selector);
+        bare.launch{value: FEE}(_params(bytes32(uint256(4))));
     }
 
     function test_factoryRejectsZeroAddressesAtConstruction() public {

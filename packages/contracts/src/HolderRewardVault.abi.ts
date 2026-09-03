@@ -1176,6 +1176,22 @@ export const holderRewardVaultAbi = [
   },
   {
     "type": "error",
+    "name": "TooManySignatures",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "attestors",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "WrongRewardAsset",
     "inputs": []
   },

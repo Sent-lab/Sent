@@ -280,10 +280,26 @@ WHY IT MATTERS:     §402 splits oracle roles. The anchor fixes P0 for the marke
                     so it must be manipulation-resistant; a manipulated anchor mis-prices the
                     market permanently.
 HOW TO VERIFY:      identify available feeds on HyperEVM and review their security model
-BLOCKS:             ReferencePriceAdapter, launch flow
+BLOCKS:             the launch flow. Every launch reverts with ReferencePriceNotSet
+                    until governance configures a feed and points the factory at it.
 OWNER:              Stream A
 STATUS:             UNVERIFIED
 ```
+
+**The mechanism is built; only the feed is open.** `ReferencePriceAdapter`
+exists, is tested against stale, zero, negative, out-of-band, unreadable and
+wrong-decimals feeds, and is what the factory reads. `xStockUsdWad` is no longer
+the anchor — it is the bound on how far the feed may have moved since the
+creator's preview.
+
+What is still needed is one decision and three numbers per asset: the
+aggregator, its staleness bound, and its sanity band. §253's criteria apply in
+order — **manipulation resistance first**. A DEX spot price is disqualified on
+that alone: the anchor would be settable by anyone willing to move the pool for
+one block, and it fixes `p0` for the market's entire life.
+
+`REFERENCE_PRICE_FEEDS` in `packages/config/src/chain.ts` is where they land.
+It is empty, and `assertProductionConfigReady` names V-11 while it is.
 
 ---
 

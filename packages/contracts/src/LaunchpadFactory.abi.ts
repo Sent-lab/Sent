@@ -31,6 +31,19 @@ export const launchpadFactoryAbi = [
   },
   {
     "type": "function",
+    "name": "ANCHOR_TOLERANCE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "FEE_VAULT",
     "inputs": [],
     "outputs": [
@@ -395,6 +408,19 @@ export const launchpadFactoryAbi = [
   },
   {
     "type": "function",
+    "name": "referencePrice",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "referencePriceToP0",
     "inputs": [
       {
@@ -457,6 +483,19 @@ export const launchpadFactoryAbi = [
         "name": "newFee",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setReferencePrice",
+    "inputs": [
+      {
+        "name": "adapter",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -580,6 +619,25 @@ export const launchpadFactoryAbi = [
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReferencePriceUpdated",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -765,6 +823,32 @@ export const launchpadFactoryAbi = [
   {
     "type": "error",
     "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReferencePriceDeviated",
+    "inputs": [
+      {
+        "name": "reviewed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "actual",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "toleranceBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReferencePriceNotSet",
     "inputs": []
   },
   {

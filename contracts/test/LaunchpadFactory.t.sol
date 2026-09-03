@@ -13,6 +13,8 @@ import {FeeVault} from "../src/FeeVault.sol";
 import {HolderRewardVault} from "../src/HolderRewardVault.sol";
 import {IGraduationRouter} from "../src/interfaces/IGraduationRouter.sol";
 import {Curve} from "../src/lib/Curve.sol";
+import {ReferencePriceAdapter} from "../src/ReferencePriceAdapter.sol";
+import {MockAggregator} from "./mocks/MockAggregator.sol";
 
 contract FQuote is ERC20 {
     constructor() ERC20("Mock NVDAx", "NVDAx") {}
@@ -42,6 +44,8 @@ contract LaunchpadFactoryTest is Test {
     XStockRegistry registry;
     FQuote quote;
     StubRouter router;
+    ReferencePriceAdapter priceAdapter;
+    MockAggregator feed;
 
     address governance = makeAddr("governanceSafe");
     address treasury = makeAddr("treasurySafe");
@@ -66,6 +70,21 @@ contract LaunchpadFactoryTest is Test {
 
         vm.prank(governance);
         factory.setRouter(address(router));
+
+        /*
+         * The launch anchor now comes from a feed, not from calldata (§135).
+         *
+         * Eight decimals because that is what a Chainlink USD feed reports, and
+         * the adapter reads it rather than assuming it — so a test that used
+         * eighteen here would never exercise the normalisation.
+         */
+        feed = new MockAggregator(int256(XSTOCK_USD / 1e10), 8);
+        priceAdapter = new ReferencePriceAdapter(governance);
+
+        vm.startPrank(governance);
+        priceAdapter.configure(address(quote), address(feed), 1 hours, 1e18, 100_000e18);
+        factory.setReferencePrice(address(priceAdapter));
+        vm.stopPrank();
 
         vm.startPrank(governance);
         registry.registerAsset(address(quote), 18, 1385, 0);
@@ -298,16 +317,28 @@ contract LaunchpadFactoryTest is Test {
         uint256 mcQuote = (LaunchMarket(market).marginalPrice() * Curve.TOTAL_SUPPLY) / 1e18;
         uint256 mcUsd = (mcQuote * XSTOCK_USD) / 1e18;
 
-        assertApproxEqRel(mcUsd, 2_000e18, 1e15, "every launch starts at $2,000 reference MC");
+        assertApproxEqRel(mcUsd, 2_000e18, 1e15, "every launch starts at $2,000 priceAdapter MC");
     }
 
     /// @dev The endpoint is a pure fraction of supply, so it must be identical
     ///      across wildly different quote-asset prices.
+    /// @dev The price is varied on the FEED, not in calldata. `xStockUsdWad` is
+    ///      no longer the anchor — it is the bound on how far the feed may have
+    ///      moved since the creator's preview — so varying it here would be
+    ///      fuzzing the tolerance check rather than the curve.
     function testFuzz_endpointIsIdenticalAcrossPrices(uint256 xStockUsdWad) public {
         xStockUsdWad = bound(xStockUsdWad, 1e18, 5_000e18);
 
+        // Eight decimals, matching the feed. Rounded down there and back, so the
+        // bound is exactly what the adapter will report rather than a value it
+        // rounds away from.
+        uint256 onFeed = (xStockUsdWad / 1e10) * 1e10;
+
+        vm.prank(governance);
+        feed.set(int256(onFeed / 1e10), block.timestamp);
+
         LaunchpadFactory.LaunchParams memory p = _params(bytes32(xStockUsdWad));
-        p.xStockUsdWad = xStockUsdWad;
+        p.xStockUsdWad = onFeed;
 
         vm.prank(creator);
         (, address market) = factory.launch{value: LAUNCH_FEE}(p);

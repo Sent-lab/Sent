@@ -6,6 +6,7 @@ import {console2} from "forge-std/console2.sol";
 
 import {LaunchpadFactory} from "../src/LaunchpadFactory.sol";
 import {XStockRegistry} from "../src/XStockRegistry.sol";
+import {ReferencePriceAdapter} from "../src/ReferencePriceAdapter.sol";
 import {FeeVault} from "../src/FeeVault.sol";
 import {HolderRewardVault} from "../src/HolderRewardVault.sol";
 
@@ -41,7 +42,10 @@ contract Deploy is Script {
         uint256 launchFee;
     }
 
-    function run() external returns (XStockRegistry registry, LaunchpadFactory factory) {
+    function run()
+        external
+        returns (XStockRegistry registry, LaunchpadFactory factory, ReferencePriceAdapter referencePrice)
+    {
         Config memory config = _loadConfig();
 
         _assertSafeForChain(config);
@@ -53,9 +57,21 @@ contract Deploy is Script {
         registry = new XStockRegistry(config.governance);
         factory = new LaunchpadFactory(config.governance, config.treasury, address(registry), config.launchFee);
 
+        /*
+         * Deployed, and deliberately NOT wired to the factory.
+         *
+         * The adapter is useless until governance points an asset at a feed, and
+         * which feed is V-11 — still unverified (§253). Calling
+         * `setReferencePrice` here would produce a factory that passes its own
+         * "is it set" check while every launch reverts inside the adapter with
+         * `NoSource`, which is a worse failure than the honest one: a launch
+         * blocked by `ReferencePriceNotSet` says what is missing.
+         */
+        referencePrice = new ReferencePriceAdapter(config.governance);
+
         vm.stopBroadcast();
 
-        _report(config, registry, factory);
+        _report(config, registry, factory, referencePrice);
     }
 
     // -----------------------------------------------------------------------
@@ -95,7 +111,12 @@ contract Deploy is Script {
     ///      The second half matters more. A deployment log that lists addresses
     ///      and stops reads as "done", and the two steps this script deliberately
     ///      does not perform are both required before a single token can trade.
-    function _report(Config memory config, XStockRegistry registry, LaunchpadFactory factory) internal view {
+    function _report(
+        Config memory config,
+        XStockRegistry registry,
+        LaunchpadFactory factory,
+        ReferencePriceAdapter referencePrice
+    ) internal view {
         FeeVault feeVault = factory.FEE_VAULT();
         HolderRewardVault rewardVault = factory.REWARD_VAULT();
 
@@ -104,6 +125,7 @@ contract Deploy is Script {
         console2.log("factory           ", address(factory));
         console2.log("fee vault         ", address(feeVault));
         console2.log("reward vault      ", address(rewardVault));
+        console2.log("reference price   ", address(referencePrice));
         console2.log("governance        ", config.governance);
         console2.log("treasury          ", config.treasury);
         console2.log("launch fee        ", config.launchFee);
@@ -112,8 +134,12 @@ contract Deploy is Script {
         console2.log("NOT DONE - required before any launch:");
         console2.log("  1. governance calls factory.setRouter(...)   [blocked on V-06, V-09]");
         console2.log("  2. governance registers and enables xStocks  [blocked on V-02, V-03, V-05]");
-        console2.log("  3. attestors registered on the reward vault  [blocked on C-08]");
+        console2.log("  3. governance configures a price feed per asset on the adapter,");
+        console2.log("     then calls factory.setReferencePrice(...)  [blocked on V-11]");
+        console2.log("  4. attestors registered on the reward vault  [blocked on C-08]");
         console2.log("");
-        console2.log("A launch attempted before step 1 produces a market that cannot graduate.");
+        console2.log("A launch is refused outright until 1 and 3 are done. Step 3 is the");
+        console2.log("launch anchor: without it p0 has no source, and p0 is immutable for");
+        console2.log("the life of every market it prices.");
     }
 }
