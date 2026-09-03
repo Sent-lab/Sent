@@ -324,6 +324,23 @@ export class Indexer {
       logs = [...logs, ...extra];
     }
 
+    /*
+     * Pending logs are refused before anything is sorted or written.
+     *
+     * `getLogs` over a fixed range should never return one, so this is a
+     * consistency check on the node rather than an expected case. Sorting them
+     * as zero would have placed a pending log ahead of every real one in the
+     * range, and the insert sites would then have written it as a trade in
+     * block zero.
+     */
+    for (const log of logs) {
+      if (log.blockNumber === null || log.logIndex === null) {
+        throw new Error(
+          `[indexer] node returned a pending log for range ${from}..${to} from ${log.address}`,
+        );
+      }
+    }
+
     const ordered = [...logs].sort((a, b) => {
       const blockDelta = (a.blockNumber ?? 0n) - (b.blockNumber ?? 0n);
       if (blockDelta !== 0n) return blockDelta < 0n ? -1 : 1;
@@ -613,7 +630,7 @@ export class Indexer {
       pg: p0 * 25n,
       qG: (TOTAL_SUPPLY * 50n) / 76n,
       launchedAt: timestamp,
-      launchedAtBlock: log.blockNumber ?? 0n,
+      launchedAtBlock: this.positionOf(log).blockNumber,
     });
 
     // Staged, NOT applied. This runs inside the advance transaction, and a
@@ -630,8 +647,7 @@ export class Indexer {
 
     const market = log.address.toLowerCase() as `0x${string}`;
     const a = decoded.args as Record<string, unknown>;
-    const blockNumber = log.blockNumber ?? 0n;
-    const logIndex = log.logIndex ?? 0;
+    const { blockNumber, logIndex } = this.positionOf(log);
 
     if (decoded.eventName === "Bought" || decoded.eventName === "Sold") {
       const isBuy = decoded.eventName === "Bought";
@@ -726,8 +742,7 @@ export class Indexer {
     const from = String(a.from).toLowerCase();
     const to = String(a.to).toLowerCase();
     const value = a.value as bigint;
-    const blockNumber = log.blockNumber ?? 0n;
-    const logIndex = log.logIndex ?? 0;
+    const { blockNumber, logIndex } = this.positionOf(log);
 
     /*
      * Both sides are recorded. A transfer moves exposure rather than creating it,
@@ -775,9 +790,11 @@ export class Indexer {
 
     const a = decoded.args as Record<string, unknown>;
 
+    const { blockNumber, logIndex } = this.positionOf(log);
+
     await recordStockbackFunding(tx, {
-      blockNumber: log.blockNumber ?? 0n,
-      logIndex: log.logIndex ?? 0,
+      blockNumber,
+      logIndex,
       market: String(a.market).toLowerCase(),
       amount: a.amount as bigint,
       totalFunded: a.totalFunded as bigint,
@@ -821,6 +838,30 @@ export class Indexer {
    * The curve is rebuilt from the market's own `p0`, which is recorded at launch
    * and never re-anchored (§402).
    */
+  /**
+   * A log's position on the chain, or a refusal.
+   *
+   * `blockNumber` and `logIndex` are nullable in viem's type because a log from
+   * a pending block has neither. Coercing that to zero — which is what `?? 0n`
+   * did at every insert site — writes a real trade attached to block zero, at a
+   * log index that collides with the genuine first log of that block.
+   *
+   * `getLogs` over a fixed range never returns a pending log, so this should be
+   * unreachable. That is exactly why it throws rather than defaulting: the tick
+   * fails, the cursor holds, and the range is retried — instead of a plausible
+   * row landing in the projection with nothing to indicate it is wrong.
+   */
+  private positionOf(log: Log): { blockNumber: bigint; logIndex: number } {
+    if (log.blockNumber === null || log.logIndex === null) {
+      throw new Error(
+        `[indexer] refusing a pending log from ${log.address}: ` +
+          `block ${String(log.blockNumber)}, index ${String(log.logIndex)}`,
+      );
+    }
+
+    return { blockNumber: log.blockNumber, logIndex: log.logIndex };
+  }
+
   private priceAfter(market: string, distributed: bigint): bigint {
     const known =
       this.knownMarkets.get(market) ?? this.pendingMarkets.find((m) => m.market === market);
