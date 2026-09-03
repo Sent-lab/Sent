@@ -1385,6 +1385,32 @@ try {
     check("and nothing claimable, because it was already claimed", claimableFees.length === 0);
 
     /*
+     * §178.7's fee claim indexing, and the figure that makes the other two
+     * legible (§499).
+     *
+     * The creator withdrew everything a few hundred lines above. Without the
+     * claim history they would see "earned X, claimable 0" and be unable to
+     * tell a past withdrawal from a failure.
+     */
+    const feeClaims = (cockpit?.claims ?? []) as Record<string, unknown>[];
+    check("the withdrawal was indexed", feeClaims.length === 1);
+    check("and names where it went", String(feeClaims[0]?.recipient) === account.address.toLowerCase());
+
+    /*
+     * The scale check, again, on the table next to the one that already had it.
+     * A raw six-decimal claim beside a normalized accrual would show a creator
+     * 4.2 earned and 4200000 withdrawn for the same money — which is exactly
+     * what `fee_accruals` did before it was normalized.
+     *
+     * They must be EQUAL here rather than merely close: the creator withdrew
+     * their whole balance, so the claim is the accrual, to the wei.
+     */
+    check(
+      "the withdrawal equals what was accrued, on the same scale",
+      BigInt(String(feeClaims[0]?.amount)) === BigInt(String(accruedFees[0]?.amount)),
+    );
+
+    /*
      * The two fee figures in this projection must be on the SAME SCALE.
      *
      * The market emits normalized quantities and the fee vault emits raw token

@@ -47,6 +47,7 @@ import {
   markGraduated,
   insertBalanceEvent,
   insertFeeAccrual,
+  insertFeeClaim,
   registerExclusions,
   recordCommitmentSubmitted,
   markCommitmentActivated,
@@ -973,9 +974,55 @@ export class Indexer {
    */
   private async handleFeeVaultLog(tx: Transaction, log: Log, timestamp: number): Promise<void> {
     const decoded = tryDecode(feeVaultAbi, log);
-    if (decoded?.eventName !== "FeesAccrued") return;
+    if (decoded === null) return;
 
     const a = decoded.args as Record<string, unknown>;
+    const { blockNumber: claimBlock, logIndex: claimIndex } = this.positionOf(log);
+
+    /*
+     * §178.7 lists fee claim indexing on its own line, and §21's event family
+     * is "FeesAccrued / FeesClaimed". Only the accrual side was handled.
+     *
+     * Claims carry no market — the vault settles per (creator, asset) across
+     * every market they launched — so they are recorded before the
+     * market-scoped guard below, which would skip them for having no market to
+     * check.
+     */
+    if (decoded.eventName === "CreatorClaimed" || decoded.eventName === "PlatformClaimed") {
+      const asset = String(a.asset).toLowerCase() as `0x${string}`;
+
+      /*
+       * NORMALIZED, like every other quantity in this projection (§424).
+       *
+       * The vault emits raw token amounts. Storing them as emitted would put
+       * two scales in one creator's view: 4.2 earned beside 4200000 claimed for
+       * a six-decimal xStock — the exact defect `fee_accruals` already had, in
+       * the table next to it.
+       *
+       * The decimals come from the REGISTRY by asset, not from a market row: a
+       * claim settles across every market the creator launched against this
+       * asset, so there is no single market to read them from.
+       */
+      const decimals = await this.quoteDecimalsOf(asset);
+
+      return insertFeeClaim(tx, {
+        blockNumber: claimBlock,
+        logIndex: claimIndex,
+        // Null creator for a platform claim. They share the table because they
+        // are the same event shape from the same contract; §12's separation is
+        // about the buckets the money came from, which the vault has already
+        // applied by the time either is emitted.
+        creator:
+          decoded.eventName === "CreatorClaimed" ? String(a.creator).toLowerCase() : null,
+        asset,
+        amount: toNormalized(a.amount as bigint, decimals),
+        recipient: String(a.to).toLowerCase(),
+        timestamp,
+      });
+    }
+
+    if (decoded.eventName !== "FeesAccrued") return;
+
     const market = String(a.market).toLowerCase();
 
     // The row references `markets`, so a fee for a market this projection has

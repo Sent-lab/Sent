@@ -159,6 +159,16 @@ class FakePort implements DataPort {
     accrued: [
       { asset: "0x5555555555555555555555555555555555555555", symbol: "NVDAx", amount: 900n },
     ],
+    claims: [
+      {
+        asset: "0x5555555555555555555555555555555555555555",
+        symbol: "NVDAx",
+        amount: 650n,
+        recipient: "0x4444444444444444444444444444444444444444",
+        timestamp: 1_699_999_000,
+        blockNumber: 870n,
+      },
+    ],
   };
   getCreator(): CreatorRow | null {
     return this.creator;
@@ -839,6 +849,23 @@ console.log("\n--- 10. §221: the creator cockpit ------------------------------
   );
   check("claimable is what the vault would pay", result.data.claimable[0]?.amount === "250");
   check("accrued is the lifetime figure", result.data.accrued[0]?.amount === "900");
+
+  /*
+   * The third figure, and the one that makes the other two legible.
+   *
+   * 900 earned, 250 claimable, 650 withdrawn — the three are consistent, and a
+   * creator can see WHY nothing more is payable. Without the history they see
+   * "earned 900, claimable 250" and cannot tell a past withdrawal from a
+   * failure, which is not a state to leave someone in about their own money.
+   */
+  check("withdrawals are listed", result.data.claims.length === 1);
+  check("with the amount that moved", result.data.claims[0]?.amount === "650");
+  check("and where it went", result.data.claims[0]?.recipient !== undefined);
+  check(
+    "and the three figures reconcile",
+    BigInt(result.data.claims[0]?.amount ?? "0") + BigInt(result.data.claimable[0]?.amount ?? "0") ===
+      BigInt(result.data.accrued[0]?.amount ?? "0"),
+  );
 
   // Quantities cross the wire as strings. A creator holding more than 2^53 wei
   // of fees is not exotic — that is under a hundredth of an ether.

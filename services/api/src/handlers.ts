@@ -147,6 +147,22 @@ export interface CreatorRow {
   readonly claimable: readonly { asset: string; symbol: string; amount: bigint }[];
   /** Everything ever earned, from indexed events. A lifetime figure. */
   readonly accrued: readonly { asset: string; symbol: string; amount: bigint }[];
+  /**
+   * Withdrawals, newest first (§499).
+   *
+   * The third figure, and the one that makes the other two legible. Without it
+   * a creator sees "earned 4.2, claimable 0" and cannot tell whether they
+   * withdrew it last Tuesday or something failed — and "your money is
+   * somewhere" is not a state to leave someone in.
+   */
+  readonly claims: readonly {
+    asset: string;
+    symbol: string;
+    amount: bigint;
+    recipient: string;
+    timestamp: number;
+    blockNumber: bigint;
+  }[];
 }
 
 export interface CandleBar {
@@ -675,6 +691,15 @@ export interface CreatorResponse {
   readonly claimable: readonly { asset: string; symbol: string; amount: string }[];
   /** Earned over all time, from indexed events. */
   readonly accrued: readonly { asset: string; symbol: string; amount: string }[];
+  /** Withdrawals, newest first (§499). */
+  readonly claims: readonly {
+    asset: string;
+    symbol: string;
+    amount: string;
+    recipient: string;
+    timestamp: number;
+    blockNumber: string;
+  }[];
 }
 
 /**
@@ -705,6 +730,7 @@ export function handleCreator(port: DataPort, address: string): ApiResult<Creato
       launches: [],
       claimable: [],
       accrued: [],
+      claims: [],
     });
   }
 
@@ -737,6 +763,14 @@ export function handleCreator(port: DataPort, address: string): ApiResult<Creato
       asset: a.asset,
       symbol: a.symbol,
       amount: a.amount.toString(),
+    })),
+    claims: row.claims.map((c) => ({
+      asset: c.asset,
+      symbol: c.symbol,
+      amount: c.amount.toString(),
+      recipient: c.recipient,
+      timestamp: c.timestamp,
+      blockNumber: c.blockNumber.toString(),
     })),
   });
 }

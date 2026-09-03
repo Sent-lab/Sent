@@ -35,6 +35,7 @@ import {
   listCandles as dbListCandles,
   listMarketsByCreator,
   creatorAccruals,
+  listFeeClaims,
   countMarkets as dbCountMarkets,
   listHoldings,
   accountStockback,
@@ -557,9 +558,10 @@ export class PostgresPort implements DataPort {
    * a zero balance, so nothing is missed by asking only about the ones indexed.
    */
   async loadCreator(address: string): Promise<void> {
-    const [views, accruals] = await Promise.all([
+    const [views, accruals, claims] = await Promise.all([
       listMarketsByCreator(this.db, address),
       creatorAccruals(this.db, address),
+      listFeeClaims(this.db, address),
     ]);
 
     const vault = await this.resolveFeeVault();
@@ -612,6 +614,14 @@ export class PostgresPort implements DataPort {
         asset: a.asset,
         symbol: this.symbolOf(a.asset),
         amount: a.accrued,
+      })),
+      claims: claims.map((c) => ({
+        asset: c.asset,
+        symbol: this.symbolOf(c.asset),
+        amount: c.amount,
+        recipient: c.recipient,
+        timestamp: c.timestamp,
+        blockNumber: c.blockNumber,
       })),
     });
   }

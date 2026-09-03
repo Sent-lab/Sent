@@ -699,6 +699,101 @@ export async function insertFeeAccrual(
   );
 }
 
+export interface FeeClaimRecord {
+  readonly blockNumber: bigint;
+  /** Null for a platform claim (§12 separates the buckets, not the events). */
+  readonly creator: string | null;
+  readonly asset: `0x${string}`;
+  readonly amount: bigint;
+  /** Where it went. Can differ from the claimer — the vault takes a recipient. */
+  readonly recipient: `0x${string}`;
+  readonly timestamp: number;
+}
+
+/**
+ * Record a fee withdrawal (§178.7, §499).
+ *
+ * The accrual side alone made no figure wrong — what a creator can withdraw is
+ * read from the vault (§423) — but it made HISTORY impossible: a creator could
+ * see they had earned 4.2 xStock in total and that nothing was payable, with
+ * nothing to say whether they withdrew it last Tuesday or something failed.
+ */
+export async function insertFeeClaim(
+  db: Db,
+  c: {
+    blockNumber: bigint;
+    logIndex: number;
+    creator: string | null;
+    asset: string;
+    amount: bigint;
+    recipient: string;
+    timestamp: number;
+  },
+): Promise<void> {
+  // The vault reverts on a zero claim, so a zero here is a misread log rather
+  // than an unusual chain. Skipped rather than written, because the schema's
+  // own CHECK would abort the whole ingest transaction over one bad row.
+  if (c.amount <= 0n) return;
+
+  await db.query(
+    `INSERT INTO fee_claims (
+       block_number, log_index, creator, asset, amount, recipient, timestamp
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+     ON CONFLICT (block_number, log_index) DO NOTHING`,
+    [
+      c.blockNumber.toString(),
+      c.logIndex,
+      c.creator === null ? null : toBytes(c.creator),
+      toBytes(c.asset),
+      c.amount.toString(),
+      toBytes(c.recipient),
+      c.timestamp,
+    ],
+  );
+}
+
+/** A creator's withdrawals, newest first (§499). */
+export async function listFeeClaims(
+  db: Db,
+  creator: string,
+  limit = 50,
+): Promise<FeeClaimRecord[]> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT block_number, creator, asset, amount, recipient, timestamp
+     FROM fee_claims
+     WHERE creator = $1
+     ORDER BY block_number DESC, log_index DESC
+     LIMIT $2`,
+    [toBytes(creator), Math.max(1, Math.min(limit, 200))],
+  );
+
+  return rows.map((r) => ({
+    blockNumber: big(r.block_number, "block_number"),
+    creator: r.creator === null ? null : addr(r.creator, "creator"),
+    asset: addr(r.asset, "asset"),
+    amount: big(r.amount, "amount"),
+    recipient: addr(r.recipient, "recipient"),
+    timestamp: Number(big(r.timestamp, "timestamp")),
+  }));
+}
+
+/** Total withdrawn per asset, for a creator. Pairs with `creatorAccruals`. */
+export async function creatorClaimed(
+  db: Db,
+  creator: string,
+): Promise<{ asset: `0x${string}`; claimed: bigint }[]> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT asset, SUM(amount)::TEXT AS claimed
+     FROM fee_claims WHERE creator = $1 GROUP BY asset`,
+    [toBytes(creator)],
+  );
+
+  return rows.map((r) => ({
+    asset: addr(r.asset, "asset"),
+    claimed: big(r.claimed, "claimed"),
+  }));
+}
+
 export async function listTrades(db: Db, market: string, limit: number): Promise<TradeRecord[]> {
   const rows = await db.query<Record<string, unknown>>(
     `SELECT tx_hash, block_number, market, trader, side, notional, net, tokens,
