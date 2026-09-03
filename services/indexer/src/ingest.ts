@@ -45,6 +45,7 @@ import {
   insertTrade,
   updateMarketState,
   markGraduated,
+  markGraduating,
   insertBalanceEvent,
   insertFeeAccrual,
   insertFeeClaim,
@@ -898,6 +899,24 @@ export class Indexer {
         stockback: a.stockback as bigint,
         priceAfter: this.priceAfter(market, a.newDistributed as bigint),
         distributedAfter: a.newDistributed as bigint,
+        timestamp,
+      });
+      return;
+    }
+
+    if (decoded.eventName === "GraduationPending") {
+      // The curve is dead from this block on, in both directions (D-016). A
+      // projection that keeps reporting PRE_GRAD here is not lagging cosmetically
+      // — it is a UI quoting trades that every wallet will revert.
+      await markGraduating(tx, market, blockNumber);
+
+      await publish(tx, {
+        type: "graduation_pending",
+        market,
+        tokenAmount: a.tokenAmount as bigint,
+        quoteAmount: a.quoteAmount as bigint,
+        pg: a.pg as bigint,
+        blockNumber,
         timestamp,
       });
       return;

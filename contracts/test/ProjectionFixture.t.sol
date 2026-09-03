@@ -84,6 +84,7 @@ contract ProjectionFixtureTest is Test {
     bytes32 constant SOLD_SIG =
         keccak256("Sold(address,uint256,uint256,uint256,uint256,uint256,uint256,uint256)");
     bytes32 constant GRADUATED_SIG = keccak256("Graduated(address,address,uint256,uint256,uint256)");
+    bytes32 constant PENDING_SIG = keccak256("GraduationPending(address,uint256,uint256,uint256)");
 
     function setUp() public {
         quote = new ProjQuote(6); // 6 decimals: where unit errors are visible
@@ -167,6 +168,18 @@ contract ProjectionFixtureTest is Test {
             vm.prank(traders[0]);
             market.buy(grossNeeded, 0, block.timestamp + 1);
             _drain();
+
+            // Graduation is two transactions in two blocks (D-016), so the
+            // fixture is too. Replaying a single-block graduation would prove
+            // the reducer handles a sequence the chain can no longer produce.
+            vm.roll(block.number + 1);
+
+            // From a stranger, which is what permissionless means. If the
+            // reducer ever came to depend on WHO finalised, this is where it
+            // would show.
+            vm.prank(address(0xF1A115E));
+            market.finalizeGraduation();
+            _drain();
         }
 
         _writeFixture();
@@ -230,6 +243,22 @@ contract ProjectionFixtureTest is Test {
                 vm.serializeUint(obj, "stockback", stockback);
                 vm.serializeUint(obj, "newDistributed", newDistributed);
                 captured[capturedCount] = vm.serializeUint(obj, "newCollateral", newCollateral);
+                capturedCount++;
+            } else if (log.topics[0] == PENDING_SIG) {
+                (uint256 tokenAmount, uint256 quoteAmount, uint256 pg) =
+                    abi.decode(log.data, (uint256, uint256, uint256));
+
+                vm.serializeString(obj, "type", "GraduationPending");
+                vm.serializeUint(obj, "blockNumber", block.number);
+                vm.serializeUint(obj, "logIndex", logCursor);
+                vm.serializeAddress(obj, "account", address(uint160(uint256(log.topics[1]))));
+                vm.serializeUint(obj, "a", tokenAmount);
+                vm.serializeUint(obj, "b", quoteAmount);
+                vm.serializeUint(obj, "c", pg);
+                vm.serializeUint(obj, "coreFee", 0);
+                vm.serializeUint(obj, "stockback", 0);
+                vm.serializeUint(obj, "newDistributed", 0);
+                captured[capturedCount] = vm.serializeUint(obj, "newCollateral", 0);
                 capturedCount++;
             } else if (log.topics[0] == GRADUATED_SIG) {
                 (uint256 positionId, uint256 tokenAmount, uint256 quoteAmount) =

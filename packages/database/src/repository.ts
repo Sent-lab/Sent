@@ -924,6 +924,61 @@ export async function updateMarketState(
   );
 }
 
+/**
+ * The crossing buy closed the curve; the migration has not run yet (D-016).
+ *
+ * Collateral is deliberately left alone. It is still a curve liability at this
+ * point — nothing has reached the router — and zeroing it here would report a
+ * market as having migrated value it is in fact still holding. `markGraduated`
+ * zeroes it, in the same place the contract does.
+ *
+ * `last_block` is advanced so a rollback recomputes from the right height.
+ */
+export async function markGraduating(db: Db, market: string, block: bigint): Promise<void> {
+  await db.query(
+    `UPDATE market_state SET
+       status = 1, graduating_at_block = $2, last_block = $2, updated_at = NOW()
+     WHERE market = $1`,
+    [toBytes(market), block.toString()],
+  );
+}
+
+/**
+ * Markets whose curve is closed and whose position is not yet minted.
+ *
+ * This is the keeper's work queue (D-016) and the operator's alert in one query.
+ * `waitingBlocks` is what an alert threshold is set against: a market passes
+ * through this state once and briefly, so a large value means nobody finalised,
+ * not that the market is busy.
+ */
+export async function marketsAwaitingFinalisation(
+  db: Db,
+  limit = 50,
+): Promise<readonly { market: `0x${string}`; graduatingAtBlock: bigint; waitingBlocks: bigint }[]> {
+  const rows = await db.query<{
+    market: Buffer;
+    graduating_at_block: string;
+    waiting_blocks: string;
+  }>(
+    `SELECT ms.market,
+            ms.graduating_at_block,
+            GREATEST(COALESCE((SELECT MAX(number) FROM blocks), ms.graduating_at_block)
+                     - ms.graduating_at_block, 0) AS waiting_blocks
+       FROM market_state ms
+      WHERE ms.graduating_at_block IS NOT NULL
+        AND ms.status <> 2
+      ORDER BY ms.graduating_at_block ASC
+      LIMIT $1`,
+    [limit],
+  );
+
+  return rows.map((r) => ({
+    market: addr(r.market, "market"),
+    graduatingAtBlock: BigInt(r.graduating_at_block),
+    waitingBlocks: BigInt(r.waiting_blocks),
+  }));
+}
+
 export async function markGraduated(
   db: Db,
   market: string,
@@ -934,7 +989,12 @@ export async function markGraduated(
   await db.query(
     `UPDATE market_state SET
        status = 2, curve_collateral = 0, pool = $2, position_id = $3,
-       graduated_at_block = $4, last_block = $4, updated_at = NOW()
+       graduated_at_block = $4, last_block = $4, updated_at = NOW(),
+       -- COALESCE, not assignment: a reindex starting after the crossing buy
+       -- never sees GraduationPending, and the CHECK constraint added in 0008
+       -- refuses a graduated market with no record of its curve closing. A
+       -- straight assignment would also overwrite the real block on a replay.
+       graduating_at_block = COALESCE(graduating_at_block, $4)
      WHERE market = $1`,
     [toBytes(market), toBytes(pool), positionId.toString(), block.toString()],
   );

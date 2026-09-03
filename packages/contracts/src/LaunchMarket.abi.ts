@@ -179,6 +179,24 @@ export const launchMarketAbi = [
   },
   {
     "type": "function",
+    "name": "collectPostGradFees",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "tokenFees",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "quoteFees",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "curve",
     "inputs": [],
     "outputs": [
@@ -233,6 +251,24 @@ export const launchMarketAbi = [
   },
   {
     "type": "function",
+    "name": "finalizeGraduation",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "pool_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "positionId_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "graduationDust",
     "inputs": [],
     "outputs": [
@@ -253,6 +289,19 @@ export const launchMarketAbi = [
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "liquidityLock",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -413,6 +462,19 @@ export const launchMarketAbi = [
   },
   {
     "type": "function",
+    "name": "setLiquidityLock",
+    "inputs": [
+      {
+        "name": "lock",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setRouter",
     "inputs": [
       {
@@ -503,7 +565,7 @@ export const launchMarketAbi = [
         "internalType": "uint256"
       },
       {
-        "name": "postGradGross",
+        "name": "refundedGross",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -556,6 +618,37 @@ export const launchMarketAbi = [
   },
   {
     "type": "event",
+    "name": "GraduationPending",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "tokenAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "quoteAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "pg",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "MarketInitialised",
     "inputs": [
       {
@@ -596,6 +689,31 @@ export const launchMarketAbi = [
       },
       {
         "name": "qG",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PostGradFeesSettled",
+    "inputs": [
+      {
+        "name": "tokenFees",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "quoteFees",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "stockbackFunded",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -751,6 +869,11 @@ export const launchMarketAbi = [
   },
   {
     "type": "error",
+    "name": "LockAlreadySet",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "MultiplierSemanticsUnverified",
     "inputs": [
       {
@@ -767,7 +890,22 @@ export const launchMarketAbi = [
   },
   {
     "type": "error",
+    "name": "NotGraduated",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotGraduating",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotPreGrad",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotTheRouter",
     "inputs": []
   },
   {

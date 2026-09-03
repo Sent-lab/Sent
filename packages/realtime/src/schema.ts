@@ -103,6 +103,7 @@ export type ServerMessage =
   | HelloMessage
   | TradeMessage
   | MarketStateMessage
+  | GraduationPendingMessage
   | GraduationMessage
   | StockbackMessage
   | StockbackFundedMessage
@@ -165,6 +166,29 @@ export interface MarketStateMessage {
    */
   readonly liveMarketCapUsd?: Sourced;
   readonly referenceMarketCapUsd: Sourced;
+}
+
+/**
+ * The curve closed; the HyperSwap position is not minted yet (D-016).
+ *
+ * A separate message rather than a flag on `GraduationMessage`, because the two
+ * say opposite things to a UI. This one means STOP — trading here is dead in
+ * both directions and every quote is now stale. `GraduationMessage` means GO,
+ * to a pool that exists.
+ *
+ * Folding them into one type with a nullable `pool` would make "is there a venue
+ * right now" a field every consumer has to remember to check, on a message whose
+ * name says the answer is yes.
+ */
+export interface GraduationPendingMessage {
+  readonly type: "graduation_pending";
+  readonly market: string;
+  readonly tokenAmount: string;
+  readonly quoteAmount: string;
+  /** Final curve marginal price; the pool will open here (§15). */
+  readonly pg: string;
+  readonly blockNumber: string;
+  readonly timestamp: number;
 }
 
 export interface GraduationMessage {

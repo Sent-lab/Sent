@@ -248,13 +248,26 @@
       "type": "Bought"
     },
     {
+      "a": "342105263157894736842105264",
+      "account": "0x5991A2dF15A8F6A256D3Ec51E99254Cd3fb576A9",
+      "b": "124474335306578947371",
+      "blockNumber": 2,
+      "c": 363848057050,
+      "coreFee": 0,
+      "logIndex": 20,
+      "newCollateral": 0,
+      "newDistributed": 0,
+      "stockback": 0,
+      "type": "GraduationPending"
+    },
+    {
       "a": 7,
       "account": "0xB1dB73D460CA48F3Fe0C1A28B3a49369B5B481Ac",
       "b": "342105263157894736842105264",
       "blockNumber": 2,
       "c": 124474335,
       "coreFee": 0,
-      "logIndex": 20,
+      "logIndex": 22,
       "newCollateral": 0,
       "newDistributed": 0,
       "stockback": 0,

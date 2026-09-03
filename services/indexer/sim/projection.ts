@@ -115,6 +115,26 @@ const events: MarketEvent[] = fixture.events.map((e) => {
     };
   }
 
+  if (e.type === "GraduationPending") {
+    return {
+      type: "GraduationPending",
+      blockNumber,
+      logIndex,
+      token: e.account,
+      tokenAmount: big(e.a),
+      quoteAmount: big(e.b),
+      pg: big(e.c),
+    };
+  }
+
+  // Explicit branches above rather than a fall-through for everything that is
+  // not Bought or Sold. The fall-through decoded GraduationPending as Graduated
+  // - same arity, same field names, silently wrong state - which is the failure
+  // mode a fixture replay is supposed to catch rather than commit.
+  if (e.type !== "Graduated") {
+    throw new Error(`unknown fixture event type: ${e.type}`);
+  }
+
   return {
     type: "Graduated",
     blockNumber,
@@ -164,9 +184,77 @@ check(
   `projection ${state.status} vs chain ${expectedStatusName}`,
 );
 
-// §19: GRADUATING exists only inside a transaction. A projection that lands on it
-// means the indexer captured a partial state, which must be impossible.
-check("the projection never rests in GRADUATING", state.status !== "GRADUATING");
+/*
+ * GRADUATING used to be unreachable here, and this checked that it never
+ * appeared. That check now passes for the wrong reason — the fixture ends
+ * GRADUATED, so "never GRADUATING at the end" is true no matter what the
+ * reducer does with the state in between, including ignoring it entirely.
+ *
+ * The real property, since D-016, is the opposite one: the market PASSES
+ * THROUGH a resting GRADUATING state in its own block, and the reducer must
+ * land on it and hold it there until the migration arrives. A reducer that
+ * skipped `GraduationPending` would still reach GRADUATED and still satisfy
+ * every other check on this page, while reporting a closed curve as open for
+ * however long finalisation takes.
+ *
+ * So it is replayed one event at a time and the intermediate state is asserted.
+ */
+const pendingIndex = events.findIndex((e) => e.type === "GraduationPending");
+check("the fixture actually covers the two-step graduation", pendingIndex >= 0);
+
+if (pendingIndex >= 0) {
+  const upToPending = project(events.slice(0, pendingIndex + 1));
+
+  check(
+    "the reducer rests in GRADUATING once the curve closes",
+    upToPending.status === "GRADUATING",
+    `got ${upToPending.status}`,
+  );
+
+  check(
+    "and records the block it closed in, so a keeper can find it",
+    upToPending.graduatingAtBlock !== null,
+  );
+
+  /*
+   * Collateral is NOT zeroed yet. Nothing has reached the router at this point,
+   * so a projection that zeroed it here would report a market as having migrated
+   * value it is still holding — and `marketCanCoverItsCollateral`, the solvency
+   * view an operator would check during exactly this window, would read clean
+   * against a market whose books say it owes nothing.
+   */
+  check(
+    "and still shows the collateral the market is still holding",
+    upToPending.curveCollateral > 0n,
+    `collateral ${upToPending.curveCollateral} should be non-zero before the migration`,
+  );
+
+  check(
+    "and no pool, because there is not one yet",
+    upToPending.pool === null && upToPending.positionId === null,
+  );
+}
+
+check(
+  "the completed projection records when the curve closed",
+  state.graduatingAtBlock !== null,
+);
+
+// A reindex that starts after the crossing buy never sees `GraduationPending`.
+// It must still end up in the same place, or the projection is not rebuildable
+// from an arbitrary height — which is the whole of §138's claim.
+if (pendingIndex >= 0) {
+  const fromLate = project(events.slice(pendingIndex + 1));
+  check(
+    "a reindex that missed the crossing buy still lands on GRADUATED",
+    fromLate.status === state.status,
+    `got ${fromLate.status}`,
+  );
+  check(
+    "and still records a closing block rather than a null",
+    fromLate.graduatingAtBlock !== null,
+  );
+}
 
 // ---------------------------------------------------------------------------
 console.log("\n--- Balance accounting -----------------------------------------------");

@@ -52,6 +52,27 @@ export interface SoldEvent {
   readonly newCollateral: bigint;
 }
 
+/**
+ * Decoded `LaunchMarket.GraduationPending`.
+ *
+ * The curve closed and the migration is owed but has not run (D-016). This used
+ * to be unrepresentable: GRADUATING lived inside one transaction, so no event
+ * announced it and no projection could hold it.
+ *
+ * It is now a state a market rests in, and the projection has to carry it. A
+ * market showing PRE_GRAD here while its curve is shut is not a cosmetic lag —
+ * it is a UI offering trades that every wallet will revert.
+ */
+export interface GraduationPendingEvent {
+  readonly type: "GraduationPending";
+  readonly blockNumber: bigint;
+  readonly logIndex: number;
+  readonly token: string;
+  readonly tokenAmount: bigint;
+  readonly quoteAmount: bigint;
+  readonly pg: bigint;
+}
+
 /** Decoded `LaunchMarket.Graduated`. */
 export interface GraduatedEvent {
   readonly type: "Graduated";
@@ -64,7 +85,7 @@ export interface GraduatedEvent {
   readonly quoteAmount: bigint;
 }
 
-export type MarketEvent = BoughtEvent | SoldEvent | GraduatedEvent;
+export type MarketEvent = BoughtEvent | SoldEvent | GraduationPendingEvent | GraduatedEvent;
 
 export interface MarketProjection {
   status: MarketStatus;
@@ -85,6 +106,14 @@ export interface MarketProjection {
   pool: string | null;
   positionId: bigint | null;
 
+  /**
+   * Block in which the curve closed. Set on `GraduationPending` and never
+   * cleared, so `graduatingAtBlock != null && status !== "GRADUATED"` is exactly
+   * the set of markets waiting on a finaliser — which is what the keeper reads
+   * and what the operator alerts on.
+   */
+  graduatingAtBlock: bigint | null;
+
   lastBlock: bigint;
   /** Per-account balances, the TWAB input. */
   balances: Map<string, bigint>;
@@ -104,6 +133,7 @@ export function emptyProjection(): MarketProjection {
     cumulativeStockback: 0n,
     pool: null,
     positionId: null,
+    graduatingAtBlock: null,
     lastBlock: 0n,
     balances: new Map(),
   };
@@ -150,6 +180,17 @@ export function applyEvent(state: MarketProjection, event: MarketEvent): MarketP
       break;
     }
 
+    case "GraduationPending": {
+      // Collateral is deliberately NOT zeroed here. It is still a curve
+      // liability at this point — nothing has been handed to the router — and
+      // zeroing it early would report a market as having migrated value it is
+      // in fact still holding. The contract zeroes it in `finalizeGraduation`,
+      // and so does this projection, on `Graduated`.
+      state.status = "GRADUATING";
+      state.graduatingAtBlock = event.blockNumber;
+      break;
+    }
+
     case "Graduated": {
       // The market's own accounting zeroes collateral on migration (§14 step 10):
       // it stops being a curve liability and becomes locked LP principal.
@@ -157,6 +198,14 @@ export function applyEvent(state: MarketProjection, event: MarketEvent): MarketP
       state.curveCollateral = 0n;
       state.pool = event.pool.toLowerCase();
       state.positionId = event.positionId;
+
+      // A reindex from a block after the crossing buy would never see
+      // `GraduationPending`, so this is set here too rather than assumed to
+      // have happened. Without it, a market reindexed from a late block would
+      // report `graduatingAtBlock: null` while GRADUATED — a state the chain
+      // cannot produce, and one the keeper's own query would read as "nothing
+      // is pending" for the wrong reason.
+      state.graduatingAtBlock ??= event.blockNumber;
       break;
     }
   }
