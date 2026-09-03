@@ -228,6 +228,13 @@ money already in their wallet, and the claim would revert with `NothingToClaim`
 after they paid gas to find out. Without `claims` a creator sees "earned 4.2,
 claimable 0" and cannot tell a past withdrawal from a failure.
 
+`stats` is §26's reputation layer: launches, graduations, lifetime volume,
+trades, holders, and a graduation rate **per mille**. Every figure is derived
+from what the chain did and none of it can be granted, bought or set — which is
+the section's whole point, and also why there is no field here an operator could
+write. The rate is an integer per mille rather than a float because 2 of 3 as a
+float is `0.6666666666666666`, which every consumer then rounds differently.
+
 `feeVault` is returned so the claim a creator signs targets the same contract
 the balance came from. A client holding its own vault address could show one
 contract's balance over a button that calls another.

@@ -2167,6 +2167,70 @@ export async function listXStockAssets(db: Db, onlyLaunchable = false): Promise<
   }));
 }
 
+export interface CreatorStats {
+  readonly launches: number;
+  readonly graduated: number;
+  /** Lifetime notional across every market they launched, normalized. */
+  readonly totalVolume: bigint;
+  readonly totalTrades: number;
+  readonly totalHolders: number;
+  /**
+   * Graduated launches per thousand launches.
+   *
+   * Per mille rather than a float: §424 keeps financial and ratio quantities
+   * out of JS floating point, and a rate that arrives as 0.6666666666666666 is
+   * a number every consumer has to decide how to round, differently.
+   */
+  readonly graduationRatePerMille: number;
+}
+
+/**
+ * §26's creator reputation figures.
+ *
+ * "Market-driven reputation without a privileged creator allocation" — every
+ * number here is derived from what the chain did, and none of it can be
+ * granted, bought or set. That is the whole point of the section: a creator's
+ * standing comes from their launches performing, not from a badge.
+ *
+ * `totalHolders` sums the per-market holder counts, so a wallet holding three
+ * of a creator's tokens counts three times. That is deliberate — it measures
+ * reach across markets rather than distinct people, and deduplicating it would
+ * need a scan of every balance row for a figure nobody would read differently.
+ * The name says holders, not people.
+ */
+export async function creatorStats(db: Db, creator: string): Promise<CreatorStats> {
+  const row = await db.queryOne<Record<string, unknown>>(
+    `SELECT
+       COUNT(*)::TEXT                                                   AS launches,
+       COUNT(*) FILTER (WHERE s.graduated_at_block IS NOT NULL)::TEXT   AS graduated,
+       COALESCE(SUM(s.holder_count), 0)::TEXT                           AS holders,
+       COALESCE(SUM(s.trade_count), 0)::TEXT                            AS trades,
+       COALESCE((
+         SELECT SUM(t.notional) FROM trades t
+         WHERE t.market IN (SELECT market FROM markets WHERE creator = $1)
+       ), 0)::TEXT                                                      AS volume
+     FROM markets m JOIN market_state s ON s.market = m.market
+     WHERE m.creator = $1`,
+    [toBytes(creator)],
+  );
+
+  const launches = Number(row?.launches ?? "0");
+  const graduated = Number(row?.graduated ?? "0");
+
+  return {
+    launches,
+    graduated,
+    totalVolume: big(row?.volume ?? "0", "volume"),
+    totalTrades: Number(row?.trades ?? "0"),
+    totalHolders: Number(row?.holders ?? "0"),
+    // Zero for a creator with no launches, not a division by zero and not
+    // "100%" — a creator who has launched nothing has not graduated nothing
+    // successfully, and either of those readings would be a claim about a
+    // record that does not exist.
+    graduationRatePerMille: launches === 0 ? 0 : Math.round((graduated * 1_000) / launches),
+  };
+}
+
 /** Addresses registered as ineligible for Stockback (§323, §324). */
 export async function getExclusions(db: Db, market: string): Promise<`0x${string}`[]> {
   const rows = await db.query<Record<string, unknown>>(

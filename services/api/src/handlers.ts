@@ -163,6 +163,15 @@ export interface CreatorRow {
     timestamp: number;
     blockNumber: bigint;
   }[];
+  /** §26's reputation figures. Derived from the chain; none can be granted. */
+  readonly stats: {
+    readonly launches: number;
+    readonly graduated: number;
+    readonly totalVolume: bigint;
+    readonly totalTrades: number;
+    readonly totalHolders: number;
+    readonly graduationRatePerMille: number;
+  };
 }
 
 export interface CandleBar {
@@ -700,6 +709,23 @@ export interface CreatorResponse {
     timestamp: number;
     blockNumber: string;
   }[];
+  /**
+   * §26's reputation layer.
+   *
+   * Every figure is derived from what the chain did, and none of it can be
+   * granted, bought or set. That is the section's whole point: standing comes
+   * from launches performing, not from a badge — which is also why there is no
+   * field here an operator could write.
+   */
+  readonly stats: {
+    readonly launches: number;
+    readonly graduated: number;
+    readonly totalVolume: string;
+    readonly totalTrades: number;
+    readonly totalHolders: number;
+    /** Per mille, not a float. See the repository for why. */
+    readonly graduationRatePerMille: number;
+  };
 }
 
 /**
@@ -731,6 +757,14 @@ export function handleCreator(port: DataPort, address: string): ApiResult<Creato
       claimable: [],
       accrued: [],
       claims: [],
+      stats: {
+        launches: 0,
+        graduated: 0,
+        totalVolume: "0",
+        totalTrades: 0,
+        totalHolders: 0,
+        graduationRatePerMille: 0,
+      },
     });
   }
 
@@ -772,6 +806,14 @@ export function handleCreator(port: DataPort, address: string): ApiResult<Creato
       timestamp: c.timestamp,
       blockNumber: c.blockNumber.toString(),
     })),
+    stats: {
+      launches: row.stats.launches,
+      graduated: row.stats.graduated,
+      totalVolume: row.stats.totalVolume.toString(),
+      totalTrades: row.stats.totalTrades,
+      totalHolders: row.stats.totalHolders,
+      graduationRatePerMille: row.stats.graduationRatePerMille,
+    },
   });
 }
 

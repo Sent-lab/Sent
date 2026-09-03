@@ -169,6 +169,14 @@ class FakePort implements DataPort {
         blockNumber: 870n,
       },
     ],
+    stats: {
+      launches: 3,
+      graduated: 2,
+      totalVolume: 4_200_000n,
+      totalTrades: 411,
+      totalHolders: 96,
+      graduationRatePerMille: 667,
+    },
   };
   getCreator(): CreatorRow | null {
     return this.creator;
@@ -873,6 +881,19 @@ console.log("\n--- 10. §221: the creator cockpit ------------------------------
     "amounts are serialised as strings",
     typeof result.data.claimable[0]?.amount === "string",
   );
+
+  /*
+   * §26's reputation layer: market-driven, with nothing an operator can set.
+   *
+   * The rate is per mille rather than a float. 2 of 3 as a float is
+   * 0.6666666666666666, which every consumer then decides how to round —
+   * differently — and §424 keeps ratio quantities out of JS floating point for
+   * the same reason it keeps amounts out.
+   */
+  check("launches are counted", result.data.stats.launches === 3);
+  check("graduations too", result.data.stats.graduated === 2);
+  check("and the rate is an integer per mille", result.data.stats.graduationRatePerMille === 667);
+  check("lifetime volume crosses the wire as a string", result.data.stats.totalVolume === "4200000");
 }
 
 {
@@ -885,6 +906,14 @@ console.log("\n--- 10. §221: the creator cockpit ------------------------------
   // look like the page is broken rather than empty.
   check("a creator with no launches is not an error", empty.ok);
   check("and gets an empty cockpit", empty.ok && empty.data.launches.length === 0);
+
+  // Zero, not a division by zero and not "100%". A creator who has launched
+  // nothing has not graduated nothing successfully, and either reading would be
+  // a claim about a record that does not exist.
+  check(
+    "with a graduation rate of zero rather than a divide by zero",
+    empty.ok && empty.data.stats.graduationRatePerMille === 0,
+  );
 
   const bad = handleCreator(port, "0x123");
   check("a malformed address is refused by name", !bad.ok && bad.code === "INVALID_ADDRESS");

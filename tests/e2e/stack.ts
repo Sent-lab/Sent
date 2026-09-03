@@ -1439,6 +1439,19 @@ try {
       drift < oneRawUnit * tradeCount,
     );
 
+    /*
+     * §26's reputation figures, over the real chain.
+     *
+     * One launch, graduated, so the rate is exactly 1000 per mille — a number
+     * that can be checked rather than compared against whatever the code
+     * produced.
+     */
+    const cstats = cockpit?.stats as Record<string, unknown>;
+    check("the creator's launches are counted", cstats?.launches === 1);
+    check("and their graduation", cstats?.graduated === 1);
+    check("giving a rate of 1000 per mille", cstats?.graduationRatePerMille === 1_000);
+    check("with lifetime volume from real trades", BigInt(String(cstats?.totalVolume)) > 0n);
+
     check(
       "graduation progress is reported per launch",
       launches.every((l) => (l.graduationProgressBps as Record<string, unknown>)?.value !== undefined),
