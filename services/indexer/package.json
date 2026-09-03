@@ -13,7 +13,8 @@
     "@sent/contracts": "workspace:*",
     "@sent/worker": "workspace:*",
     "@sent/config": "workspace:*",
-    "@sent/economics": "workspace:*"
+    "@sent/economics": "workspace:*",
+    "@sent/sdk": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

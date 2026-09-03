@@ -168,6 +168,9 @@ importers:
       '@sent/economics':
         specifier: workspace:*
         version: link:../../packages/economics
+      '@sent/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
       '@sent/worker':
         specifier: workspace:*
         version: link:../worker

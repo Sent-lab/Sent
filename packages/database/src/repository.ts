@@ -388,6 +388,49 @@ export async function insertTrade(db: Db, t: TradeRecord, logIndex: number): Pro
   );
 }
 
+export interface FeeAccrualRecord {
+  readonly blockNumber: bigint;
+  readonly market: `0x${string}`;
+  readonly creator: `0x${string}`;
+  readonly asset: `0x${string}`;
+  readonly creatorAmount: bigint;
+  readonly platformAmount: bigint;
+  readonly timestamp: number;
+}
+
+/**
+ * Record a fee accrual from the vault's own event.
+ *
+ * Separate from `trades.creator_fee`, which is re-derived from the core fee by
+ * the canonical split. That derivation is a projection of what SHOULD have been
+ * credited; this is what the vault says it actually credited, and the two are
+ * worth being able to compare. A market that ever paid a different amount than
+ * the rule predicts is a defect nobody would otherwise see.
+ */
+export async function insertFeeAccrual(
+  db: Db,
+  a: FeeAccrualRecord,
+  logIndex: number,
+): Promise<void> {
+  await db.query(
+    `INSERT INTO fee_accruals (
+       block_number, log_index, market, creator, asset,
+       creator_amount, platform_amount, timestamp
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     ON CONFLICT (block_number, log_index) DO NOTHING`,
+    [
+      a.blockNumber.toString(),
+      logIndex,
+      toBytes(a.market),
+      toBytes(a.creator),
+      toBytes(a.asset),
+      a.creatorAmount.toString(),
+      a.platformAmount.toString(),
+      a.timestamp,
+    ],
+  );
+}
+
 export async function listTrades(db: Db, market: string, limit: number): Promise<TradeRecord[]> {
   const rows = await db.query<Record<string, unknown>>(
     `SELECT tx_hash, block_number, market, trader, side, notional, net, tokens,
@@ -713,6 +756,60 @@ export async function recordDataset(db: Db, d: DatasetRecord): Promise<void> {
       ],
     );
   }
+}
+
+/**
+ * Markets launched by one creator, newest first.
+ *
+ * Keyed on `markets.creator`, which the factory recorded at launch — never on
+ * anything a token could claim about itself (§4).
+ */
+export async function listMarketsByCreator(
+  db: Db,
+  creator: string,
+  limit = 100,
+): Promise<MarketView[]> {
+  const rows = await db.query<MarketRow>(
+    `SELECT ${MARKET_COLUMNS}
+     FROM markets m
+       JOIN market_state s ON s.market = m.market
+       LEFT JOIN blocks gb ON gb.number = s.graduated_at_block
+     WHERE m.creator = $1
+     ORDER BY m.launched_at DESC
+     LIMIT $2`,
+    [toBytes(creator), Math.max(1, Math.min(limit, 200))],
+  );
+
+  return rows.map(toMarketView);
+}
+
+/**
+ * Fees a creator has accrued, per asset, from indexed events.
+ *
+ * This is the PROJECTION's view: what the chain has emitted. It is not what the
+ * vault will pay — a claim already made is still an accrual here. The API reads
+ * the payable figure from the vault itself, because that is the number a creator
+ * acts on (§423).
+ */
+export async function creatorAccruals(
+  db: Db,
+  creator: string,
+): Promise<{ asset: `0x${string}`; accrued: bigint; markets: number }[]> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT asset,
+            SUM(creator_amount)::TEXT AS accrued,
+            COUNT(DISTINCT market)::TEXT AS markets
+     FROM fee_accruals
+     WHERE creator = $1
+     GROUP BY asset`,
+    [toBytes(creator)],
+  );
+
+  return rows.map((r) => ({
+    asset: addr(r.asset, "asset"),
+    accrued: big(r.accrued, "accrued"),
+    markets: Number(big(r.markets, "markets")),
+  }));
 }
 
 /** Addresses registered as ineligible for Stockback (§323, §324). */

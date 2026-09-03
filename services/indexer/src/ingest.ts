@@ -46,6 +46,7 @@ import {
   updateMarketState,
   markGraduated,
   insertBalanceEvent,
+  insertFeeAccrual,
   refreshHolderCount,
   recordStockbackFunding,
   type Transaction,
@@ -58,7 +59,10 @@ import {
   launchTokenAbi,
   holderRewardVaultAbi,
   xStockRegistryAbi,
+  feeVaultAbi,
 } from "@sent/contracts";
+
+import { toNormalized } from "@sent/sdk";
 
 import { ChainTracker, type BlockRef } from "./reorg.ts";
 
@@ -108,6 +112,16 @@ export class Indexer {
     { token: string; quoteDecimals: number; p0: bigint }
   >();
   private readonly tokenToMarket = new Map<string, string>();
+
+  /**
+   * The fee vault, read from the factory rather than configured.
+   *
+   * Not its own environment variable: the factory already holds `FEE_VAULT`, the
+   * two must agree, and a second setting is a second thing that can be wrong.
+   * Getting it wrong would mean indexing another deployment's fees into this
+   * projection, which is worse than indexing none.
+   */
+  private feeVault: `0x${string}` | null = null;
 
   private running = false;
   private connected = false;
@@ -301,8 +315,15 @@ export class Indexer {
      * it, until nothing new appears. The loop is bounded because a market cannot
      * launch another market — one extra pass is the normal case.
      */
+    const feeVault = await this.resolveFeeVault();
+
     let logs = await this.client.getLogs({
-      address: [this.config.factory, this.config.rewardVault, ...this.marketAddresses()],
+      address: [
+        this.config.factory,
+        this.config.rewardVault,
+        ...(feeVault === null ? [] : [feeVault]),
+        ...this.marketAddresses(),
+      ],
       fromBlock: from,
       toBlock: to,
     });
@@ -574,6 +595,9 @@ export class Indexer {
     if (address === this.config.rewardVault.toLowerCase()) {
       return this.handleRewardVaultLog(tx, log, blockTimestamp);
     }
+    if (this.feeVault !== null && address === this.feeVault.toLowerCase()) {
+      return this.handleFeeVaultLog(tx, log, blockTimestamp);
+    }
     // Both committed markets and ones staged earlier in THIS transaction. A
     // market launched and traded in the same range emits its first trades before
     // the commit that registers it, and routing on committed state alone would
@@ -782,6 +806,105 @@ export class Indexer {
     }
 
     await refreshHolderCount(tx, market);
+  }
+
+  /**
+   * Fees the vault credited to a creator.
+   *
+   * `fee_accruals` existed in the schema from the first migration and nothing
+   * ever wrote to it — the indexer watched the factory, the reward vault and
+   * every market, but never the fee vault. A creator's earnings page therefore
+   * had no source at all, and the table looked populated-by-design rather than
+   * dead.
+   *
+   * Only `FeesAccrued` is recorded. A claim moves money that was already
+   * credited, so treating `CreatorClaimed` as a second row would double-count
+   * lifetime earnings; what remains payable is read from the vault (§423).
+   */
+  private async handleFeeVaultLog(tx: Transaction, log: Log, timestamp: number): Promise<void> {
+    const decoded = tryDecode(feeVaultAbi, log);
+    if (decoded?.eventName !== "FeesAccrued") return;
+
+    const a = decoded.args as Record<string, unknown>;
+    const market = String(a.market).toLowerCase();
+
+    // The row references `markets`, so a fee for a market this projection has
+    // not indexed would violate the foreign key and stop ingestion. That can
+    // only happen for a market from another factory sharing the vault, which is
+    // not a state this deployment has — but it is cheap to refuse rather than
+    // throw inside the advance transaction.
+    if (!this.knownMarkets.has(market) && !this.pendingMarkets.some((m) => m.market === market)) {
+      return;
+    }
+
+    const { blockNumber, logIndex } = this.positionOf(log);
+
+    /*
+     * NORMALIZED to eighteen decimals before it is stored (§424).
+     *
+     * The market emits normalized quantities because that is the unit it does
+     * arithmetic in; the vault emits RAW token amounts because that is what it
+     * transfers. Both are correct, and storing them side by side as written
+     * would put two scales in one projection: a six-decimal xStock would show a
+     * creator fee of 174,432 in the cockpit next to 174431738875981363 for the
+     * same fee in the tape.
+     *
+     * Converted with the SDK's own helper rather than a local multiply, so the
+     * boundary rule has one implementation (§1064).
+     */
+    const decimals = this.quoteDecimalsFor(market);
+
+    await insertFeeAccrual(
+      tx,
+      {
+        blockNumber,
+        market: market as `0x${string}`,
+        creator: String(a.creator).toLowerCase() as `0x${string}`,
+        asset: String(a.asset).toLowerCase() as `0x${string}`,
+        creatorAmount: toNormalized(a.creatorAmount as bigint, decimals),
+        platformAmount: toNormalized(a.platformAmount as bigint, decimals),
+        timestamp,
+      },
+      logIndex,
+    );
+  }
+
+  /** A market's quote decimals, committed or staged in this transaction. */
+  private quoteDecimalsFor(market: string): number {
+    const known = this.knownMarkets.get(market);
+    if (known !== undefined) return known.quoteDecimals;
+
+    const staged = this.pendingMarkets.find((m) => m.market === market);
+    if (staged !== undefined) return staged.quoteDecimals;
+
+    // Unreachable: `handleFeeVaultLog` returns before this for an unknown
+    // market. Throwing rather than defaulting to eighteen, because a default
+    // here is the exact placeholder shape that scaled every price by 10^12 once
+    // already.
+    throw new Error(`[indexer] quote decimals requested for unknown market ${market}`);
+  }
+
+  /**
+   * The fee vault's address, from the factory, resolved once.
+   *
+   * Never cached as a failure: an RPC blip on the first tick would otherwise
+   * leave this indexer permanently blind to every fee until it restarts.
+   */
+  private async resolveFeeVault(): Promise<`0x${string}` | null> {
+    if (this.feeVault !== null) return this.feeVault;
+
+    try {
+      const vault = (await this.client.readContract({
+        address: this.config.factory,
+        abi: launchpadFactoryAbi,
+        functionName: "FEE_VAULT",
+      })) as `0x${string}`;
+
+      this.feeVault = vault;
+      return vault;
+    } catch {
+      return null;
+    }
   }
 
   private async handleRewardVaultLog(tx: Transaction, log: Log, timestamp: number): Promise<void> {
