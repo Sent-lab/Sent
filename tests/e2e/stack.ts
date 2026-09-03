@@ -1730,6 +1730,38 @@ try {
       healthProbes.every((r) => r.statusCode === 200 || r.statusCode === 503),
     );
 
+    /*
+     * §52's heat and §53's pulse, over real trades.
+     *
+     * The market in this run graduated after several buys and one sell, so the
+     * ecosystem row has genuine volume and a pressure figure that is neither
+     * zero nor 10000 — which is the only way to tell a working aggregation from
+     * one that returns a plausible-looking constant.
+     */
+    const pulse = await get("/platform/pulse");
+    check("the API serves market heat and pulse", pulse.status === 200);
+
+    const pu = pulse.body.data as Record<string, unknown>;
+    const ecosystems = (pu.ecosystems ?? []) as Record<string, unknown>[];
+    check("with one ecosystem for the paired xStock", ecosystems.length === 1);
+
+    const eco = ecosystems[0];
+    check("carrying real volume", BigInt(String(eco?.volume)) > 0n);
+    check("and the market count", Number(eco?.totalMarkets) === 1);
+    check("and its graduation", Number(eco?.graduations) === 1);
+
+    // By notional, not by count. Both buys and a sell happened, so this must
+    // land strictly between the extremes.
+    const pressure = Number(eco?.buyPressureBps);
+    check("buy pressure is measured, not defaulted", pressure > 0 && pressure < 10_000);
+
+    const presence = pu.presence as Record<string, unknown>;
+    check("presence counts a real trader", Number(presence?.activeTraders) >= 1);
+
+    // §53: honest about the metric. The window travels with the figure so
+    // nothing can be rendered as exact concurrency.
+    check("and states its window", Number(presence?.windowSeconds) > 0);
+
     const health = await get("/health");
     check("health answers", health.status === 200 || health.status === 503);
     check("with a freshness envelope", health.body.freshness !== undefined);

@@ -42,6 +42,8 @@ import {
   platformStats,
   listEpochs,
   distributionStatus,
+  marketHeat,
+  livePresence,
   type ExploreSort,
 } from "@sent/database";
 import { launchMarketAbi, launchpadFactoryAbi, feeVaultAbi } from "@sent/contracts";
@@ -60,6 +62,7 @@ import type {
   AccountRow,
   PlatformStatsRow,
   EpochsRow,
+  PulseRow,
 } from "./handlers.ts";
 
 const STATUS_NAMES = ["PRE_GRAD", "GRADUATING", "GRADUATED"] as const;
@@ -122,6 +125,12 @@ export class PostgresPort implements DataPort {
       // as if they were current.
       this.cachedStats = null;
     }
+
+    try {
+      await this.loadPulse();
+    } catch {
+      this.cachedPulse = null;
+    }
   }
 
   headBlock(): bigint {
@@ -183,6 +192,10 @@ export class PostgresPort implements DataPort {
     return this.cachedEpochs.get(market.toLowerCase()) ?? null;
   }
 
+  getPulse(): PulseRow | null {
+    return this.cachedPulse;
+  }
+
   countMarkets(options: ExploreOptions): number {
     return this.cachedCounts.get(cacheKey(options)) ?? 0;
   }
@@ -218,6 +231,7 @@ export class PostgresPort implements DataPort {
   private readonly cachedAccounts = new BoundedCache<AccountRow>(CACHE_LIMITS.accounts);
   private readonly cachedCounts = new BoundedCache<number>(CACHE_LIMITS.counts);
   private cachedStats: PlatformStatsRow | null = null;
+  private cachedPulse: PulseRow | null = null;
   private readonly cachedEpochs = new BoundedCache<EpochsRow>(CACHE_LIMITS.epochs);
 
   /** Resolved once from the factory, then remembered. */
@@ -326,6 +340,42 @@ export class PostgresPort implements DataPort {
    */
   async loadPlatformStats(): Promise<void> {
     this.cachedStats = await platformStats(this.db);
+  }
+
+  /**
+   * §52's heat and §53's presence, refreshed on the same timer as the stats.
+   *
+   * Loaded together because they are one screen: two independent refreshes
+   * would let the halves disagree — an ecosystem row saying two markets near
+   * graduation beside a pulse line saying three, read a second apart.
+   *
+   * The presence window is an hour while heat is a day. Both are returned to
+   * the client rather than assumed, because §53 requires the metric to be
+   * honest about what it counts.
+   */
+  async loadPulse(): Promise<void> {
+    const [heat, presence] = await Promise.all([
+      marketHeat(this.db),
+      livePresence(this.db),
+    ]);
+
+    this.cachedPulse = {
+      heat: heat.map((h) => ({
+        quoteAsset: h.quoteAsset,
+        quoteSymbol: this.symbolOf(h.quoteAsset),
+        volume: h.volume,
+        trades: h.trades,
+        activeMarkets: h.activeMarkets,
+        totalMarkets: h.totalMarkets,
+        launches: h.launches,
+        graduations: h.graduations,
+        nearGraduation: h.nearGraduation,
+        buyPressureBps: h.buyPressureBps,
+        topMover: h.topMover,
+        topMoverGainBps: h.topMoverGainBps,
+      })),
+      presence,
+    };
   }
 
   async loadMarket(token: string): Promise<void> {

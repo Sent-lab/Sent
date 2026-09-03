@@ -117,6 +117,7 @@ export interface DataPort {
   getStockback(market: string, account: string): StockbackRow | null;
   getAccount(address: string): AccountRow | null;
   getPlatformStats(): PlatformStatsRow | null;
+  getPulse(): PulseRow | null;
   getEpochs(market: string): EpochsRow | null;
   /** How many markets the last `listMarkets` filter matched, before its limit. */
   countMarkets(options: ExploreOptions): number;
@@ -266,6 +267,34 @@ export interface EpochsRow {
     readonly totalFunded: bigint;
     readonly totalClaimed: bigint;
     readonly outstanding: bigint;
+  };
+}
+
+export interface HeatRow {
+  readonly quoteAsset: string;
+  /** From the verified allowlist, never from the token itself (§699). */
+  readonly quoteSymbol: string;
+  readonly volume: bigint;
+  readonly trades: number;
+  readonly activeMarkets: number;
+  readonly totalMarkets: number;
+  readonly launches: number;
+  readonly graduations: number;
+  readonly nearGraduation: number;
+  readonly buyPressureBps: number;
+  readonly topMover: string | null;
+  readonly topMoverGainBps: number;
+}
+
+export interface PulseRow {
+  readonly heat: readonly HeatRow[];
+  readonly presence: {
+    readonly activeTraders: number;
+    readonly liveMarkets: number;
+    readonly nearGraduation: number;
+    readonly graduatedInWindow: number;
+    readonly tradesInWindow: number;
+    readonly windowSeconds: number;
   };
 }
 
@@ -831,6 +860,97 @@ export function handleAccount(port: DataPort, address: string): ApiResult<Accoun
       blockNumber: c.blockNumber.toString(),
     })),
     launchCount: row.launchCount,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Market heat and live presence (§52, §53)
+// ---------------------------------------------------------------------------
+
+export interface HeatItem {
+  readonly quoteAsset: string;
+  readonly quoteSymbol: string;
+  readonly volume: string;
+  readonly trades: number;
+  readonly activeMarkets: number;
+  readonly totalMarkets: number;
+  readonly launches: number;
+  readonly graduations: number;
+  readonly nearGraduation: number;
+  /** 10000 = every unit of volume was a buy. 5000 in a window with no volume. */
+  readonly buyPressureBps: number;
+  readonly topMover: string | null;
+  readonly topMoverGainBps: number;
+}
+
+export interface PulseResponse {
+  readonly ecosystems: readonly HeatItem[];
+  readonly presence: {
+    /**
+     * Distinct traders in the presence window — NOT open connections.
+     *
+     * §53 requires the implementation to be honest about the metric it uses.
+     * Counting sockets would be a different number wearing the same label:
+     * higher, flattering, and moved by any bot with a reconnect loop.
+     */
+    readonly activeTraders: number;
+    readonly liveMarkets: number;
+    readonly nearGraduation: number;
+    readonly graduatedRecently: number;
+    readonly trades: number;
+    /** Returned so a client cannot render any of the above as "right now". */
+    readonly windowSeconds: number;
+  };
+  /** The window the ecosystem figures cover, which is longer than presence's. */
+  readonly heatWindowSeconds: number;
+}
+
+/**
+ * §52's market heat and §53's pulse, in one response.
+ *
+ * Together because they are one screen and two round trips would let the
+ * halves disagree — "3 markets near graduation" beside an ecosystem row saying
+ * two, read a second apart.
+ *
+ * NOTHING IS NORMALISED HERE
+ * --------------------------
+ * No 0-1 "heat" value is computed. Ecosystems differ by orders of magnitude, so
+ * any normalisation is a presentation choice — linear against the busiest,
+ * logarithmic, ranked — and §52's warning about becoming a noisy colour heatmap
+ * is a warning about that mapping, not about these numbers. Raw comparable
+ * figures go out; the view decides what hot looks like, visibly.
+ */
+export function handlePulse(port: DataPort): ApiResult<PulseResponse> {
+  const row = port.getPulse();
+
+  if (row === null) {
+    return fail(port, "PULSE_UNAVAILABLE", "Market activity could not be read.");
+  }
+
+  return ok(port, {
+    ecosystems: row.heat.map((h) => ({
+      quoteAsset: h.quoteAsset,
+      quoteSymbol: h.quoteSymbol,
+      volume: h.volume.toString(),
+      trades: h.trades,
+      activeMarkets: h.activeMarkets,
+      totalMarkets: h.totalMarkets,
+      launches: h.launches,
+      graduations: h.graduations,
+      nearGraduation: h.nearGraduation,
+      buyPressureBps: h.buyPressureBps,
+      topMover: h.topMover,
+      topMoverGainBps: h.topMoverGainBps,
+    })),
+    presence: {
+      activeTraders: row.presence.activeTraders,
+      liveMarkets: row.presence.liveMarkets,
+      nearGraduation: row.presence.nearGraduation,
+      graduatedRecently: row.presence.graduatedInWindow,
+      trades: row.presence.tradesInWindow,
+      windowSeconds: row.presence.windowSeconds,
+    },
+    heatWindowSeconds: 86_400,
   });
 }
 

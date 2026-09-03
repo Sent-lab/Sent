@@ -1616,6 +1616,222 @@ export async function listClaimsByAccount(
 }
 
 // ---------------------------------------------------------------------------
+// Market heat and live presence (§52, §53, §95.23, §95.24)
+// ---------------------------------------------------------------------------
+
+export interface EcosystemHeat {
+  readonly quoteAsset: `0x${string}`;
+  /** Notional traded against this xStock in the window. */
+  readonly volume: bigint;
+  readonly trades: number;
+  /** Markets that saw at least one trade in the window. */
+  readonly activeMarkets: number;
+  readonly totalMarkets: number;
+  readonly launches: number;
+  readonly graduations: number;
+  readonly nearGraduation: number;
+  /**
+   * Buy pressure in basis points of window volume: 10000 = every trade a buy.
+   *
+   * By NOTIONAL, not by count. One large sell against fifty dust buys is
+   * selling pressure, and a count would render it as the opposite.
+   */
+  readonly buyPressureBps: number;
+  /** The market with the largest progress gain in the window, if any. */
+  readonly topMover: `0x${string}` | null;
+  readonly topMoverGainBps: number;
+}
+
+/**
+ * §52's heat, per xStock ecosystem.
+ *
+ * §95.23 requires the metrics, the window, the normalisation, the pressure
+ * calculation and the top-mover logic to be DECIDED rather than left to a
+ * renderer. They are:
+ *
+ *   window          24h, the same one every other rate in this file uses
+ *   volume          summed notional, normalized to 18 decimals
+ *   active          markets with at least one trade in the window
+ *   near-grad       distributed ≥ 90% of qG, which is §199's last milestone
+ *   pressure        buy notional / total notional, in basis points
+ *   top mover       largest increase in distributed over the window
+ *
+ * NORMALISATION IS THE CALLER'S JOB, AND DELIBERATELY SO
+ * ------------------------------------------------------
+ * Nothing here is scaled to a 0-1 "heat" value. Ecosystems differ by orders of
+ * magnitude, so any normalisation is a presentation choice — linear against the
+ * busiest, logarithmic, ranked — and baking one in would hide it inside a
+ * database function where nobody would find it. §52 warns against becoming a
+ * noisy colour heatmap, and that risk lives in the mapping, not in the numbers.
+ *
+ * Raw, comparable figures go out; the view decides what "hot" looks like.
+ */
+export async function marketHeat(
+  db: Db,
+  options: { now?: number; windowSeconds?: number } = {},
+): Promise<EcosystemHeat[]> {
+  const now = options.now ?? Math.floor(Date.now() / 1000);
+  const windowStart = now - (options.windowSeconds ?? WINDOW_SECONDS);
+
+  const rows = await db.query<Record<string, unknown>>(
+    `WITH windowed AS (
+       SELECT t.market,
+              SUM(t.notional)                                          AS volume,
+              COUNT(*)                                                 AS trades,
+              SUM(CASE WHEN t.side = 0 THEN t.notional ELSE 0 END)     AS buy_volume,
+              MAX(t.distributed_after) - MIN(t.distributed_after)      AS distributed_gain
+       FROM trades t
+       WHERE t.timestamp >= $1
+       GROUP BY t.market
+     ),
+     per_market AS (
+       SELECT m.quote_asset,
+              m.market,
+              m.qg,
+              s.distributed,
+              s.graduated_at_block,
+              m.launched_at,
+              COALESCE(w.volume, 0)           AS volume,
+              COALESCE(w.trades, 0)           AS trades,
+              COALESCE(w.buy_volume, 0)       AS buy_volume,
+              COALESCE(w.distributed_gain, 0) AS distributed_gain
+       FROM markets m
+         JOIN market_state s ON s.market = m.market
+         LEFT JOIN windowed w ON w.market = m.market
+     ),
+     movers AS (
+       SELECT DISTINCT ON (quote_asset)
+              quote_asset,
+              market,
+              -- FLOORed to an integer. NUMERIC division keeps a fractional
+              -- part, and a basis-point figure with eighteen decimal places is
+              -- a value the reader has to parse as a float — which is the one
+              -- thing §424 keeps out of this stack.
+              CASE WHEN qg > 0
+                   THEN FLOOR((distributed_gain * 10000) / qg)
+                   ELSE 0 END AS gain_bps
+       FROM per_market
+       WHERE distributed_gain > 0
+       ORDER BY quote_asset, (CASE WHEN qg > 0 THEN distributed_gain::NUMERIC / qg ELSE 0 END) DESC
+     )
+     SELECT p.quote_asset,
+            SUM(p.volume)::TEXT                                          AS volume,
+            SUM(p.trades)::TEXT                                          AS trades,
+            SUM(p.buy_volume)::TEXT                                      AS buy_volume,
+            COUNT(*) FILTER (WHERE p.trades > 0)::TEXT                   AS active_markets,
+            COUNT(*)::TEXT                                               AS total_markets,
+            COUNT(*) FILTER (WHERE p.launched_at >= $1)::TEXT            AS launches,
+            COUNT(*) FILTER (
+              WHERE p.graduated_at_block IS NOT NULL
+                AND EXISTS (SELECT 1 FROM blocks b
+                            WHERE b.number = p.graduated_at_block AND b.timestamp >= $1)
+            )::TEXT                                                      AS graduations,
+            COUNT(*) FILTER (
+              WHERE p.graduated_at_block IS NULL
+                AND p.qg > 0
+                AND p.distributed * 10000 >= p.qg * 9000
+            )::TEXT                                                      AS near_graduation,
+            MAX(mv.market::TEXT)                                         AS top_mover,
+            COALESCE(MAX(mv.gain_bps), 0)::TEXT                          AS top_mover_gain
+     FROM per_market p
+       LEFT JOIN movers mv ON mv.quote_asset = p.quote_asset
+     GROUP BY p.quote_asset
+     ORDER BY SUM(p.volume) DESC`,
+    [windowStart],
+  );
+
+  return rows.map((r) => {
+    const volume = big(r.volume, "volume");
+    const buyVolume = big(r.buy_volume, "buy_volume");
+
+    return {
+      quoteAsset: addr(r.quote_asset, "quote_asset"),
+      volume,
+      trades: Number(big(r.trades, "trades")),
+      activeMarkets: Number(big(r.active_markets, "active_markets")),
+      totalMarkets: Number(big(r.total_markets, "total_markets")),
+      launches: Number(big(r.launches, "launches")),
+      graduations: Number(big(r.graduations, "graduations")),
+      nearGraduation: Number(big(r.near_graduation, "near_graduation")),
+      // 5000 — perfectly balanced — for a window with no volume. Zero would
+      // read as "everything was a sell", which is a claim about a period in
+      // which nothing happened.
+      buyPressureBps: volume > 0n ? Number((buyVolume * 10_000n) / volume) : 5_000,
+      topMover: r.top_mover === null ? null : hexFromText(r.top_mover),
+      topMoverGainBps: Number(big(r.top_mover_gain, "top_mover_gain")),
+    };
+  });
+}
+
+/**
+ * `market::TEXT` on a BYTEA renders as PostgreSQL's own hex escape, `\x…`.
+ *
+ * Cast rather than returned as bytes because it travels through MAX() inside an
+ * aggregate. Converted back here so callers see the same `0x…` every other
+ * address in this file uses.
+ */
+function hexFromText(value: unknown): `0x${string}` {
+  const text = String(value);
+  return `0x${text.startsWith("\\x") ? text.slice(2) : text}`.toLowerCase() as `0x${string}`;
+}
+
+export interface LivePresence {
+  /** Distinct traders in the window. Honest about what it counts — see below. */
+  readonly activeTraders: number;
+  readonly liveMarkets: number;
+  readonly nearGraduation: number;
+  readonly graduatedInWindow: number;
+  readonly tradesInWindow: number;
+  readonly windowSeconds: number;
+}
+
+/**
+ * §53's market pulse.
+ *
+ * §53 is explicit that presence "tidak harus menyiratkan exact realtime
+ * concurrency jika data source tidak mendukungnya; implementation harus jujur
+ * pada metric yang digunakan" — presence need not imply exact concurrency, and
+ * the implementation must be honest about the metric it uses.
+ *
+ * So "active traders" is DISTINCT TRADERS IN THE LAST HOUR, not open sockets.
+ * Counting connections would be a different number wearing the same label:
+ * higher, flattering, and moved by a bot with a reconnect loop. The window is
+ * returned alongside the figure so a caller cannot render it as "right now".
+ */
+export async function livePresence(
+  db: Db,
+  options: { now?: number; windowSeconds?: number } = {},
+): Promise<LivePresence> {
+  const now = options.now ?? Math.floor(Date.now() / 1000);
+  const windowSeconds = options.windowSeconds ?? 3_600;
+  const windowStart = now - windowSeconds;
+
+  const row = await db.queryOne<Record<string, unknown>>(
+    `SELECT
+       (SELECT COUNT(DISTINCT trader) FROM trades WHERE timestamp >= $1)::TEXT AS traders,
+       (SELECT COUNT(*) FROM market_state WHERE status = 0)::TEXT              AS live_markets,
+       (SELECT COUNT(*) FROM markets m JOIN market_state s ON s.market = m.market
+         WHERE s.graduated_at_block IS NULL AND m.qg > 0
+           AND s.distributed * 10000 >= m.qg * 9000)::TEXT                     AS near_graduation,
+       (SELECT COUNT(*) FROM market_state s JOIN blocks b ON b.number = s.graduated_at_block
+         WHERE b.timestamp >= $1)::TEXT                                        AS graduated,
+       (SELECT COUNT(*) FROM trades WHERE timestamp >= $1)::TEXT               AS trades`,
+    [windowStart],
+  );
+
+  const n = (key: string): number => Number(row?.[key] ?? "0");
+
+  return {
+    activeTraders: n("traders"),
+    liveMarkets: n("live_markets"),
+    nearGraduation: n("near_graduation"),
+    graduatedInWindow: n("graduated"),
+    tradesInWindow: n("trades"),
+    windowSeconds,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Platform statistics (§166, §168)
 // ---------------------------------------------------------------------------
 

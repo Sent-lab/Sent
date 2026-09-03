@@ -40,6 +40,7 @@ import {
   handleAccount,
   handleEpochs,
   handlePlatformStats,
+  handlePulse,
   handleHealth,
   EXPLORE_SORTS,
   type ExploreOptions,
@@ -522,6 +523,12 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
       },
       freshness: result.freshness,
     });
+  });
+
+  /* §52's market heat and §53's pulse, refreshed on the freshness timer. */
+  scope.get("/platform/pulse", async (_request, reply) => {
+    const result = handlePulse(port);
+    return reply.code(result.ok ? 200 : 503).send(result);
   });
 
   /* §166's live platform stats, from §168's sources. */

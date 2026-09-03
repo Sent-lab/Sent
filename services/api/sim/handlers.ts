@@ -27,10 +27,12 @@ import {
   type AccountRow,
   type PlatformStatsRow,
   type EpochsRow,
+  type PulseRow,
   handleCreator,
   handleEpochs,
   handleAccount,
   handlePlatformStats,
+  handlePulse,
 } from "../src/handlers.ts";
 import { intentFingerprint, toNormalized, toRawForPayout } from "@sent/sdk";
 import { computeFees } from "@sent/economics";
@@ -278,6 +280,51 @@ class FakePort implements DataPort {
 
   getEpochs(): EpochsRow | null {
     return this.epochs;
+  }
+
+  pulse: PulseRow | null = {
+    heat: [
+      {
+        quoteAsset: "0x5555555555555555555555555555555555555555",
+        quoteSymbol: "NVDAx",
+        volume: 900_000n,
+        trades: 30,
+        activeMarkets: 4,
+        totalMarkets: 9,
+        launches: 2,
+        graduations: 1,
+        nearGraduation: 3,
+        buyPressureBps: 6_600,
+        topMover: MARKET,
+        topMoverGainBps: 1_250,
+      },
+      {
+        quoteAsset: "0x7777777777777777777777777777777777777777",
+        quoteSymbol: "SPYx",
+        volume: 0n,
+        trades: 0,
+        activeMarkets: 0,
+        totalMarkets: 2,
+        launches: 0,
+        graduations: 0,
+        nearGraduation: 0,
+        buyPressureBps: 5_000,
+        topMover: null,
+        topMoverGainBps: 0,
+      },
+    ],
+    presence: {
+      activeTraders: 128,
+      liveMarkets: 34,
+      nearGraduation: 7,
+      graduatedInWindow: 2,
+      tradesInWindow: 415,
+      windowSeconds: 3_600,
+    },
+  };
+
+  getPulse(): PulseRow | null {
+    return this.pulse;
   }
   quoteBuy(_m: string, amount: bigint): QuoteResult | null {
     return {
@@ -1085,6 +1132,70 @@ console.log("\n--- 15. §21/§403: what a bot and a terminal need --------------
 
   check("24h volume is served", detail.data.volume24h.value === "1500000");
   check("with its trade count", detail.data.trades24h.value === "9");
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 16. §52/§53: market heat and pulse -----------------------------------");
+
+{
+  const port = new FakePort();
+  const result = handlePulse(port);
+
+  if (!result.ok) throw new Error("expected success");
+
+  check("ecosystems are listed", result.data.ecosystems.length === 2);
+  check("with the verified symbol, not the token's own", result.data.ecosystems[0]?.quoteSymbol === "NVDAx");
+
+  /*
+   * Buy pressure is by NOTIONAL, not by count.
+   *
+   * One large sell against fifty dust buys is selling pressure, and a count
+   * would render it as the opposite — a heat map that says the market is
+   * climbing while it falls.
+   */
+  check("buy pressure is in basis points of volume", result.data.ecosystems[0]?.buyPressureBps === 6_600);
+
+  /*
+   * 5000, not 0, for an ecosystem with no volume.
+   *
+   * Zero reads as "everything was a sell", which is a claim about a period in
+   * which nothing happened at all.
+   */
+  check("a silent ecosystem is balanced, not bearish", result.data.ecosystems[1]?.buyPressureBps === 5_000);
+  check("and has no top mover rather than a zero one", result.data.ecosystems[1]?.topMover === null);
+
+  /*
+   * Nothing is normalised to a 0-1 heat value.
+   *
+   * Ecosystems differ by orders of magnitude, so any normalisation is a
+   * presentation choice, and §52's warning about a noisy colour heatmap is a
+   * warning about that mapping. Raw comparable figures go out; the view decides
+   * what hot looks like, visibly.
+   */
+  check("volume is raw, not scaled", result.data.ecosystems[0]?.volume === "900000");
+
+  // §53: honest about the metric. These are traders who TRADED in the window,
+  // not open sockets — counting connections would be a different number wearing
+  // the same label, moved by any bot with a reconnect loop.
+  check("presence counts traders", result.data.presence.activeTraders === 128);
+  check(
+    "and states its window so nothing reads as 'right now'",
+    result.data.presence.windowSeconds === 3_600,
+  );
+
+  // The two windows differ on purpose, and both are returned.
+  check("heat covers a longer window than presence", result.data.heatWindowSeconds > result.data.presence.windowSeconds);
+}
+
+{
+  const port = new FakePort();
+  port.pulse = null;
+
+  const down = handlePulse(port);
+  // A pulse that cannot be computed says so rather than rendering an empty,
+  // confident-looking screen that claims the platform is dead.
+  check("an unavailable pulse is a named refusal", !down.ok && down.code === "PULSE_UNAVAILABLE");
+  check("and still carries freshness", down.freshness !== undefined);
 }
 
 // ---------------------------------------------------------------------------
