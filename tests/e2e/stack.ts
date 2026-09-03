@@ -49,7 +49,11 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { launchIntentHash, type TokenMetadata } from "@sent/sdk";
+import {
+  launchIntentHash,
+  buildClaimStockbackIntent,
+  type TokenMetadata,
+} from "@sent/sdk";
 
 import {
   Database,
@@ -1069,12 +1073,42 @@ try {
             args: [account.address],
           })) as bigint;
 
-          await send(rewardVault, vaultAbi, "claim", [
-            market,
-            account.address,
-            entitlement.cumulative,
-            entitlement.proof,
-          ]);
+          /*
+           * §694, on the holder's money path.
+           *
+           * This used to call the ABI directly. `CLAIM_STOCKBACK` was an
+           * `IntentKind` with no builder — the third time that shape appeared,
+           * after `APPROVE_QUOTE` and `CLAIM_CREATOR_FEES` — so the API served
+           * a holder their claimable amount and the proof to spend it with, and
+           * nothing in the product could turn either into a transaction.
+           *
+           * The claim now goes through the SDK, and `to`/`data`/`value` reach
+           * the chain exactly as the builder produced them. Nothing here
+           * re-encodes anything, which is the property §694 is about — and a
+           * builder producing plausible bytes the vault rejects would pass
+           * every unit test written against it.
+           */
+          const claimIntent = buildClaimStockbackIntent({
+            chainId,
+            rewardVault,
+            market: market as Address,
+            account: account.address,
+            cumulative: entitlement.cumulative,
+            proof: entitlement.proof as `0x${string}`[],
+            payable: entitlement.cumulative,
+            decimals: 6,
+            symbol: "xSTOCK",
+          });
+
+          check("the claim intent targets the reward vault", claimIntent.to === rewardVault);
+
+          const claimTx = await wallet.sendTransaction({
+            to: claimIntent.to,
+            data: claimIntent.data,
+            value: claimIntent.value,
+            chain: null,
+          });
+          await publicClient.waitForTransactionReceipt({ hash: claimTx });
 
           const afterClaim = (await publicClient.readContract({
             address: quote,
@@ -1091,6 +1125,14 @@ try {
           check(
             "the claim paid exactly the computed entitlement",
             afterClaim - beforeClaim === entitlement.cumulative,
+          );
+
+          // And the review described the transfer that happened. §694 is a
+          // property of what somebody read, not only of the bytes.
+          check(
+            "and the review named the amount that arrived",
+            claimIntent.review.rows[0]?.value ===
+              `${(Number(entitlement.cumulative) / 1e6).toFixed(6)} xSTOCK`,
           );
 
           console.log(
@@ -1125,6 +1167,7 @@ try {
             .catch(() => true);
 
           check("a claim for one wei more is refused", tampered);
+
         }
 
         section("Creator fees");

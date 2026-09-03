@@ -573,6 +573,324 @@ const claimCreatorFeesAbi = [
   },
 ] as const;
 
+export interface BuildClaimStockbackParams {
+  readonly chainId: number;
+  readonly rewardVault: `0x${string}`;
+  readonly market: `0x${string}`;
+  /** Whose entitlement. The vault pays this account, not `msg.sender`. */
+  readonly account: `0x${string}`;
+  /**
+   * The CUMULATIVE figure from the active root, not the amount to receive.
+   *
+   * §365: entitlements are cumulative and the vault pays `cumulative - claimed`.
+   * Passing the payable amount here would claim far less than is owed — and
+   * would succeed, because a smaller cumulative is a valid leaf's worth of a
+   * claim as far as the arithmetic is concerned.
+   */
+  readonly cumulative: bigint;
+  /** The Merkle proof for THIS root. A proof for another root simply fails. */
+  readonly proof: readonly `0x${string}`[];
+  /** What the user will actually receive: `cumulative - claimed`. Review only. */
+  readonly payable: bigint;
+  readonly decimals: number;
+  readonly symbol: string;
+}
+
+/**
+ * Build a Stockback claim.
+ *
+ * `CLAIM_STOCKBACK` was the third `IntentKind` with nothing behind it, after
+ * `APPROVE_QUOTE` and `CLAIM_CREATOR_FEES` — and it is the one that mattered
+ * most. The API serves a holder their `claimable` amount and the proof to spend
+ * it with; without this there was no way to spend either. The money was
+ * reachable on-chain and unreachable from the product.
+ *
+ * TWO DIFFERENT NUMBERS, AND THE REVIEW SHOWS BOTH
+ * ------------------------------------------------
+ * `cumulative` is what goes in the calldata; `payable` is what arrives. They
+ * differ by everything previously claimed, and a review that showed only the
+ * first would tell a holder they are about to receive their lifetime total.
+ *
+ * The proof and the cumulative must come from the SAME root. The API serves
+ * them together for that reason, and mixing them produces a claim the vault
+ * rejects — which is the safe failure, but only because the vault checks.
+ */
+export function buildClaimStockbackIntent(
+  params: BuildClaimStockbackParams,
+): TransactionIntent {
+  const { chainId, rewardVault, market, account, cumulative, proof, payable, decimals, symbol } =
+    params;
+
+  if (payable <= 0n) throw new Error("buildClaimStockbackIntent: nothing to claim");
+  if (cumulative < payable) {
+    // Cumulative is a running total and can only be at least what is payable.
+    // Reversed arguments produce exactly this, and the transaction would
+    // otherwise be built, signed and reverted.
+    throw new Error("buildClaimStockbackIntent: cumulative is below the payable amount");
+  }
+  /*
+   * AN EMPTY PROOF IS NOT AN ERROR, AND REFUSING IT WAS ONE.
+   *
+   * A single-leaf Merkle tree has no siblings, so its proof is legitimately
+   * empty — and a market with one holder is not an edge case, it is every
+   * market on its first day.
+   *
+   * This did refuse it, on the reasoning that a caller who forgot to fetch a
+   * proof looks identical. That reasoning was defensive in the wrong direction:
+   * the ambiguity costs one confusing revert, while the refusal costs the
+   * smallest markets their claims entirely. The e2e caught it on the first run
+   * against a real single-holder market.
+   *
+   * The vault verifies the proof against the active root regardless, so a
+   * genuinely missing one fails there — where the authority is.
+   */
+
+  const data = encodeFunctionData({
+    abi: claimStockbackAbi,
+    functionName: "claim",
+    args: [market, account, cumulative, [...proof]],
+  });
+
+  const receiving = `${formatUnits(payable, decimals)} ${symbol}`;
+
+  return {
+    kind: "CLAIM_STOCKBACK",
+    chainId,
+    to: rewardVault,
+    data,
+    value: 0n,
+    review: {
+      kind: "CLAIM_STOCKBACK",
+      summary: `Claim ${receiving} in Stockback`,
+      rows: [
+        { label: "You receive", value: receiving, primary: true },
+        {
+          // Shown because it is the number in the calldata, and a reviewer
+          // comparing the two would otherwise find a figure they cannot explain.
+          label: "Lifetime entitlement",
+          value: `${formatUnits(cumulative, decimals)} ${symbol}`,
+        },
+        { label: "Market", value: market },
+        { label: "Paid to", value: account },
+      ],
+    },
+  };
+}
+
+/**
+ * The one HolderRewardVault function this SDK encodes.
+ *
+ * Declared here rather than importing the vault's ABI, for the same reason the
+ * approval and creator-claim builders declare their own: with the full ABI in
+ * scope it becomes possible to encode `pauseClaims` by typo.
+ */
+const claimStockbackAbi = [
+  {
+    type: "function",
+    name: "claim",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "market", type: "address" },
+      { name: "account", type: "address" },
+      { name: "cumulativeAmount", type: "uint256" },
+      { name: "proof", type: "bytes32[]" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
+
+export interface LaunchMetadataInput {
+  readonly description: string;
+  readonly imageCid: string;
+  readonly links: readonly { label: string; url: string }[];
+}
+
+export interface BuildLaunchParams {
+  readonly chainId: number;
+  readonly factory: `0x${string}`;
+  readonly name: string;
+  readonly symbol: string;
+  readonly quoteAsset: `0x${string}`;
+  readonly quoteSymbol: string;
+  /** The salt the creator's grinder found. Never the deployment salt (§412). */
+  readonly userSalt: `0x${string}`;
+  /** keccak of the metadata. Bound into the address — see `launchIntentHash`. */
+  readonly launchIntentHash: `0x${string}`;
+  /**
+   * The xStock/USD price the creator was shown.
+   *
+   * NOT the anchor. The factory reads that from the reference price adapter;
+   * this bounds how far the feed may have moved since the preview, within
+   * `ANCHOR_TOLERANCE_BPS`. Zero opts out of the check.
+   */
+  readonly reviewedUsdWad: bigint;
+  /**
+   * The address the creator was shown in the preview, enforced on-chain.
+   *
+   * Zero disables the check. Passing it is strongly preferred: it is the only
+   * thing standing between "the address you ground for" and "an address".
+   */
+  readonly expectedToken: `0x${string}`;
+  readonly metadata: LaunchMetadataInput;
+  /** The launch fee, in the native gas token. Sent as `value`. */
+  readonly launchFee: bigint;
+}
+
+/**
+ * Build a launch.
+ *
+ * The last `IntentKind` with no builder, and the primary creator action. Without
+ * it the create flow could not go through §694's path at all — the numbers a
+ * creator reviews and the bytes they sign would have come from different places,
+ * which is the one thing that path exists to prevent.
+ *
+ * WHAT THE REVIEW HAS TO SAY, AND WHY
+ * -----------------------------------
+ * A launch is irreversible in three ways at once and each has its own row:
+ *
+ *   The ADDRESS is permanent. §412 binds the creator into the salt, so the one
+ *   in the preview is reachable only by them — and only for this exact intent.
+ *
+ *   The METADATA is committed. `launchIntentHash` is in the salt, so changing a
+ *   character of the description after grinding lands the token somewhere else.
+ *
+ *   The ECONOMICS are locked. 0% creator allocation, a fixed supply, a fee split
+ *   that cannot be tuned. §446 forbids silent fee tuning; showing the numbers at
+ *   the moment of launch is the same principle facing the creator.
+ */
+export function buildLaunchIntent(params: BuildLaunchParams): TransactionIntent {
+  const {
+    chainId,
+    factory,
+    name,
+    symbol,
+    quoteAsset,
+    quoteSymbol,
+    userSalt,
+    launchIntentHash,
+    reviewedUsdWad,
+    expectedToken,
+    metadata,
+    launchFee,
+  } = params;
+
+  if (name.length === 0 || symbol.length === 0) {
+    throw new Error("buildLaunchIntent: name and symbol are required");
+  }
+
+  const data = encodeFunctionData({
+    abi: launchAbi,
+    functionName: "launch",
+    args: [
+      {
+        name,
+        symbol,
+        quoteAsset,
+        userSalt,
+        launchIntentHash,
+        xStockUsdWad: reviewedUsdWad,
+        expectedToken,
+        metadata: {
+          description: metadata.description,
+          imageCid: metadata.imageCid,
+          links: metadata.links.map((l) => ({ label: l.label, url: l.url })),
+        },
+      },
+    ],
+  });
+
+  const rows: IntentRow[] = [
+    { label: "Token", value: `${name} (${symbol})`, primary: true },
+    { label: "Paired with", value: quoteSymbol, primary: true },
+    {
+      label: "Address",
+      value:
+        expectedToken === "0x0000000000000000000000000000000000000000"
+          ? "Not enforced — the deployed address may differ"
+          : expectedToken,
+      // A launch that does not pin its address is one where the preview was a
+      // suggestion. Worth a warning rather than a silent difference.
+      warning: expectedToken === "0x0000000000000000000000000000000000000000",
+    },
+    { label: "Your allocation", value: "0% — the curve holds the entire supply" },
+    { label: "Your fee share", value: "65% of the 1% trading fee, forever" },
+    { label: "Launch fee", value: `${formatUnits(launchFee, 18)} HYPE` },
+  ];
+
+  if (metadata.description !== "") {
+    // Shown because it is permanent and committed: it is in the hash that is in
+    // the address, so this is the last moment it can be changed for free.
+    rows.push({ label: "Description", value: metadata.description });
+  }
+
+  for (const link of metadata.links) {
+    rows.push({ label: `Link — ${link.label}`, value: link.url });
+  }
+
+  return {
+    kind: "LAUNCH",
+    chainId,
+    to: factory,
+    data,
+    value: launchFee,
+    review: {
+      kind: "LAUNCH",
+      summary: `Launch ${symbol} against ${quoteSymbol}`,
+      rows,
+    },
+  };
+}
+
+/**
+ * The one LaunchpadFactory function this SDK encodes.
+ *
+ * The tuple mirrors `LaunchParams` in declaration order. It has to: `abi.encode`
+ * is positional, and a field in the wrong place produces calldata that decodes
+ * into a different launch without failing.
+ */
+const launchAbi = [
+  {
+    type: "function",
+    name: "launch",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "name", type: "string" },
+          { name: "symbol", type: "string" },
+          { name: "quoteAsset", type: "address" },
+          { name: "userSalt", type: "bytes32" },
+          { name: "launchIntentHash", type: "bytes32" },
+          { name: "xStockUsdWad", type: "uint256" },
+          { name: "expectedToken", type: "address" },
+          {
+            name: "metadata",
+            type: "tuple",
+            components: [
+              { name: "description", type: "string" },
+              { name: "imageCid", type: "string" },
+              {
+                name: "links",
+                type: "tuple[]",
+                components: [
+                  { name: "label", type: "string" },
+                  { name: "url", type: "string" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    outputs: [
+      { name: "token", type: "address" },
+      { name: "market", type: "address" },
+    ],
+  },
+] as const;
+
 export function intentFingerprint(intent: TransactionIntent): string {
   return [
     intent.kind,
