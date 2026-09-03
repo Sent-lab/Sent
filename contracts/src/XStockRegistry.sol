@@ -33,6 +33,8 @@ pragma solidity 0.8.28;
 /// reward asset are fixed for life (§387, §388). Governance cannot retroactively
 /// change what a live market is paired against — that would rewrite user
 /// positions, which §559 forbids.
+import {RebaseDetector} from "./lib/RebaseDetector.sol";
+
 contract XStockRegistry {
     /// @notice The eight §420 gates. An asset is usable only when ALL are true.
     /// @dev Stored as explicit named flags rather than a bitmask so that a
@@ -87,6 +89,16 @@ contract XStockRegistry {
     error AlreadyRegistered();
     error UnknownAsset();
     error GatesNotAllPassed();
+
+    /**
+     * @dev The asset's balances move without a transfer (§420, V-03).
+     *
+     *      `currentMultiplier` is carried so the refusal says which case it is:
+     *      1e18 means a rebase that has not happened yet, anything else means one
+     *      already has. Same decision, very different conversation with whoever
+     *      proposed the asset.
+     */
+    error AssetRebases(address token, uint256 currentMultiplier);
     error AlreadyEnabled();
     error NotEnabled();
 
@@ -112,6 +124,19 @@ contract XStockRegistry {
     {
         if (token == address(0)) revert ZeroAddress();
         if (_assets[token].exists) revert AlreadyRegistered();
+
+        /*
+         * Refused here, at registration, and not only at enable.
+         *
+         * A registered-but-disabled asset reads as "under review", and the whole
+         * point is that this one never reaches review. Rejecting it at the first
+         * door means nobody spends a week attesting gates for an asset that
+         * cannot be used whatever the gates say.
+         */
+        if (RebaseDetector.isRebasing(token)) {
+            (, uint256 m) = RebaseDetector.multiplierHasMoved(token);
+            revert AssetRebases(token, m);
+        }
 
         Asset storage a = _assets[token];
         a.token = token;
@@ -154,6 +179,22 @@ contract XStockRegistry {
         if (!a.exists) revert UnknownAsset();
         if (a.enabledForNewLaunches) revert AlreadyEnabled();
         if (!_allGatesPassed(a.gates)) revert GatesNotAllPassed();
+
+        /*
+         * Checked AGAIN, and this is not redundant.
+         *
+         * These assets are upgradeable proxies - SPYx's implementation is
+         * Backed's, behind an EIP-1967 proxy whose admin can replace it. An asset
+         * that did not rebase when it was registered can rebase by the time it is
+         * enabled, and enabling is the moment markets become possible against it.
+         *
+         * Re-reading costs one staticcall at the only point where being wrong
+         * starts to matter.
+         */
+        if (RebaseDetector.isRebasing(token)) {
+            (, uint256 m) = RebaseDetector.multiplierHasMoved(token);
+            revert AssetRebases(token, m);
+        }
 
         a.enabledForNewLaunches = true;
         a.verifiedAt = uint64(block.timestamp);

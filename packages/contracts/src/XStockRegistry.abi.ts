@@ -487,6 +487,22 @@ export const xStockRegistryAbi = [
   },
   {
     "type": "error",
+    "name": "AssetRebases",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "currentMultiplier",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "GatesNotAllPassed",
     "inputs": []
   },
