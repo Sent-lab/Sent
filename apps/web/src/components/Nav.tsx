@@ -16,6 +16,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
+import { useWallet } from "../lib/wallet.ts";
+import { truncateAddress } from "../lib/format.ts";
 import { Logo } from "./Logo.tsx";
 
 import styles from "./Nav.module.css";
@@ -104,16 +106,67 @@ export function Nav(): JSX.Element {
 /**
  * Wallet control.
  *
- * Deliberately not wired to a connector yet. §694 requires that what a user
- * reviews is byte-for-byte what they sign, and the intent builder that
- * guarantees it lives in `@sent/sdk` — connecting a wallet before that path is
- * complete would produce a button that can sign something the review never
- * showed. It renders as unavailable rather than as a working control that fails.
+ * This was disabled, with a comment saying §694's intent path was incomplete so
+ * a connected wallet could sign something the review never showed. The path is
+ * complete — every signable action goes through a builder in `@sent/sdk`, and
+ * `wallet.send` hands the intent's own `to`, `data` and `value` to the provider
+ * without touching them — and the button had gone on saying otherwise while the
+ * trade panel next to it connected and traded.
+ *
+ * FOUR STATES, EACH SAYING WHAT HAPPENS NEXT
+ * ------------------------------------------
+ * No wallet, disconnected, wrong chain, connected. A control that is enabled and
+ * then fails is the shape §42 is written against, so each state is named on the
+ * button itself rather than discovered after a click.
+ *
+ * The address is truncated rather than hidden: it is how someone notices their
+ * wallet switched accounts behind the app's back.
  */
 function ConnectButton(): JSX.Element {
+  const wallet = useWallet();
+
+  if (!wallet.available) {
+    return (
+      <button
+        type="button"
+        className={styles.connect}
+        disabled
+        title="No wallet was found in this browser"
+      >
+        No wallet
+      </button>
+    );
+  }
+
+  if (wallet.address === null) {
+    return (
+      <button
+        type="button"
+        className={styles.connect}
+        onClick={() => void wallet.connect()}
+        disabled={wallet.connecting}
+      >
+        {wallet.connecting ? "Check wallet" : "Connect"}
+      </button>
+    );
+  }
+
+  if (wallet.wrongChain) {
+    return (
+      <button
+        type="button"
+        className={styles.connect}
+        onClick={() => void wallet.switchChain()}
+        title={`Connected to chain ${wallet.chainId ?? "?"}`}
+      >
+        Wrong network
+      </button>
+    );
+  }
+
   return (
-    <button type="button" className={styles.connect} disabled title="Wallet connection is not enabled in this build">
-      Connect
-    </button>
+    <Link href="/creator" className={styles.connected} title={wallet.address}>
+      {truncateAddress(wallet.address, 6, 4)}
+    </Link>
   );
 }

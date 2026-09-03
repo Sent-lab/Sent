@@ -107,6 +107,28 @@
   cursor: not-allowed;
 }
 
+/* Connected: the address is a link to the creator cockpit, not a button that
+   disconnects. A wallet is disconnected from the wallet, and an app that offers
+   to do it teaches people the app controls the connection. */
+.connected {
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding-inline: var(--s-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.connected:hover {
+  background: var(--surface-hover);
+}
+
 /*
  * The menu toggle is 44x44 even though the glyph is 18px wide (§227: no tiny
  * icon action). It is hidden entirely on desktop rather than shrunk.
