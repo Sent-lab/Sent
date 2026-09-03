@@ -610,6 +610,9 @@ export class PostgresPort implements DataPort {
     launchedAt: number;
     lastBlock: bigint;
     graduatedAt: number | null;
+    pool: `0x${string}` | null;
+    volume24h: bigint;
+    trades24h: number;
   }): MarketRow {
     return {
       token: v.token,
@@ -624,9 +627,14 @@ export class PostgresPort implements DataPort {
       distributed: v.distributed,
       curveCollateral: v.curveCollateral,
       qG: v.qG,
+      p0: v.p0,
+      pg: v.pg,
       price: v.p0 + (v.qG > 0n ? ((v.pg - v.p0) * v.distributed) / v.qG : 0n),
+      pool: v.pool,
       holderCount: v.holderCount,
       tradeCount: v.tradeCount,
+      volume24h: v.volume24h,
+      trades24h: v.trades24h,
       launchedAt: v.launchedAt,
       lastBlock: v.lastBlock,
       graduatedAt: v.graduatedAt,

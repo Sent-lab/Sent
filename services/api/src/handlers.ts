@@ -36,7 +36,7 @@ import {
   toRawForPayout,
   type TransactionIntent,
 } from "@sent/sdk";
-import { computeFees } from "@sent/economics";
+import { computeFees, referenceMarketCapUsd, TOTAL_SUPPLY } from "@sent/economics";
 
 // ---------------------------------------------------------------------------
 // Port — what the API needs from the projection
@@ -55,9 +55,18 @@ export interface MarketRow {
   readonly distributed: bigint;
   readonly curveCollateral: bigint;
   readonly qG: bigint;
+  /** Launch price in quote wei. Carries the §18 USD anchor implicitly. */
+  readonly p0: bigint;
+  /** Graduation price, 25 × p0. */
+  readonly pg: bigint;
   readonly price: bigint;
+  /** The HyperSwap pool, once graduation created it (§21 `graduatedPool`). */
+  readonly pool: string | null;
   readonly holderCount: number;
   readonly tradeCount: number;
+  /** Notional traded in the last 24h, normalized. */
+  readonly volume24h: bigint;
+  readonly trades24h: number;
   readonly launchedAt: number;
   readonly lastBlock: bigint;
   /** Chain timestamp of the graduating block, or null before graduation. */
@@ -474,6 +483,44 @@ export interface MarketDetail {
    * rule from the suffix.
    */
   readonly authentic: true;
+
+  /**
+   * The curve, in full (§21).
+   *
+   * A bot needs to price locally between blocks, and §21's `marketState()` is
+   * meant to expose enough for exactly that. Without p0 and qG a caller can
+   * only ask this API for every quote, which makes the API a dependency of
+   * something that should be able to run without it.
+   */
+  readonly curve: {
+    readonly p0: string;
+    readonly pg: string;
+    readonly qG: string;
+    readonly totalSupply: string;
+  };
+
+  /** The HyperSwap pool, or null before graduation (§21 `graduatedPool`). */
+  readonly pool: string | null;
+
+  /**
+   * The §403 pair.
+   *
+   * `referenceMarketCapUsd` is derived from p0 and the current price, with no
+   * oracle involved: the launch-time xStock/USD snapshot is already baked into
+   * p0, so price/p0 IS the movement along the reference path. It runs from
+   * $2,000 to exactly $50,000 at graduation, which is what graduation follows.
+   *
+   * `liveMarketCapUsd` is ABSENT, not zero. It needs a live xStock/USD display
+   * feed, which is unverified (V-11) and deliberately not implemented — §279
+   * forbids a placeholder standing in for it, and §403 forbids implying that
+   * the live number triggers anything. An absent field is a UI that shows
+   * nothing; a zero is a UI that shows a market worth nothing.
+   */
+  readonly referenceMarketCapUsd: Sourced;
+  readonly liveMarketCapUsd?: Sourced;
+
+  readonly volume24h: Sourced;
+  readonly trades24h: Sourced;
 }
 
 export function handleMarket(port: DataPort, token: string): ApiResult<MarketDetail> {
@@ -499,6 +546,32 @@ export function handleMarket(port: DataPort, token: string): ApiResult<MarketDet
     holderCount: sourced(String(row.holderCount), "INDEXED", row.lastBlock, port.serverTime()),
     graduatedAt: row.graduatedAt,
     authentic: true,
+
+    curve: {
+      p0: row.p0.toString(),
+      pg: row.pg.toString(),
+      qG: row.qG.toString(),
+      totalSupply: TOTAL_SUPPLY.toString(),
+    },
+
+    pool: row.pool,
+
+    // CALCULATED: derived from p0 and the price, not read from a contract. The
+    // launch-time USD snapshot is already inside p0, so no oracle is consulted
+    // and none can go stale underneath this number (§402).
+    referenceMarketCapUsd: sourced(
+      referenceMarketCapUsd(row.p0, row.price).toString(),
+      "CALCULATED",
+      row.lastBlock,
+      port.serverTime(),
+    ),
+
+    // `liveMarketCapUsd` is deliberately not set. It needs the live xStock/USD
+    // display feed, which is unverified (V-11); §279 forbids a placeholder in
+    // its place, and a zero would render as a market worth nothing.
+
+    volume24h: sourced(row.volume24h.toString(), "CALCULATED", row.lastBlock, port.serverTime()),
+    trades24h: sourced(String(row.trades24h), "CALCULATED", row.lastBlock, port.serverTime()),
   });
 }
 

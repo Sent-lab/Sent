@@ -1644,6 +1644,42 @@ try {
     const echoed = await app.inject({ method: "GET", url: "/health" });
     check("every response carries a request id", typeof echoed.headers["x-request-id"] === "string");
 
+    /*
+     * §21's marketState and §403's reference cap, over the real projection.
+     *
+     * The market graduated in this run, so the pool exists and the reference cap
+     * sits at its endpoint — which is the one value in the whole system that can
+     * be checked against a number written in the masterplan rather than against
+     * the code that produced it.
+     */
+    const bot = await get(`/markets/${token}`);
+    const md = bot.body.data as Record<string, unknown>;
+    const curve = md.curve as Record<string, string>;
+
+    check("the curve parameters are served", BigInt(curve.p0 ?? "0") > 0n);
+    check("with pg exactly 25× p0", BigInt(curve.pg ?? "0") === BigInt(curve.p0 ?? "0") * 25n);
+    check("and qG at 50/76 of supply", BigInt(curve.qG ?? "0") === (BigInt(curve.totalSupply ?? "0") * 50n) / 76n);
+
+    // §21 graduatedPool. This market graduated, so it has one.
+    check("the pool is served once graduation created it", typeof md.pool === "string" && String(md.pool).length === 42);
+
+    /*
+     * §18's anchor, reproduced rather than restated: a graduated market sits at
+     * price = 25 × p0, so its reference cap is 25 × $2,000 = $50,000 exactly.
+     * No oracle is consulted — the launch snapshot is already inside p0.
+     */
+    const refMc = (md.referenceMarketCapUsd as Record<string, unknown>)?.value;
+    check(
+      "a graduated market's reference cap is exactly $50,000",
+      BigInt(String(refMc)) === 50_000n * 10n ** 18n,
+    );
+
+    // Absent, not zero. The live feed is unverified (V-11), and §279 forbids a
+    // placeholder standing in for it.
+    check("the live USD cap is absent", md.liveMarketCapUsd === undefined);
+
+    check("24h volume is served", BigInt(String((md.volume24h as Record<string, unknown>)?.value)) > 0n);
+
     const health = await get("/health");
     check("health answers", health.status === 200 || health.status === 503);
     check("with a freshness envelope", health.body.freshness !== undefined);

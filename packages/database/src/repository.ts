@@ -284,6 +284,15 @@ export async function registerExclusions(
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 export const DEAD_ADDRESS = "0x000000000000000000000000000000000000dEaD";
 
+/*
+ * The columns every market read returns.
+ *
+ * Not used directly. `marketQuery` below pairs them with the joins they depend
+ * on, because two of these columns come from a LATERAL join and selecting them
+ * without it is a runtime error in whichever caller forgot — which is exactly
+ * what happened when the 24h window was added and one of three readers was not
+ * updated.
+ */
 const MARKET_COLUMNS = `
   m.token, m.market, m.creator, m.quote_asset, m.quote_decimals,
   m.name, m.symbol, m.p0, m.pg, m.qg, m.launched_at, m.launched_at_block,
@@ -293,7 +302,14 @@ const MARKET_COLUMNS = `
   -- rather than approximating it. A LEFT JOIN: a market that has not graduated
   -- has no block to join to, and an inner join here would drop every pre-grad
   -- market from the listing entirely.
-  gb.timestamp AS graduated_at
+  gb.timestamp AS graduated_at,
+  -- The 24h window, carried on every market row.
+  --
+  -- Selected here rather than only where a sort needs it, because the terminal
+  -- and the explore card both show volume — and a second query for it would be
+  -- a second round trip that can disagree with the row it decorates.
+  COALESCE(w.volume, 0) AS volume_24h,
+  COALESCE(w.trades, 0) AS trades_24h
 `;
 
 interface MarketRow {
@@ -318,9 +334,33 @@ interface MarketRow {
   last_block: string;
   graduated_at_block: string | null;
   graduated_at: string | null;
+  volume_24h: string;
+  trades_24h: string;
 }
 
-export interface MarketView extends MarketRecord, Omit<MarketStateRecord, "market"> {}
+/**
+ * The SELECT and FROM every market read shares.
+ *
+ * `windowParam` is the bound parameter holding the window's start timestamp —
+ * a placeholder like `$1`, never a value, so the caller keeps control of its
+ * own parameter numbering.
+ *
+ * Returned as one string rather than exposing the pieces, so a caller cannot
+ * take the columns without the joins that make them exist.
+ */
+function marketQuery(windowParam: string): string {
+  return `SELECT ${MARKET_COLUMNS}
+     FROM markets m
+       JOIN market_state s ON s.market = m.market
+       LEFT JOIN blocks gb ON gb.number = s.graduated_at_block
+       ${WINDOW_JOIN.replace("$WINDOW_START", windowParam)}`;
+}
+
+export interface MarketView extends MarketRecord, Omit<MarketStateRecord, "market"> {
+  /** Notional traded in the last 24h, normalized. Zero for a quiet market. */
+  readonly volume24h: bigint;
+  readonly trades24h: number;
+}
 
 function toMarketView(row: MarketRow): MarketView {
   return {
@@ -346,17 +386,23 @@ function toMarketView(row: MarketRow): MarketView {
     graduatedAtBlock: bigOrNull(row.graduated_at_block, "graduated_at_block"),
     graduatedAt:
       row.graduated_at === null ? null : Number(big(row.graduated_at, "graduated_at")),
+    volume24h: big(row.volume_24h, "volume_24h"),
+    trades24h: Number(big(row.trades_24h, "trades_24h")),
   };
 }
 
-export async function getMarketByToken(db: Db, token: string): Promise<MarketView | null> {
+export async function getMarketByToken(
+  db: Db,
+  token: string,
+  options: { now?: number; windowSeconds?: number } = {},
+): Promise<MarketView | null> {
+  const now = options.now ?? Math.floor(Date.now() / 1000);
+  const windowStart = now - (options.windowSeconds ?? WINDOW_SECONDS);
+
   const row = await db.queryOne<MarketRow>(
-    `SELECT ${MARKET_COLUMNS}
-     FROM markets m
-       JOIN market_state s ON s.market = m.market
-       LEFT JOIN blocks gb ON gb.number = s.graduated_at_block
+    `${marketQuery("$2")}
      WHERE m.token = $1`,
-    [toBytes(token)],
+    [toBytes(token), windowStart],
   );
   return row === null ? null : toMarketView(row);
 }
@@ -507,11 +553,7 @@ export async function listMarkets(db: Db, options: ExploreOptions): Promise<Mark
   const offsetParam = `$${params.length}`;
 
   const rows = await db.query<MarketRow>(
-    `SELECT ${MARKET_COLUMNS}
-     FROM markets m
-       JOIN market_state s ON s.market = m.market
-       LEFT JOIN blocks gb ON gb.number = s.graduated_at_block
-       ${WINDOW_JOIN.replace("$WINDOW_START", "$1")}
+    `${marketQuery("$1")}
      ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
      ORDER BY ${order[options.sort].replace("$NOW", nowParam)}, m.token
      LIMIT ${limitParam} OFFSET ${offsetParam}`,
@@ -1133,15 +1175,14 @@ export async function listMarketsByCreator(
   creator: string,
   limit = 100,
 ): Promise<MarketView[]> {
+  const windowStart = Math.floor(Date.now() / 1000) - WINDOW_SECONDS;
+
   const rows = await db.query<MarketRow>(
-    `SELECT ${MARKET_COLUMNS}
-     FROM markets m
-       JOIN market_state s ON s.market = m.market
-       LEFT JOIN blocks gb ON gb.number = s.graduated_at_block
+    `${marketQuery("$3")}
      WHERE m.creator = $1
      ORDER BY m.launched_at DESC
      LIMIT $2`,
-    [toBytes(creator), Math.max(1, Math.min(limit, 200))],
+    [toBytes(creator), Math.max(1, Math.min(limit, 200)), windowStart],
   );
 
   return rows.map(toMarketView);

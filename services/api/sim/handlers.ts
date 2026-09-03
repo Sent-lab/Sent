@@ -65,9 +65,17 @@ const baseMarket: MarketRow = {
   distributed: 100_000_000n * 10n ** 18n,
   curveCollateral: 50n * 10n ** 18n,
   qG: (1_000_000_000n * 10n ** 18n * 50n) / 76n,
+  // p0 = 10 quote wei per token. The price below is exactly 2× that, so the
+  // reference market cap must come out at $4,000 — a value that can be checked
+  // by hand rather than copied from the implementation.
+  p0: 10_000_000_000n,
+  pg: 250_000_000_000n,
   price: 20_000_000_000n,
+  pool: null,
   holderCount: 42,
   tradeCount: 137,
+  volume24h: 1_500_000n,
+  trades24h: 9,
   launchedAt: 1_700_000_000,
   lastBlock: 900n,
   // Not graduated. The marker must be absent, not placed at zero.
@@ -1027,6 +1035,56 @@ console.log("\n--- 14. \u00a7333/\u00a7367: distribution transparency ----------
   // running, and that is the fact a reader needs to see.
   const result = handleEpochs(port, TOKEN);
   check("a pending commitment reports FINALIZING", result.ok && result.data.status.state === "FINALIZING");
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 15. §21/§403: what a bot and a terminal need ---------------------");
+
+{
+  const port = new FakePort();
+  const detail = handleMarket(port, TOKEN);
+
+  if (!detail.ok) throw new Error("expected success");
+
+  /*
+   * §21's marketState is meant to expose enough for a bot to price locally
+   * between blocks. Without p0 and qG a caller can only ask this API for every
+   * quote, which makes the API a dependency of something that should be able to
+   * run without it.
+   */
+  check("the curve parameters are served", detail.data.curve.p0 === "10000000000");
+  check("including the graduation price", detail.data.curve.pg === "250000000000");
+  check("and the fixed supply", detail.data.curve.totalSupply === "1000000000000000000000000000");
+
+  // §21 graduatedPool. Null before graduation rather than absent, so a client
+  // does not have to tell "no pool yet" apart from "field not implemented".
+  check("the pool is null before graduation", detail.data.pool === null);
+
+  /*
+   * §403's pair.
+   *
+   * price is exactly 2× p0, so the reference cap must be exactly 2× the $2,000
+   * anchor. Checked by hand rather than against the implementation — that is the
+   * difference between testing the number and restating it.
+   */
+  check(
+    "reference market cap follows the launch anchor",
+    detail.data.referenceMarketCapUsd.value === "4000000000000000000000",
+  );
+  check(
+    "and is CALCULATED, since no oracle produced it",
+    detail.data.referenceMarketCapUsd.provenance === "CALCULATED",
+  );
+
+  /*
+   * ABSENT, not zero. The live figure needs the xStock/USD display feed, which
+   * is unverified (V-11). §279 forbids a placeholder in its place, and a zero
+   * renders as a market worth nothing rather than as a number nobody has.
+   */
+  check("the live USD cap is absent, not zero", detail.data.liveMarketCapUsd === undefined);
+
+  check("24h volume is served", detail.data.volume24h.value === "1500000");
+  check("with its trade count", detail.data.trades24h.value === "9");
 }
 
 // ---------------------------------------------------------------------------

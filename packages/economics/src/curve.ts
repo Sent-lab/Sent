@@ -42,6 +42,16 @@ export const TOTAL_SUPPLY: bigint = 1_000_000_000n * WAD;
 export const GRADUATION_MULTIPLE = 25n;
 
 /**
+ * The locked reference anchors, in USD wad (§18).
+ *
+ * $2,000 at launch, $50,000 at graduation. They are a REFERENCE path, not a
+ * live valuation: the curve runs in the quote asset's own units and the
+ * launch-time xStock/USD snapshot is what ties the two together, once, forever.
+ */
+export const REFERENCE_MC_START: bigint = 2_000n * WAD;
+export const REFERENCE_MC_GRADUATION: bigint = 50_000n * WAD;
+
+/**
  * Graduation endpoint as an exact rational of supply: qG/S = 50/76.
  * Derived from qG = 2*PG*S/(P0 + 3*PG) with PG = 25*P0 — P0 cancels, so the
  * endpoint is a pure fraction of supply and is independent of the xStock pair.
@@ -102,6 +112,31 @@ export function p0FromReferenceMarketCap(
 
   // p0 (wad quote per token) = quoteMc * WAD / supply
   return divFloor(quoteMc * WAD, supply);
+}
+
+/**
+ * Reference market cap in USD, from the price alone (§18, §403).
+ *
+ * NO ORACLE IS INVOLVED, AND THAT IS THE POINT
+ * --------------------------------------------
+ * The launch anchor is already baked into `p0` — it was derived from the
+ * $2,000 reference cap and the launch-time xStock/USD snapshot. So the ratio
+ * `price / p0` is the market's movement along its own reference path, and
+ * multiplying the $2,000 anchor by it recovers the reference cap exactly:
+ *
+ *   price = p0   -> $2,000
+ *   price = 25p0 -> $50,000
+ *
+ * which is §18's anchors, reproduced rather than restated.
+ *
+ * This is NOT the live USD market cap. §403 requires the two to be
+ * distinguishable, because the paired xStock moves after launch and the live
+ * figure at the graduation endpoint will not be exactly $50,000. Graduation
+ * follows this number; the live one is valuation context and follows nothing.
+ */
+export function referenceMarketCapUsd(p0: bigint, price: bigint): bigint {
+  if (p0 <= 0n) throw new RangeError("referenceMarketCapUsd: p0 must be positive");
+  return divFloor(REFERENCE_MC_START * price, p0);
 }
 
 /** Marginal price at distributed amount q: P(q) = p0 + dP * q / qG. */
