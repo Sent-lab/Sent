@@ -59,20 +59,106 @@ that silently corrected the projection would leave nothing to alert on.
 | A dataset's `total_cumulative` below the previous one | page | Cumulative entitlements must never decrease; a claim would underpay. Should be impossible — see `services/finalizer/sim/finalizer.ts`. |
 | `carry_forward` growing every epoch | warning | The pool is not reaching holders. Usually every eligible holder is excluded. |
 
+## The scrape targets
+
+Every service exposes `/metrics` in Prometheus text format, and every one except
+the API also exposes `/healthz` for an orchestrator's liveness probe.
+
+| Service | Metrics | Liveness |
+|---|---|---|
+| API | `:8080/metrics` | `/health` (§211 freshness, 200/503) |
+| Indexer | `:9101/metrics` | `:9101/healthz` |
+| Finalizer | `:9102/metrics` | `:9102/healthz` |
+| Worker | `:9103/metrics` | `:9103/healthz` |
+| Realtime | `:9104/metrics` | `:9104/healthz` |
+
+**Liveness is not freshness, anywhere.** `/healthz` answers "is this process
+doing its job", which is what an orchestrator restarts on. None of them report
+unhealthy because the chain is slow: a service that restarted itself whenever
+the RPC degraded would turn a degraded dependency into an outage. The API's
+`/health` is the exception and reports §211 freshness deliberately, because a
+load balancer removing a stale replica is the correct response.
+
+`/metrics` and `/health` are never rate limited. They are exactly the requests
+that must still work while something is hammering the service.
+
+### The gauges that are null rather than zero
+
+Several gauges return nothing when they cannot be determined, so the series
+disappears from the scrape instead of reading zero:
+
+- `sent_api_indexer_lag_blocks`, `sent_indexer_lag_blocks` — before the first
+  successful head read
+- `sent_indexer_event_delay_seconds` — before the first block is written
+- `sent_finalizer_publication_age_seconds` — before the first dataset
+- `sent_worker_jobs_pending` — when the queue depth read failed
+
+**Alert on `absent()` for these, not only on their value.** A lag gauge reading
+zero during an RPC outage is the reassuring answer and it is wrong; a missing
+series is honest and is the one worth catching.
+
+### Metric-based versions of the alerts above
+
+| Expression | Severity |
+|---|---|
+| `sent_indexer_lag_blocks > 50` for 5m | warning |
+| `sent_indexer_lag_blocks > 500` for 5m | page |
+| `absent(sent_indexer_lag_blocks)` for 5m | page |
+| `sent_indexer_event_delay_seconds > 600` for 5m | page |
+| `increase(sent_indexer_reorgs_total{depth="13+"}[1h]) > 0` | page |
+| `increase(sent_indexer_reindexes_total[24h]) > 0` | page |
+| `sent_finalizer_publication_age_seconds > 172800` | page |
+| `increase(sent_finalizer_failures_total[1h]) > 0` | warning |
+| `sent_worker_jobs_dead > 0` | warning |
+| `increase(sent_realtime_dropped_total[15m]) > 0` | warning |
+| `sent_realtime_connections > 0 and rate(sent_realtime_delivered_total[10m]) == 0` | page |
+| `rate(sent_api_rate_limited_total{route="/quote"}[15m]) > 1` | warning |
+
+The realtime one is worth reading twice. Connections open and delivery flat is
+a gateway that is accepting sockets and sending nothing — which looks identical
+to a quiet market from outside, and is a bug this service has already had:
+`Gateway.open()` constructs a session rather than returning one, and the flush
+loop called it per connection, wiping every subscription fifty times a second.
+
+`sent_indexer_event_delay_seconds` is the one that catches a stopped CHAIN. Lag
+goes to zero and stays there when no blocks are being produced, because the
+indexer is perfectly caught up with a chain that is not moving.
+
 ## What is deliberately NOT alerted on
 
 - **Quote latency.** Quotes are read from the chain per §423. A slow quote is an
-  RPC problem, and paging on it trains people to ignore the page.
+  RPC problem, and paging on it trains people to ignore the page. It is
+  measured — `sent_api_quote_seconds` — because the histogram is what tells you
+  whether an incident was the RPC's fault, which is a question asked after the
+  fact rather than at 3am.
 - **WebSocket disconnects.** Clients reconnect and replay. Individual drops are
   normal; the replay buffer overflowing is not, and that is covered by dropped
   message counts.
 - **Trade volume.** A quiet market is not an incident. Alerting on business
   metrics puts a pager on something nobody can fix at 3am.
 
+## Logs
+
+One JSON object per line, on stdout, from every service. Never pretty-printed:
+a multi-line entry is one that every aggregator splits into several, and the
+tail arrives as an unparseable fragment with no service name on it.
+
+Correlate on §437's fields: `requestId`, `chainId`, `blockNumber`, `txHash`,
+`logIndex`, `tokenAddress`, `marketAddress`, `epochId`, `account`. The API
+generates a `requestId` per request, accepts an inbound `X-Request-Id`, and
+echoes it — so a user reporting a problem can quote the identifier that finds
+their exact request.
+
+**Secrets cannot reach the aggregator.** Redaction is a property of the logger
+rather than of the call sites: keys whose name looks like a secret are replaced
+whatever they contain, recursively through nested objects, and a bare 32-byte
+hex string is replaced unless it arrived under a name that says it is a public
+hash. See `packages/observability/src/logger.ts`.
+
 ## Not yet decided
 
-- Metric transport. The runner exposes counters in-process (`JobRunner.metrics`)
-  and the API exposes `/health`; neither is scraped yet. Prometheus is the
-  obvious default but the deployment target is not fixed (§434).
-- Log aggregation. Workers emit one JSON object per line, which is ready for a
-  collector that does not exist yet.
+- The collector itself. Every service is scrapeable and every log line is
+  structured; nothing scrapes or collects them because the deployment target is
+  not fixed (§434).
+- Reference-price freshness (§146). There is no live oracle to measure — V-11 is
+  unverified, and §279 forbids a placeholder standing in for one.
