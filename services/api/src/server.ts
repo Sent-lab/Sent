@@ -46,11 +46,18 @@ import {
 } from "./handlers.ts";
 import { PostgresPort, type PortConfig } from "./port.ts";
 import {
+  RateLimiter,
+  clientKey,
+  READ_LIMIT,
+  QUOTE_LIMIT,
+} from "./ratelimit.ts";
+import {
   createApiRegistry,
   routeLabel,
   statusClass,
   REQUEST_SECONDS,
   REQUESTS_TOTAL,
+  RATE_LIMITED,
 } from "./observability.ts";
 
 export interface ServerConfig extends PortConfig {
@@ -59,6 +66,15 @@ export interface ServerConfig extends PortConfig {
   readonly chainId: number;
   /** Structured log threshold (§437). Defaults to info. */
   readonly logLevel?: "debug" | "info" | "warn" | "error";
+  /**
+   * Whether `X-Forwarded-For` may be believed.
+   *
+   * Off by default. Trusting it without a proxy in front makes rate limiting
+   * useless, because the header is attacker-controlled and every request can
+   * claim a fresh identity. Turning it on without a proxy is worse than having
+   * no limiter at all, so it is opt-in and the deployment has to say so.
+   */
+  readonly trustProxy?: boolean;
   /** How often the freshness snapshot is refreshed, in ms. */
   readonly refreshIntervalMs: number;
   /**
@@ -121,6 +137,18 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
    * that finds their exact request in the logs — which is the entire point of
    * having one.
    */
+  /*
+   * §425's rate limiting, in two budgets.
+   *
+   * Reads are generous — a terminal polling several endpoints while someone
+   * watches a chart is normal and must never be throttled. Quotes are not: each
+   * one is an RPC call on a shared provider quota (§423 requires the quote to
+   * come from the chain), so a bot with a retry loop and no backoff would
+   * exhaust it and break quoting for everybody else.
+   */
+  const readLimiter = new RateLimiter(READ_LIMIT);
+  const quoteLimiter = new RateLimiter(QUOTE_LIMIT);
+
   app.addHook("onRequest", async (request, reply) => {
     const id = request.headers["x-request-id"];
     const requestId =
@@ -130,6 +158,48 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
     (request as { sentStartedAt?: bigint }).sentStartedAt = process.hrtime.bigint();
 
     reply.header("x-request-id", requestId);
+
+    // Never rate limited: an operator's scrape and an orchestrator's probe are
+    // exactly the requests that must still work while something is hammering
+    // the service, and refusing them turns a load problem into an outage that
+    // also cannot be observed.
+    const path = request.url.split("?")[0] ?? "/";
+    if (path === "/metrics" || path.endsWith("/health")) return;
+
+    const isQuote = request.method === "POST" && path.endsWith("/quote");
+    const limiter = isQuote ? quoteLimiter : readLimiter;
+    const budget = isQuote ? QUOTE_LIMIT : READ_LIMIT;
+
+    const key = clientKey(
+      request.socket.remoteAddress,
+      request.headers["x-forwarded-for"] as string | undefined,
+      config.trustProxy ?? false,
+    );
+
+    const decision = limiter.take(key, Date.now());
+
+    reply.header("x-ratelimit-limit", String(budget.capacity));
+    reply.header("x-ratelimit-remaining", String(decision.remaining));
+
+    if (!decision.allowed) {
+      metrics.increment(RATE_LIMITED, { route: routeLabel(request.url) });
+      reply.header("retry-after", String(decision.retryAfter));
+
+      /*
+       * §42: contextual and recovery-oriented, never a bare "Too many
+       * requests." A client that is being limited needs to know it is a rate
+       * and not a failure, and that nothing about their position changed.
+       */
+      return reply.code(429).send({
+        ok: false,
+        code: "RATE_LIMITED",
+        message: `Too many requests. Try again in ${decision.retryAfter}s — nothing about your position or funds has changed.`,
+        retryable: true,
+        freshness: handleHealth(port).freshness,
+      });
+    }
+
+    return;
   });
 
   app.addHook("onResponse", async (request, reply) => {

@@ -23,6 +23,7 @@ export const QUOTE_FAILURES = "sent_api_quote_failures_total";
 export const INDEXER_LAG = "sent_api_indexer_lag_blocks";
 export const CHAIN_CONNECTED = "sent_api_chain_connected";
 export const SERVING = "sent_api_serving";
+export const RATE_LIMITED = "sent_api_rate_limited_total";
 
 export interface ApiMetricSources {
   /** Chain head minus indexed height, as this process last observed it. */
@@ -47,6 +48,15 @@ export function createApiRegistry(sources: ApiMetricSources): Registry {
    */
   registry.histogram(QUOTE_SECONDS, "Quote round trip to the chain, in seconds.");
   registry.counter(QUOTE_FAILURES, "Quotes the chain would not answer.");
+
+  /*
+   * Refusals, by route.
+   *
+   * Worth its own counter rather than living inside the 4xx bucket: a rising
+   * 4xx rate is usually a client bug, while a rising refusal rate on /quote is
+   * the RPC quota being protected — and one of those needs someone to look.
+   */
+  registry.counter(RATE_LIMITED, "Requests refused by the rate limiter, by route.");
 
   /*
    * Lag, connectivity and serving are all read at scrape time.

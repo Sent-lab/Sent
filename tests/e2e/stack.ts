@@ -1680,6 +1680,56 @@ try {
 
     check("24h volume is served", BigInt(String((md.volume24h as Record<string, unknown>)?.value)) > 0n);
 
+    /*
+     * §425's rate limiting, against the real server.
+     *
+     * The endpoint that matters is POST /quote: §423 requires it to go to the
+     * chain, so every unauthenticated request spends an RPC call on a shared
+     * quota. A retry loop with no backoff exhausts it and breaks quoting for
+     * everybody.
+     */
+    const burst = await Promise.all(
+      Array.from({ length: 30 }, () =>
+        app.inject({
+          method: "POST",
+          url: "/quote",
+          payload: { token, side: "BUY", amount: "1000000" },
+        }),
+      ),
+    );
+
+    const limited = burst.filter((r) => r.statusCode === 429);
+    check("a quote flood is refused", limited.length > 0);
+
+    const first = limited[0];
+    check("with Retry-After", (first?.headers["retry-after"] ?? "0") !== "0");
+    check("and a named, retryable code", JSON.parse(first?.body ?? "{}").code === "RATE_LIMITED");
+
+    // §42: the copy has to say nothing about their position changed. A refusal
+    // that reads like a failure is the failure.
+    check(
+      "and copy that says nothing moved",
+      String(JSON.parse(first?.body ?? "{}").message).includes("nothing about your position"),
+    );
+
+    /*
+     * Health and metrics are never limited. They are exactly the requests that
+     * must still work while something is hammering the service — refusing them
+     * turns a load problem into an outage nobody can observe.
+     */
+    const probes = await Promise.all(
+      Array.from({ length: 40 }, () => app.inject({ method: "GET", url: "/metrics" })),
+    );
+    check("the scrape endpoint is never rate limited", probes.every((r) => r.statusCode === 200));
+
+    const healthProbes = await Promise.all(
+      Array.from({ length: 40 }, () => app.inject({ method: "GET", url: "/health" })),
+    );
+    check(
+      "nor is health",
+      healthProbes.every((r) => r.statusCode === 200 || r.statusCode === 503),
+    );
+
     const health = await get("/health");
     check("health answers", health.status === 200 || health.status === 503);
     check("with a freshness envelope", health.body.freshness !== undefined);
