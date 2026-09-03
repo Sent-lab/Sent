@@ -491,8 +491,9 @@ their time.
 **Migration impact:** none. There is no migration path, deliberately — one would be a
 withdrawal path with a longer name.
 **Approved by:** implementation agent, under V-09's escalation clause. **The three HyperSwap
-addresses remain owner-blocked** and cannot be guessed: two are immutable in the router's
-constructor.
+addresses remain owner-blocked** and cannot be guessed: all three are immutable in the router's
+constructor, and the position manager is immutable in the lock as well — so a wrong one means
+redeploying both while the old lock still holds a real position that nothing can move.
 
 ---
 

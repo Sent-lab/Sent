@@ -189,6 +189,27 @@ First-party docs at `docs.hyperswap.exchange` returned HTTP 403 to automated fet
 
 ---
 
+### §254's fee-tier checklist, scored
+
+§254 asks for five things before a tier is chosen. The choice is 1% (tick spacing 200),
+recorded as D-015, and three of the five are done:
+
+| Step | State |
+|---|---|
+| inspect official deployed fee tiers | done — V-07 |
+| check compatibility with the target xStock pair | **open** — V-02, V-03 |
+| model the initial LP | done — the endpoint-balance test in `V3Math.t.sol` |
+| validate the final curve price mapping | done — `V3Math`, round-trip fuzzed |
+| simulate tick rounding | **partial** — bounded against a mock position manager, not a real pool |
+| document the resulting choice | done — D-015 |
+
+The two open items both need the real venue, which is the same blocker as V-06. Neither can
+change the tier by itself: §254's escalation clause applies only if an integration detail
+"changes product economics materially", and a full-range position at a fixed tier has no
+parameter left for a venue detail to move.
+
+---
+
 ## V-07 — HyperSwap V3 fee tiers and tick spacings · **VERIFIED**
 
 ```text
@@ -297,8 +318,17 @@ who can stop paying the creator by doing nothing.
 and §17's permanence should not depend on a key. Custody with no keys is strictly stronger than
 custody behind good ones.
 
-**Still owner-blocked:** the three HyperSwap addresses. Two are immutable in the router's
-constructor, so they cannot be guessed and corrected later.
+**Still owner-blocked:** the three HyperSwap addresses — the V3 factory, the
+`NonfungiblePositionManager` and the `SwapRouter`.
+
+**All three are immutable in the router's constructor**, and the position manager is immutable
+in the lock as well. A wrong address is therefore not a configuration mistake to correct later:
+it means redeploying both contracts, while the old lock still holds a real LP position that
+nothing can move. They cannot be guessed.
+
+Of the three, the position manager is both the most consequential and the least known. It holds
+the NFT, so every market's permanent liquidity passes through it, and V-06 has surfaced no
+candidate for it at all.
 
 ---
 

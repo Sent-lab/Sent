@@ -74,9 +74,12 @@ contract Deploy is Script {
          *
          * It is written and tested — `GraduationRouter`, `PermanentLiquidityLock`
          * and `V3Math` — but its constructor takes three HyperSwap addresses
-         * that V-06 has not confirmed, and two of them are immutable once
-         * deployed. Guessing them produces a router that looks configured and
-         * mints a market's entire liquidity into a contract nobody verified.
+         * that V-06 has not confirmed, and ALL THREE are immutable once
+         * deployed — as is the position manager inside the lock. Guessing them
+         * produces a router that looks configured and mints a market's entire
+         * liquidity into a contract nobody verified, and correcting it later
+         * means redeploying both while the old lock still holds a real position
+         * that nothing can move.
          *
          * §279 forbids a placeholder standing in for an unverified dependency,
          * and a factory with no router already refuses to launch anything —
