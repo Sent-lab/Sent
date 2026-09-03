@@ -2105,6 +2105,54 @@ try {
     const cardMeta = card[0]?.metadata as Record<string, unknown>;
     check("explore cards carry metadata too", String(cardMeta?.description).includes("corrected"));
 
+    /*
+     * §117's social preview, served as an image rather than JSON.
+     *
+     * The endpoint most likely to be hit by something that is not a browser,
+     * and the one where a wrong content type means a link renders as a bare
+     * URL instead of a card.
+     */
+    const preview = await app.inject({
+      method: "GET",
+      url: `/markets/${token}/preview.svg`,
+    });
+
+    check("the API serves a share card", preview.statusCode === 200);
+    check(
+      "as an image, not JSON",
+      preview.headers["content-type"]?.toString().startsWith("image/svg+xml") === true,
+    );
+    check("with the token's ticker", preview.body.includes("E2E"));
+    check("and the platform named on it", preview.body.includes("SENT"));
+
+    /*
+     * §18's endpoint, on the card. The market graduated, so the reference cap
+     * is exactly $50,000 — the same literal the market detail asserts, reached
+     * through a completely different path.
+     */
+    check("showing the graduated reference cap", preview.body.includes("$50K"));
+
+    // Cacheable, and stale-while-revalidate. A preview that 500s because the
+    // database is slow is a link that renders as a bare URL, and a slightly old
+    // card beats no card by a wide margin.
+    check(
+      "and a cache policy that survives a slow database",
+      preview.headers["cache-control"]?.toString().includes("stale-while-revalidate") === true,
+    );
+
+    // No outbound fetch from a public endpoint. The creator's IPFS CID is
+    // served in the API for a client to fetch itself, in a browser, where the
+    // request is the user's rather than ours.
+    check("and nothing external embedded", !preview.body.includes("<image"));
+
+    const missingPreview = await app.inject({
+      method: "GET",
+      url: "/markets/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/preview.svg",
+    });
+    // JSON, not an SVG saying "not found" — a crawler would cache and display
+    // the latter.
+    check("an unknown market is a JSON 404, not a broken image", missingPreview.statusCode === 404);
+
     const health = await get("/health");
     check("health answers", health.status === 200 || health.status === 503);
     check("with a freshness envelope", health.body.freshness !== undefined);

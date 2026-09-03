@@ -26,6 +26,8 @@ import { createLogger } from "@sent/observability/logger";
 
 import { randomUUID } from "node:crypto";
 
+import { referenceMarketCapUsd } from "@sent/economics";
+
 import { Database } from "@sent/database";
 
 import {
@@ -46,6 +48,7 @@ import {
   type ExploreOptions,
 } from "./handlers.ts";
 import { PostgresPort, type PortConfig } from "./port.ts";
+import { renderPreview, PREVIEW_CACHE_CONTROL } from "./preview.ts";
 import {
   RateLimiter,
   clientKey,
@@ -458,6 +461,51 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
    * under a path that had been working. Distinct paths do not need the rule to
    * hold.
    */
+  /*
+   * §117's social preview, as an SVG.
+   *
+   * This is what a link to a token looks like pasted into X, Telegram or
+   * Discord. It deliberately does not embed the creator's IPFS image — see
+   * `preview.ts` for why fetching a stranger's URL from a public endpoint is a
+   * request-forgery surface with a public trigger, and why a mark derived from
+   * the address is the better answer rather than the fallback one.
+   */
+  scope.get("/markets/:token/preview.svg", async (request, reply) => {
+    const { token } = request.params as { token: string };
+
+    await port.loadMarket(token);
+    const market = port.getMarket(token);
+
+    if (market === null) {
+      // 404 as JSON, not as a broken image. A crawler that gets an SVG saying
+      // "not found" will cache and display it.
+      return reply.code(404).send({
+        ok: false,
+        code: "MARKET_NOT_FOUND",
+        message: `No market for token ${token}`,
+        retryable: false,
+        freshness: handleHealth(port).freshness,
+      });
+    }
+
+    const svg = renderPreview({
+      symbol: market.symbol,
+      name: market.name,
+      quoteSymbol: market.quoteSymbol,
+      token: market.token,
+      status: market.status,
+      graduationProgressBps: market.qG > 0n ? (market.distributed * 10_000n) / market.qG : 0n,
+      referenceMarketCapUsd: referenceMarketCapUsd(market.p0, market.price),
+      holderCount: market.holderCount,
+    });
+
+    return reply
+      .code(200)
+      .header("content-type", "image/svg+xml; charset=utf-8")
+      .header("cache-control", PREVIEW_CACHE_CONTROL)
+      .send(svg);
+  });
+
   scope.get("/markets/:token/epochs", async (request, reply) => {
     const { token } = request.params as { token: string };
     const q = request.query as Record<string, string | undefined>;
