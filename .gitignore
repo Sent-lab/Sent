@@ -54,3 +54,6 @@ Brand.png
 # Next build output
 apps/web/.next/
 apps/web/next-env.d.ts
+
+# Agent tooling, not product code
+.claude/
