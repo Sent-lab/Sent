@@ -29,6 +29,8 @@ import {
   listTrades as dbListTrades,
   getActiveCommitment,
   getClaimedTotal,
+  getLatestDataset,
+  getEntitlementForRoot,
   headBlockIndexed,
   listCandles as dbListCandles,
   type ExploreSort,
@@ -274,22 +276,61 @@ export class PostgresPort implements DataPort {
     );
   }
 
+  /**
+   * Load a holder's Stockback position.
+   *
+   * §293 requires estimated accrual and claimable entitlement to be
+   * DISTINGUISHABLE, and they come from genuinely different places:
+   *
+   *   `claimable` is money. It exists only under a commitment the attestors
+   *   activated on-chain, and it is paid as `cumulative - claimed` against THAT
+   *   root. The proof is served alongside it, because a claim without one is a
+   *   number the user cannot act on.
+   *
+   *   `estimatedAccrued` is a projection. It comes from the newest dataset this
+   *   node computed, which nobody has signed and the vault would not honour.
+   *
+   * Both were hardcoded to zero while the finalizer did not exist. It does now,
+   * so a holder with a real entitlement was being shown nothing — the failure is
+   * quiet, and on the side that looks like the user simply earned nothing.
+   */
   async loadStockback(market: string, account: string, quoteDecimals: number): Promise<void> {
-    const commitment = await getActiveCommitment(this.db, market);
-    const claimed = await getClaimedTotal(this.db, market, account);
+    void quoteDecimals;
 
-    quoteDecimals;
+    const [commitment, claimed, latest] = await Promise.all([
+      getActiveCommitment(this.db, market),
+      getClaimedTotal(this.db, market, account),
+      getLatestDataset(this.db, market),
+    ]);
+
+    // Against the ACTIVE root, not the newest one. A proof is only valid for the
+    // tree it was built from, and serving a newer proof against an older active
+    // root hands the user calldata that reverts.
+    const active =
+      commitment === null
+        ? null
+        : await getEntitlementForRoot(this.db, market, account, commitment.merkleRoot);
+
+    const claimable = active === null ? 0n : subtractClaimed(active.cumulative, claimed);
+
+    // The newest computed entitlement, whether or not it is attested yet.
+    const computed =
+      latest === null
+        ? null
+        : await getEntitlementForRoot(this.db, market, account, latest.merkleRoot);
+
+    // What the pipeline has worked out MINUS what is already payable, so the two
+    // figures do not double-count the same reward.
+    const accrued =
+      computed === null ? 0n : subtractClaimed(computed.cumulative, claimed) - claimable;
 
     this.cachedStockback.set(`${market.toLowerCase()}:${account.toLowerCase()}`, {
-      // Estimated accrual is computed by the Stockback service from TWAB, and is
-      // a projection rather than an entitlement (§293). Absent that service it
-      // reports zero rather than guessing — a wrong estimate here is a number a
-      // user would read as money.
-      estimatedAccrued: 0n,
-      claimable: 0n,
+      estimatedAccrued: accrued > 0n ? accrued : 0n,
+      claimable,
       lifetimeClaimed: claimed,
-      epochSequence: commitment?.epochSequence ?? 0n,
+      epochSequence: commitment?.epochSequence ?? latest?.epochSequence ?? 0n,
       epochEndsAt: nextEpochBoundary(),
+      ...(active !== null ? { proof: active.proof, cumulative: active.cumulative } : {}),
     });
   }
 
@@ -350,6 +391,17 @@ function estimateImpactBps(delta: bigint, qG: bigint, distributed: bigint): bigi
   if (qG === 0n || delta === 0n) return 0n;
   const remaining = qG > distributed ? qG - distributed : 1n;
   return (delta * 10_000n) / (remaining + delta);
+}
+
+/**
+ * Cumulative minus what has already been claimed, floored at zero.
+ *
+ * Never negative. A holder who claimed under a later root than the one being
+ * read would otherwise show a negative balance, which is not a state the vault
+ * can be in — it pays `cumulative - claimed` and reverts if that underflows.
+ */
+function subtractClaimed(cumulative: bigint, claimed: bigint): bigint {
+  return cumulative > claimed ? cumulative - claimed : 0n;
 }
 
 /** Epochs are 24h on a shared 00:00 UTC boundary (§329). */

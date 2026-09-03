@@ -850,6 +850,34 @@ try {
     check("an unknown market is a 404", missing.status === 404);
 
     // §211: a service that is behind still answers, and says so.
+    /*
+     * §293: estimated accrual and claimable entitlement must be distinguishable.
+     *
+     * At this point the finalizer has computed a dataset but no attestor has
+     * activated anything on-chain, which is precisely the state where the two
+     * figures differ — and where returning one number for both would tell a
+     * holder that unattested arithmetic is money they can withdraw.
+     */
+    const stockback = await get(`/markets/${token}/stockback/${account.address}`);
+    check("the API serves a Stockback position", stockback.status === 200);
+
+    const position = stockback.body.data as Record<string, unknown>;
+    const accrued = (position?.estimatedAccrued as Record<string, unknown>)?.value;
+    const claimable = (position?.claimable as Record<string, unknown>)?.value;
+
+    check("estimated accrual reflects the computed dataset", BigInt(String(accrued)) > 0n);
+
+    // Nothing is claimable until attestors activate a commitment on-chain. A
+    // non-zero figure here would be the API promising money the vault will not
+    // pay.
+    check("nothing is claimable without an activated commitment", claimable === "0");
+
+    check("the two are separate fields", accrued !== claimable);
+    check(
+      "and no proof is offered for an unattested root",
+      position?.proof === undefined,
+    );
+
     const health = await get("/health");
     check("health answers", health.status === 200 || health.status === 503);
     check("with a freshness envelope", health.body.freshness !== undefined);
