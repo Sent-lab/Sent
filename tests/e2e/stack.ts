@@ -1039,6 +1039,7 @@ try {
     host: "127.0.0.1",
     chainId: await publicClient.getChainId(),
     rpcUrl: RPC_URL,
+    factory,
     confirmations: 0,
     refreshIntervalMs: 60_000,
     quoteSymbols: new Map(),
@@ -1120,6 +1121,86 @@ try {
       "and no proof is offered for an unattested root",
       position?.proof === undefined,
     );
+
+    /*
+     * §221's cockpit, over the real projection and the real vault.
+     *
+     * The interesting part is that the creator ALREADY CLAIMED, a few hundred
+     * lines above. So the two fee figures must disagree: lifetime accrual is
+     * non-zero and permanent, while claimable is empty because the money is in
+     * their wallet. An implementation that summed indexed accruals would show a
+     * claim button over an amount the vault would refuse to pay.
+     */
+    const creator = await get(`/creators/${account.address}`);
+    check("the API serves a creator cockpit", creator.status === 200);
+
+    const cockpit = creator.body.data as Record<string, unknown>;
+    const launches = (cockpit?.launches ?? []) as Record<string, unknown>[];
+    check("listing the market they launched", launches.some((l) => l.token === token.toLowerCase()));
+
+    /*
+     * `fee_accruals` had no writer at all. The table shipped in the first
+     * migration and the indexer watched the factory, the reward vault and every
+     * market — but never the fee vault, so a creator's earnings had no source.
+     *
+     * Asserted with a `some` rather than an `every`: an `every` over an empty
+     * array passes, which is exactly how this check reported green while the
+     * table was empty.
+     */
+    const accruedFees = (cockpit?.accrued ?? []) as Record<string, unknown>[];
+    check("with a lifetime fee figure", accruedFees.length > 0);
+    check(
+      "which is what the chain credited",
+      accruedFees.some((a) => BigInt(String(a.amount)) > 0n),
+    );
+
+    const claimableFees = (cockpit?.claimable ?? []) as Record<string, unknown>[];
+    check("and nothing claimable, because it was already claimed", claimableFees.length === 0);
+
+    /*
+     * The two fee figures in this projection must be on the SAME SCALE.
+     *
+     * The market emits normalized quantities and the fee vault emits raw token
+     * amounts, so a six-decimal xStock produced 174432 in one table and
+     * 174431738875981363 in the other for the same fee. Both correct, both in
+     * the same database, differing by 10^12.
+     *
+     * Compared against the tape, because that is where a creator would see the
+     * other number, and a mismatch is only visible when the two are put side by
+     * side.
+     */
+    const tapeFees = (trades.body.data as Record<string, unknown>[]).reduce(
+      (sum, t) => sum + BigInt(String(t.creatorFee)),
+      0n,
+    );
+    const vaultFees = accruedFees.reduce((sum, a) => sum + BigInt(String(a.amount)), 0n);
+    const drift = vaultFees > tapeFees ? vaultFees - tapeFees : tapeFees - vaultFees;
+
+    // The vault rounds each accrual up at raw precision, so the totals differ by
+    // less than one raw unit per trade — not by a factor of a trillion.
+    const oneRawUnit = 10n ** BigInt(18 - 6);
+    const tradeCount = BigInt((trades.body.data as unknown[]).length);
+
+    check(
+      "lifetime fees agree with the tape to within rounding",
+      drift < oneRawUnit * tradeCount,
+    );
+
+    check(
+      "graduation progress is reported per launch",
+      launches.every((l) => (l.graduationProgressBps as Record<string, unknown>)?.value !== undefined),
+    );
+
+    // A creator who has never launched is an empty cockpit, not an error.
+    const stranger = await get("/creators/0x000000000000000000000000000000000000dEaD");
+    check("an unknown creator gets an empty cockpit", stranger.status === 200);
+    check(
+      "with no launches rather than a 404",
+      ((stranger.body.data as Record<string, unknown>)?.launches as unknown[])?.length === 0,
+    );
+
+    const badCreator = await get("/creators/nonsense");
+    check("a malformed address is refused", badCreator.status === 400);
 
     const health = await get("/health");
     check("health answers", health.status === 200 || health.status === 503);

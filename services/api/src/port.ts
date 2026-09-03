@@ -33,9 +33,11 @@ import {
   getEntitlementForRoot,
   headBlockIndexed,
   listCandles as dbListCandles,
+  listMarketsByCreator,
+  creatorAccruals,
   type ExploreSort,
 } from "@sent/database";
-import { launchMarketAbi } from "@sent/contracts";
+import { launchMarketAbi, launchpadFactoryAbi, feeVaultAbi } from "@sent/contracts";
 
 import type {
   DataPort,
@@ -45,12 +47,22 @@ import type {
   StockbackRow,
   QuoteResult,
   CandleBar,
+  CreatorRow,
 } from "./handlers.ts";
 
 const STATUS_NAMES = ["PRE_GRAD", "GRADUATING", "GRADUATED"] as const;
 
 export interface PortConfig {
   readonly rpcUrl: string;
+  /**
+   * The factory, which is where the fee vault's address comes from.
+   *
+   * Deliberately not its own environment variable. The factory already holds
+   * `FEE_VAULT` and the two must agree; a second variable is a second thing that
+   * can be set to the wrong address, and the failure would be an API showing a
+   * creator someone else's balance.
+   */
+  readonly factory: `0x${string}`;
   /** Quote symbols by asset address, from the registry. Display only. */
   readonly quoteSymbols: ReadonlyMap<string, string>;
   readonly confirmations: number;
@@ -132,6 +144,10 @@ export class PostgresPort implements DataPort {
     return rows.slice(-limit);
   }
 
+  getCreator(address: string): CreatorRow | null {
+    return this.cachedCreators.get(address.toLowerCase()) ?? null;
+  }
+
   getStockback(market: string, account: string): StockbackRow | null {
     return this.cachedStockback.get(`${market.toLowerCase()}:${account.toLowerCase()}`) ?? null;
   }
@@ -159,6 +175,10 @@ export class PostgresPort implements DataPort {
   private readonly cachedStockback = new Map<string, StockbackRow>();
   private readonly cachedQuotes = new Map<string, QuoteResult>();
   private readonly cachedCandles = new Map<string, CandleBar[]>();
+  private readonly cachedCreators = new Map<string, CreatorRow>();
+
+  /** Resolved once from the factory, then remembered. */
+  private feeVault: `0x${string}` | null = null;
 
   async loadMarkets(options: ExploreOptions): Promise<void> {
     const views = await dbListMarkets(this.db, {
@@ -332,6 +352,93 @@ export class PostgresPort implements DataPort {
       epochEndsAt: nextEpochBoundary(),
       ...(active !== null ? { proof: active.proof, cumulative: active.cumulative } : {}),
     });
+  }
+
+  /**
+   * Load a creator's cockpit (§221).
+   *
+   * Two fee figures from two different authorities, on purpose:
+   *
+   *   `accrued` is the projection's lifetime total — every fee the chain has ever
+   *   credited this creator, including ones already withdrawn.
+   *
+   *   `claimable` is read from the VAULT (§423), because it is the number a
+   *   button spends. Summing indexed accruals would tell a creator they can
+   *   withdraw money that is already in their wallet, and the claim would revert
+   *   with `NothingToClaim` after they paid gas to find out.
+   *
+   * The asset list comes from the projection because the vault has no enumerable
+   * one — `creatorBalance` is a mapping. An asset the creator never earned in has
+   * a zero balance, so nothing is missed by asking only about the ones indexed.
+   */
+  async loadCreator(address: string): Promise<void> {
+    const [views, accruals] = await Promise.all([
+      listMarketsByCreator(this.db, address),
+      creatorAccruals(this.db, address),
+    ]);
+
+    const vault = await this.resolveFeeVault();
+
+    const claimable: { asset: `0x${string}`; symbol: string; amount: bigint }[] = [];
+
+    if (vault !== null) {
+      for (const accrual of accruals) {
+        try {
+          const balance = (await this.client.readContract({
+            address: vault,
+            abi: feeVaultAbi,
+            functionName: "creatorBalance",
+            args: [address as `0x${string}`, accrual.asset],
+          })) as bigint;
+
+          if (balance > 0n) {
+            claimable.push({ asset: accrual.asset, symbol: this.symbolOf(accrual.asset), amount: balance });
+          }
+        } catch {
+          // An RPC failure must not turn into a zero. A zero here reads as
+          // "nothing to claim", which is a lie the creator cannot tell apart
+          // from the truth — so the asset is simply omitted, and the page shows
+          // the accrued figure with the freshness envelope saying why.
+        }
+      }
+    }
+
+    this.cachedCreators.set(address.toLowerCase(), {
+      launches: views.map((v) => this.toRow(v)),
+      claimable,
+      accrued: accruals.map((a) => ({
+        asset: a.asset,
+        symbol: this.symbolOf(a.asset),
+        amount: a.accrued,
+      })),
+    });
+  }
+
+  /**
+   * The fee vault, from the factory.
+   *
+   * Cached after the first success and never cached as a failure: an RPC blip at
+   * startup would otherwise disable every creator's claim figure until restart.
+   */
+  private async resolveFeeVault(): Promise<`0x${string}` | null> {
+    if (this.feeVault !== null) return this.feeVault;
+
+    try {
+      const vault = (await this.client.readContract({
+        address: this.config.factory,
+        abi: launchpadFactoryAbi,
+        functionName: "FEE_VAULT",
+      })) as `0x${string}`;
+
+      this.feeVault = vault;
+      return vault;
+    } catch {
+      return null;
+    }
+  }
+
+  private symbolOf(asset: `0x${string}`): string {
+    return this.config.quoteSymbols.get(asset.toLowerCase()) ?? "xSTOCK";
   }
 
   private toRow(v: {

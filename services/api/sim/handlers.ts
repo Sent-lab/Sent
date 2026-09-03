@@ -23,6 +23,8 @@ import {
   type TradeRow,
   type StockbackRow,
   type QuoteResult,
+  type CreatorRow,
+  handleCreator,
 } from "../src/handlers.ts";
 import { intentFingerprint, toNormalized, toRawForPayout } from "@sent/sdk";
 import { computeFees } from "@sent/economics";
@@ -131,6 +133,18 @@ class FakePort implements DataPort {
   }
   getStockback(): StockbackRow | null {
     return this.stockback;
+  }
+  creator: CreatorRow | null = {
+    launches: [baseMarket],
+    claimable: [
+      { asset: "0x5555555555555555555555555555555555555555", symbol: "NVDAx", amount: 250n },
+    ],
+    accrued: [
+      { asset: "0x5555555555555555555555555555555555555555", symbol: "NVDAx", amount: 900n },
+    ],
+  };
+  getCreator(): CreatorRow | null {
+    return this.creator;
   }
   quoteBuy(_m: string, amount: bigint): QuoteResult | null {
     return {
@@ -614,6 +628,60 @@ console.log("\n--- 8. Pagination is bounded ------------------------------------
 
   const zero = handleExplore(port, { limit: 0 });
   check("a zero limit does not error", zero.ok);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 10. §221: the creator cockpit --------------------------------------");
+
+{
+  const port = new FakePort();
+  const result = handleCreator(port, "0x4444444444444444444444444444444444444444");
+
+  if (!result.ok) throw new Error("expected success");
+
+  check("a creator's launches are listed", result.data.launches.length === 1);
+  check(
+    "with graduation progress as a sourced value",
+    result.data.launches[0]?.graduationProgressBps.value !== undefined,
+  );
+
+  /*
+   * The reason there are two fee figures at all.
+   *
+   * `claimable` is what the vault will pay right now; `accrued` is everything
+   * ever earned. They differ the moment a creator claims once, and collapsing
+   * them into a single number would either hide earnings or put a claim button
+   * over an amount the vault refuses to pay.
+   */
+  check(
+    "claimable and accrued are separate figures",
+    result.data.claimable[0]?.amount !== result.data.accrued[0]?.amount,
+  );
+  check("claimable is what the vault would pay", result.data.claimable[0]?.amount === "250");
+  check("accrued is the lifetime figure", result.data.accrued[0]?.amount === "900");
+
+  // Quantities cross the wire as strings. A creator holding more than 2^53 wei
+  // of fees is not exotic — that is under a hundredth of an ether.
+  check(
+    "amounts are serialised as strings",
+    typeof result.data.claimable[0]?.amount === "string",
+  );
+}
+
+{
+  const port = new FakePort();
+  port.creator = null;
+
+  const empty = handleCreator(port, "0x9999999999999999999999999999999999999999");
+
+  // Everyone starts with nothing. A 404 would make a new creator's first visit
+  // look like the page is broken rather than empty.
+  check("a creator with no launches is not an error", empty.ok);
+  check("and gets an empty cockpit", empty.ok && empty.data.launches.length === 0);
+
+  const bad = handleCreator(port, "0x123");
+  check("a malformed address is refused by name", !bad.ok && bad.code === "INVALID_ADDRESS");
+  check("and the refusal still carries freshness", bad.freshness !== undefined);
 }
 
 // ---------------------------------------------------------------------------

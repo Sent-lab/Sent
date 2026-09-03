@@ -32,6 +32,7 @@ import {
   handleCandles,
   CANDLE_INTERVALS,
   handleStockback,
+  handleCreator,
   handleHealth,
   type ExploreOptions,
 } from "./handlers.ts";
@@ -254,6 +255,23 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
       chainId: config.chainId,
     });
 
+    return reply.code(result.ok ? 200 : 400).send(result);
+  });
+
+  /*
+   * A creator's own markets and fees (§432).
+   *
+   * No authentication, because there is nothing here to protect: every figure is
+   * derived from public chain events, and the claim itself is authorised by the
+   * vault against `msg.sender` rather than by this API. Requiring a signature to
+   * READ public data would only teach creators to sign things on request.
+   */
+  app.get("/creators/:address", async (request, reply) => {
+    const { address } = request.params as { address: string };
+
+    if (/^0x[0-9a-fA-F]{40}$/.test(address)) await port.loadCreator(address);
+
+    const result = handleCreator(port, address);
     return reply.code(result.ok ? 200 : 400).send(result);
   });
 

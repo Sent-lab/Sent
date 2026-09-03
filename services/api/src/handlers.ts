@@ -104,11 +104,26 @@ export interface DataPort {
   getMarket(token: string): MarketRow | null;
   listTrades(market: string, limit: number): readonly TradeRow[];
   listCandles(market: string, intervalSeconds: number, limit: number): readonly CandleBar[];
+  getCreator(address: string): CreatorRow | null;
   getStockback(market: string, account: string): StockbackRow | null;
 
   /** Quote from the canonical curve, as the market itself would compute it. */
   quoteBuy(market: string, grossQuoteIn: bigint): QuoteResult | null;
   quoteSell(market: string, tokensIn: bigint): QuoteResult | null;
+}
+
+export interface CreatorRow {
+  readonly launches: readonly MarketRow[];
+  /**
+   * Payable right now, read from the vault (§423).
+   *
+   * Not the sum of indexed accruals: a fee already claimed is still an accrual,
+   * so the projection's total would tell a creator they can withdraw money that
+   * is already in their wallet.
+   */
+  readonly claimable: readonly { asset: string; symbol: string; amount: bigint }[];
+  /** Everything ever earned, from indexed events. A lifetime figure. */
+  readonly accrued: readonly { asset: string; symbol: string; amount: bigint }[];
 }
 
 export interface CandleBar {
@@ -363,6 +378,94 @@ export function handleTape(port: DataPort, token: string, limit = 50): ApiResult
       timestamp: t.timestamp,
     })),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Creator
+// ---------------------------------------------------------------------------
+
+export interface CreatorLaunch {
+  readonly token: string;
+  readonly market: string;
+  readonly name: string;
+  readonly symbol: string;
+  readonly quoteSymbol: string;
+  readonly quoteDecimals: number;
+  readonly status: string;
+  readonly graduationProgressBps: Sourced;
+  readonly holderCount: Sourced;
+  readonly launchedAt: number;
+}
+
+export interface CreatorResponse {
+  readonly creator: string;
+  readonly launches: readonly CreatorLaunch[];
+  /** Payable now, from the vault. */
+  readonly claimable: readonly { asset: string; symbol: string; amount: string }[];
+  /** Earned over all time, from indexed events. */
+  readonly accrued: readonly { asset: string; symbol: string; amount: string }[];
+}
+
+/**
+ * A creator's cockpit data (§221).
+ *
+ * Two fee figures, deliberately, and they are not the same number. `claimable`
+ * comes from the vault and is what a claim would actually pay; `accrued` comes
+ * from the projection and is what has ever been earned. Showing one figure would
+ * mean either telling a creator they can withdraw money they already withdrew,
+ * or hiding what they have earned in total.
+ *
+ * No admin surface of any kind. §221 is explicit that no token admin powers are
+ * exposed because none exist.
+ */
+export function handleCreator(port: DataPort, address: string): ApiResult<CreatorResponse> {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    return fail(port, "INVALID_ADDRESS", `${address} is not a 20-byte address`);
+  }
+
+  const row = port.getCreator(address.toLowerCase());
+
+  // A creator with no launches is not an error. Everyone starts there, and a
+  // 404 would make an empty cockpit look broken.
+  if (row === null) {
+    return ok(port, {
+      creator: address.toLowerCase(),
+      launches: [],
+      claimable: [],
+      accrued: [],
+    });
+  }
+
+  return ok(port, {
+    creator: address.toLowerCase(),
+    launches: row.launches.map((m) => ({
+      token: m.token,
+      market: m.market,
+      name: m.name,
+      symbol: m.symbol,
+      quoteSymbol: m.quoteSymbol,
+      quoteDecimals: m.quoteDecimals,
+      status: m.status,
+      graduationProgressBps: sourced(
+        ((m.distributed * 10_000n) / m.qG).toString(),
+        "CALCULATED",
+        m.lastBlock,
+        port.serverTime(),
+      ),
+      holderCount: sourced(String(m.holderCount), "INDEXED", m.lastBlock, port.serverTime()),
+      launchedAt: m.launchedAt,
+    })),
+    claimable: row.claimable.map((c) => ({
+      asset: c.asset,
+      symbol: c.symbol,
+      amount: c.amount.toString(),
+    })),
+    accrued: row.accrued.map((a) => ({
+      asset: a.asset,
+      symbol: a.symbol,
+      amount: a.amount.toString(),
+    })),
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -45,6 +45,7 @@ async function main(): Promise<void> {
     host: api.host,
     chainId: chain.chainId,
     rpcUrl: chain.rpcUrl,
+    factory: chain.factory,
     confirmations: chain.confirmations,
     refreshIntervalMs: api.refreshIntervalMs,
     allowedOrigins: api.allowedOrigins,
