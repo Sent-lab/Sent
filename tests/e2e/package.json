@@ -9,7 +9,8 @@
     "@sent/indexer": "workspace:*",
     "viem": "^2.56.3",
     "@sent/finalizer": "workspace:*",
-    "@sent/stockback": "workspace:*"
+    "@sent/stockback": "workspace:*",
+    "@sent/api": "workspace:*"
   },
   "scripts": {
     "test": "node --experimental-strip-types stack.ts"

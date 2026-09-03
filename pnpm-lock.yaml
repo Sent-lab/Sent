@@ -210,6 +210,9 @@ importers:
 
   tests/e2e:
     dependencies:
+      '@sent/api':
+        specifier: workspace:*
+        version: link:../../services/api
       '@sent/database':
         specifier: workspace:*
         version: link:../../packages/database

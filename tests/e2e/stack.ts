@@ -61,6 +61,7 @@ import {
 } from "@sent/database";
 import { Indexer, DEFAULT_CONFIG } from "@sent/indexer";
 import { Finalizer } from "@sent/finalizer";
+import { createServer } from "@sent/api";
 import { encodeLeaf, verifyProof } from "@sent/stockback/merkle";
 
 const RPC_URL = process.env.RPC_URL;
@@ -738,6 +739,111 @@ try {
       }
 
     }
+  }
+  // --- The API over the real projection ------------------------------------
+
+  section("Serving what was indexed");
+
+  /*
+   * `PostgresPort` and the Fastify server have never run against a real
+   * database. The handlers have seventy-one checks against a fake port, and the
+   * repository functions are covered directly — but the layer that joins them,
+   * and the serialisation on the way out, is exactly the shape of seam that has
+   * broken every other time in this system.
+   *
+   * The BigInt serialisation matters most. `JSON.stringify` throws on a BigInt,
+   * so the server installs a replacer; if that ever stopped being applied, every
+   * response carrying a quantity would fail — or worse, a `Number()` conversion
+   * would slip in and quietly round every price above 2^53.
+   */
+  const app = await createServer(db, {
+    port: 8123,
+    host: "127.0.0.1",
+    chainId: await publicClient.getChainId(),
+    rpcUrl: RPC_URL,
+    confirmations: 0,
+    refreshIntervalMs: 60_000,
+    quoteSymbols: new Map(),
+    allowedOrigins: ["http://localhost:3000"],
+  });
+
+  try {
+    const get = async (path: string): Promise<{ status: number; body: Record<string, unknown> }> => {
+      const response = await app.inject({ method: "GET", url: path });
+      return { status: response.statusCode, body: JSON.parse(response.body) as Record<string, unknown> };
+    };
+
+    const markets = await get("/markets?limit=10");
+    check("the API lists markets", markets.status === 200 && markets.body.ok === true);
+
+    const list = markets.body.data as Record<string, unknown>[];
+    check("including the one that was launched", list.some((m) => m.token === token.toLowerCase()));
+
+    const listed = list.find((m) => m.token === token.toLowerCase()) as Record<string, unknown>;
+
+    // Without this a client cannot place the decimal point at all — the bug that
+    // rendered a six-decimal price a trillion times too small.
+    check("with the registry's quote decimals", listed?.quoteDecimals === 6);
+
+    // Every quantity crosses as a string. A JSON number here is a lossy double
+    // for any market above 2^53 raw units (§424).
+    const price = (listed?.price as Record<string, unknown>)?.value;
+    check("prices cross the wire as strings", typeof price === "string");
+
+    const detail = await get(`/markets/${token}`);
+    check("the API serves the market detail", detail.status === 200);
+    check("marked GRADUATED", (detail.body.data as Record<string, unknown>)?.status === "GRADUATED");
+    check(
+      "with the graduation timestamp the chart marker needs",
+      typeof (detail.body.data as Record<string, unknown>)?.graduatedAt === "number",
+    );
+
+    const trades = await get(`/markets/${token}/trades?limit=20`);
+    check("the API serves the tape", trades.status === 200);
+    check("with every indexed trade", (trades.body.data as unknown[]).length >= 4);
+
+    const candles = await get(`/markets/${token}/candles?interval=300&limit=50`);
+    check("the API serves candles", candles.status === 200);
+
+    // Refused by name rather than clamped, so a client bug surfaces instead of
+    // silently receiving a different timeframe.
+    const badInterval = await get(`/markets/${token}/candles?interval=37`);
+    check("an unsupported interval is refused", badInterval.status === 400);
+    check("and says which", badInterval.body.code === "UNSUPPORTED_INTERVAL");
+
+    const missing = await get("/markets/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+    check("an unknown market is a 404", missing.status === 404);
+
+    // §211: a service that is behind still answers, and says so.
+    const health = await get("/health");
+    check("health answers", health.status === 200 || health.status === 503);
+    check("with a freshness envelope", health.body.freshness !== undefined);
+
+    // Every response carries provenance, not just the successful ones.
+    check("even a 404 carries freshness", missing.body.freshness !== undefined);
+
+    // CORS: the allowed origin is echoed, anything else gets nothing.
+    const allowed = await app.inject({
+      method: "GET",
+      url: "/markets?limit=1",
+      headers: { origin: "http://localhost:3000" },
+    });
+    check(
+      "an allowed origin is echoed back",
+      allowed.headers["access-control-allow-origin"] === "http://localhost:3000",
+    );
+
+    const denied = await app.inject({
+      method: "GET",
+      url: "/markets?limit=1",
+      headers: { origin: "https://evil.example" },
+    });
+    check(
+      "an unlisted origin gets no CORS header",
+      denied.headers["access-control-allow-origin"] === undefined,
+    );
+  } finally {
+    await app.close();
   }
 } finally {
   await db.close();
