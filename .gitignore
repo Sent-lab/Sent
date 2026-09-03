@@ -57,3 +57,6 @@ apps/web/next-env.d.ts
 
 # Agent tooling, not product code
 .claude/
+
+# TypeScript incremental build state. Machine-local, changes on every check.
+*.tsbuildinfo
