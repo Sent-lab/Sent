@@ -264,3 +264,72 @@ Both addresses stay fully predictable off-chain, so the vanity grinder can searc
 **UX impact:** none; the launch preview still shows the exact deployed address.
 **Migration impact:** none.
 **Approved by:** implementation agent (ordinary CHOOSE).
+
+---
+
+## D-010 — Realtime events travel over PostgreSQL NOTIFY, not a message broker
+
+**Class:** CHOOSE (infrastructure)
+**Date:** Day 5
+
+**Decision:** the indexer publishes events with `pg_notify` from inside the transaction
+that writes the rows they describe. The realtime service holds a dedicated connection
+that `LISTEN`s and pushes to subscribed sessions. There is no broker.
+
+**Reason:** NOTIFY is delivered on COMMIT. That single property is the whole argument.
+An event cannot reach a subscriber unless the rows it describes are already durable,
+and a block that rolls back announces nothing — both verified in
+`tests/integration/live.ts`. A broker published from inside the ingest transaction would
+deliver events for blocks that then rolled back; a broker published after the commit
+would drop them if the process died in between. Getting that right against an external
+system requires an outbox table and a relay, which is more moving parts than the
+database already gives for free.
+
+§434's topology lists Redis, but as a cache. Introducing it here as a bus would be a
+second thing to run, monitor and lose.
+
+**What this is not:** durable. A subscriber that is down misses whatever is published
+while it is down; NOTIFY has no backlog. That is acceptable because this is delivery and
+not authority (§138) — a client that missed messages reconnects with `sinceBlock`, and
+the gateway either replays from its buffer or refuses and marks the session degraded.
+
+**Revisit when:** the realtime tier needs more replicas than the database can hold
+listening connections for, or a second consumer needs a durable backlog. Both are
+scale problems, and neither is one this product has yet.
+
+**Economic impact:** none.
+**Security impact:** positive — one fewer network service holding market data.
+**UX impact:** positive; §22's "no manual refresh" is met without added infrastructure.
+**Migration impact:** none. Swapping the transport later touches two files.
+**Approved by:** implementation agent (ordinary CHOOSE).
+
+---
+
+## D-011 — CORS is an explicit origin list, hand-rolled, with no wildcard
+
+**Class:** CHOOSE (security posture)
+**Date:** Day 5
+
+**Decision:** the API allows browser origins named in `API_ALLOWED_ORIGINS` and no
+others. Unset means no browser may call it. The matching origin is echoed back; anything
+else receives no CORS headers at all. A wildcard cannot be configured, because `*` does
+not parse as a URL and the loader refuses it.
+
+**Reason:** §434 puts the web tier on a different hostname from the API, so every request
+the app makes is cross-origin — this is required for the product to work at all, which
+is exactly why it deserves to be deliberate rather than copied from a plugin's defaults.
+Echoing whatever `Origin` arrives is the usual shortcut and is equivalent to a wildcard.
+Neither matters today, because no endpoint takes credentials; both become dangerous the
+moment one does, and that change would not obviously prompt anyone to revisit CORS.
+
+Trailing slashes are refused at load: `https://sent.xyz/` never matches the header a
+browser sends, and the resulting failure looks like missing configuration rather than a
+typo, which is an expensive hour to lose during a deploy.
+
+**Economic impact:** none.
+**Security impact:** positive.
+**UX impact:** none when configured; total failure when not, which is the intended
+direction for this class of mistake.
+**Migration impact:** deployments must set `API_ALLOWED_ORIGINS`. Documented in
+`.env.example` and the compose file.
+**Approved by:** implementation agent (ordinary CHOOSE).

@@ -65,12 +65,17 @@ const ITEMS: readonly Item[] = [
   {
     title: "Trading terminal",
     state: "BUILDING",
-    body: "Chart, tape, market metrics and a trade panel that renders the signed transaction rather than a recomputed estimate.",
+    body: "Chart, live tape, market metrics and a trade panel that renders the signed transaction rather than a recomputed estimate.",
+  },
+  {
+    title: "Live updates",
+    state: "BUILDING",
+    body: "Trades reach the browser without a refresh. Events are published on commit, so nothing is announced for a block that rolled back, and a reconnect replays the gap or says it could not.",
   },
   {
     title: "Price chart",
-    state: "NEXT",
-    body: "Candles are already aggregated by the worker service. The chart itself is not yet wired to them.",
+    state: "BUILDING",
+    body: "Candlesticks, volume, six timeframes, crosshair and a graduation marker, drawn from integer prices so nothing is rounded on its way to the screen. Zoom and overlays are not built.",
   },
   {
     title: "Wallet connection and signing",

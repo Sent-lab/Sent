@@ -32,6 +32,18 @@ interface Entry {
 const ENTRIES: readonly Entry[] = [
   {
     date: "2026-09-03",
+    title: "Live updates, the chart, and four bugs found by opening the page",
+    items: [
+      "Trades now reach the browser without a refresh. Events are published inside the transaction that writes them, so nothing is announced for a block that rolled back, and a reconnect replays the gap rather than silently resuming.",
+      "Price chart: candlesticks, volume, six timeframes, crosshair, and a graduation marker placed in the bucket the event actually happened in.",
+      "Fixed: the realtime service replaced every client's session on each flush tick, discarding its subscriptions. A browser could connect, subscribe, and then receive nothing for the rest of its life.",
+      "Fixed: the API sent no CORS headers, so the browser could not call it at all — every endpoint worked from the command line and none worked from the app.",
+      "Fixed: a market with one trade rendered as a single slab across the whole chart. The test asserting that behaviour was itself wrong.",
+      "Fixed: the chart panel collapsed to less than half its box, because a percentage height had nothing to resolve against.",
+    ],
+  },
+  {
+    date: "2026-09-03",
     title: "Web application, and a display bug caught by running it",
     items: [
       "Design system built from the locked brand palette, with two modes: cinematic on discovery surfaces, calm and dense in the trading terminal.",
@@ -87,7 +99,9 @@ export default function UpdatesPage(): JSX.Element {
 
       <ol className={styles.entries}>
         {ENTRIES.map((entry) => (
-          <li key={entry.date} className={styles.entry}>
+          // Keyed on date AND title: two entries can share a day, and a
+          // duplicate key makes React reuse the wrong DOM node between them.
+          <li key={`${entry.date}-${entry.title}`} className={styles.entry}>
             <div className={styles.entryHead}>
               {/* A machine-readable date and a rendered one. Never relative: a
                   changelog line reading "3 days ago" is wrong by the next week. */}
