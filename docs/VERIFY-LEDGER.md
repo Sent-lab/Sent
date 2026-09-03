@@ -19,7 +19,7 @@ source, `PARTIAL`, or `BLOCKED` and escalated. Nothing in production may depend 
 > candidates to probe on-chain, and are recorded below with the PRIMARY read that confirmed
 > what they actually are.
 
-Last updated: Day 1.
+Last updated: Day 8.
 
 ---
 
@@ -27,12 +27,22 @@ Last updated: Day 1.
 
 | Status | Count | Rows |
 |---|---|---|
-| VERIFIED | 3 | V-01, V-07, V-16 |
+| VERIFIED | 6 | V-01, V-07, V-08, V-09, V-16, V-20 |
 | PARTIAL | 3 | V-06, V-10, V-15 |
-| UNVERIFIED | 11 | V-02, V-03, V-04, V-05, V-08, V-09, V-11, V-12, V-13, V-14, V-17 |
+| UNVERIFIED | 9 | V-02, V-03, V-04, V-05, V-11, V-12, V-13, V-14, V-17 |
 | OWNER-BLOCKED | 1 | V-18 |
+| OPEN, surfaced | 1 | V-19 |
 
-**P0 rows still open: V-02, V-03, V-05, V-09, V-13.** These can invalidate LOCKED behaviour.
+**P0 rows still open: V-02, V-03, V-05, V-13.** These can invalidate LOCKED behaviour.
+
+**Day 8 movement.** V-08 and V-09 closed together, against the real HyperSwap deployment
+rather than against a mock — see `contracts/test/fork/HyperSwapFork.t.sol`. V-06 located its
+last missing address by on-chain measurement but stays PARTIAL, because locating an address
+and having its vendor confirm it are different claims and only the second one clears this row.
+
+V-20 is new, and it is the uncomfortable kind of VERIFIED: what was verified is a constraint
+the masterplan does not account for anywhere in its 28,051 lines. Graduation costs 5.40M gas;
+HyperEVM's default block lane caps at 3.00M. The response is D-016.
 
 ---
 
@@ -168,7 +178,8 @@ WHY IT MATTERS:     graduation venue (LOCKED §17, §20)
 HOW TO VERIFY:      probe candidate addresses on-chain; confirm against first-party docs
 BLOCKS:             GraduationRouter, §416 geometry, LP lock
 OWNER:              Stream A
-STATUS:             PARTIAL — factory confirmed by PRIMARY read; NPM/quoter still open
+STATUS:             PARTIAL — all three addresses located and mutually confirmed by
+                    PRIMARY on-chain read; first-party confirmation still absent
 ```
 
 **Result, Day 1 (PRIMARY):** a candidate SwapRouter surfaced by a SECONDARY source was probed
@@ -180,12 +191,51 @@ candidate SwapRouter  0x4e2960a8cd19b467b82d26d83facb0fae26b094d
   .WETH9()         ->  0x5555555555555555555555555555555555555555   (WHYPE)
 ```
 
-Still required before any address enters `packages/config`: first-party confirmation that these
-are the canonical HyperSwap deployments, plus the NonfungiblePositionManager and quoter.
+**Result, Day 8 (PRIMARY):** the NonfungiblePositionManager, which was the missing piece,
+located by on-chain measurement rather than from a docs page.
+
+The method matters, because it is what makes the address self-evidencing. A position manager
+does not advertise itself, but it is the contract that *emits* `IncreaseLiquidity` — so
+scanning that event with no address filter returns the emitter, which IS the NPM. There is
+nothing to guess and nothing to trust:
+
+```text
+NonfungiblePositionManager  0x6eDA206207c09e5428F281761DdC0D300851fBC8
+  .name()        ->  "Hyperswap V3 Positions NFT-V1"
+  .symbol()      ->  "HSPX-V3-POS"
+  .factory()     ->  0xb1c0fa0b789320044a6f623cfe5ebda9562602e3
+  .totalSupply() ->  177,878 positions
+```
+
+**The three addresses are one deployment**, and that is asserted rather than assumed — a
+router pointed at a factory that does not know its own position manager would mint a market's
+entire liquidity into a pool nothing else can see:
+
+```text
+factory           0xB1c0fa0B789320044A6F623cFe5eBda9562602E3
+positionManager   0x6eDA206207c09e5428F281761DdC0D300851fBC8   .factory() -> factory
+swapRouter        0x4E2960a8cd19B467b82d26D83fAcb0fAE26b094D   .factory() -> factory
+```
+
+The loop was closed from the other end too: position #90652 (WHYPE / 0xb8ce59fc…, fee 3000)
+-> `factory.getPool(...)` = `0x56abfaf40f5b7464e9cc8cff1af13863d6914508` -> `pool.factory()`
+= the same factory. A live position, its pool, and the factory all agree.
+
+`test/fork/HyperSwapFork.t.sol` re-asserts the mutual references on every run, so this cannot
+rot silently into a copied constant.
+
+**Still required before any address enters `packages/config`: first-party confirmation.**
+That has not moved. Measurement proves these contracts are a coherent Uniswap-V3 deployment
+serving one factory with 177,878 live positions. It does not prove they are the deployment
+HyperSwap's team considers canonical, or that they will not be superseded. Those are claims
+only a first party can make.
+
 First-party docs at `docs.hyperswap.exchange` returned HTTP 403 to automated fetch; the
 `docs.hyperswap.pro` deployment page lists **V2 only** (factory
 `0x4df039804873717bff7d03694fb941cf0469b79e`, V2Router02
-`0xda0f518d521e0dE83fAdC8500C2D21b6a6C39bF9`) and no V3 section.
+`0xda0f518d521e0dE83fAdC8500C2D21b6a6C39bF9`) and no V3 section. The quoter is still not
+located, and is not needed: V-19's blended bound needs a quote, but the router quotes the
+post-grad leg through the pool it just created.
 
 ---
 
@@ -200,11 +250,11 @@ recorded as D-015, and three of the five are done:
 | check compatibility with the target xStock pair | **open** — V-02, V-03 |
 | model the initial LP | done — the endpoint-balance test in `V3Math.t.sol` |
 | validate the final curve price mapping | done — `V3Math`, round-trip fuzzed |
-| simulate tick rounding | **partial** — bounded against a mock position manager, not a real pool |
+| simulate tick rounding | done — measured on the real HyperSwap pool, V-08 |
 | document the resulting choice | done — D-015 |
 
-The two open items both need the real venue, which is the same blocker as V-06. Neither can
-change the tier by itself: §254's escalation clause applies only if an integration detail
+One open item remains, and it is not a venue question: the target xStock pair (V-02, V-03).
+Tick rounding closed on Day 8 against the real pool. Neither can change the tier by itself: §254's escalation clause applies only if an integration detail
 "changes product economics materially", and a full-range position at a fixed tier has no
 parameter left for a venue detail to move.
 
@@ -237,7 +287,7 @@ feeding the V-08 geometry proof; it is not yet made.
 
 ---
 
-## V-08 — Exact V3 mint geometry at the final marginal price · **UNVERIFIED · P0 (C-03)**
+## V-08 — Exact V3 mint geometry at the final marginal price · **VERIFIED · P0 (C-03)**
 
 ```text
 UNKNOWN:            the tick range policy that consumes remaining TOKEN + curve collateral within
@@ -248,7 +298,8 @@ CURRENT ASSUMPTION: analytic endpoint holds; NOT yet proven against tick math
 HOW TO VERIFY:      simulate mint amount0/amount1 at PG for candidate ranges on a HyperEVM fork
 BLOCKS:             GraduationRouter, §417 dust destination, graduation acceptance
 OWNER:              Stream A
-STATUS:             UNVERIFIED — analytic side proven Day 1 (`pnpm sim`), tick side open
+STATUS:             VERIFIED — analytic side Day 1 (`pnpm sim`), tick side Day 8 on the
+                    real HyperSwap pool
 ```
 
 If exact geometry demands a material economic change, that is a **product escalation** under
@@ -263,15 +314,32 @@ endpoint puts the remaining supply at exactly the collateral that came with it: 
 TOKEN at `pg` against the ~$17,105 the curve accumulated reaching it. That is not a fit — the
 endpoint was derived to make it true, and `V3Math.t.sol` asserts the balance directly.
 
-What is left open is the tick side against a real pool: the router hands both balances to the
-position manager and lets IT compute liquidity, rather than deriving amounts from a ratio,
-which is what §416 forbids. The leftover is bounded by test at one part in ten thousand of the
-migration and goes to the lock (§417). Confirming that bound against HyperSwap's own
-`NonfungiblePositionManager` is the remaining fork-test.
+The tick side is the part a mock cannot settle. The router hands both balances to the position
+manager and lets IT compute liquidity, rather than deriving amounts from a ratio — which is
+what §416 forbids — so the leftover depends on HyperSwap's arithmetic, not on ours.
+
+**Measured, Day 8, on the real HyperSwap `NonfungiblePositionManager`** (`HyperSwapFork.t.sol`):
+
+```text
+migrated    342,105,263e18 TOKEN   /   171.0526315 WHYPE
+token dust             119 wei     =  3.5e-25 of the migration
+quote dust          13,161 wei     =  7.7e-14 of the migration
+```
+
+The §416 tolerance is one part in ten thousand. The real venue came in **twenty-one orders of
+magnitude** inside it on the token side. The dust is not a rounding allowance being spent; it
+is the last representable wei of a 256-bit division, and it goes to the lock (§417).
+
+`slot0().sqrtPriceX96` after the mint equals `V3Math.initialSqrtPriceX96(pg, …)` **exactly** —
+not within tolerance, equal. §15's spot-price continuity is a hard invariant and it holds on
+the venue rather than only in our model of it.
+
+This is what the row asked for: "simulate mint amount0/amount1 requirements at PG for candidate
+ranges on a HyperEVM fork." Done, against the deployed contract.
 
 ---
 
-## V-09 — Delegated-position permanent lock + creator fee-right custody · **UNVERIFIED · P0 (C-07)**
+## V-09 — Delegated-position permanent lock + creator fee-right custody · **VERIFIED · P0 (C-07)**
 
 ```text
 UNKNOWN:            can a V3 position have principal permanently non-withdrawable while fee
@@ -282,7 +350,8 @@ HOW TO VERIFY:      inspect NonfungiblePositionManager capabilities; fork-test c
                     decreaseLiquidity() is unreachable
 BLOCKS:             §178.4 release gate. The custody design is no longer blocked — see below.
 OWNER:              Stream A / I
-STATUS:             UNVERIFIED — the primitive question is ANSWERED; the addresses are not
+STATUS:             VERIFIED — the primitive question is answered and the lock is
+                    fork-tested against the real position manager
 ```
 
 If no venue primitive provides this, the lock must be a purpose-built non-withdrawable holder
@@ -318,17 +387,33 @@ who can stop paying the creator by doing nothing.
 and §17's permanence should not depend on a key. Custody with no keys is strictly stronger than
 custody behind good ones.
 
-**Still owner-blocked:** the three HyperSwap addresses — the V3 factory, the
-`NonfungiblePositionManager` and the `SwapRouter`.
+**Proven on the real venue, Day 8.** The claim in this row is not one a mock can support — a
+mock position manager does whatever our reading of V3 says it does, including being wrong in
+the same direction as the contract under test. So the whole question was re-asked against
+HyperSwap's deployed `NonfungiblePositionManager`:
+
+```text
+ownerOf(positionId)        ->  the lock          a real HyperSwap NFT, really held
+positions(positionId)      ->  liquidity > 0     and a real position
+lock.collect(positionId)   ->  succeeds, pays the market, position does not move
+decreaseLiquidity(...)     ->  reverts
+```
+
+The last line is the one that carries §17, and it is worth being precise about *why* it
+reverts. Not because the lock refuses it — the lock has no function that would call it. The
+NPM accepts `decreaseLiquidity` only from the owner or an approved operator; the lock is the
+owner and approves nobody. **There is no sender who could make the call.** That is a property
+of the arrangement, not a check somebody could find a way around.
+
+**Still owner-blocked:** first-party confirmation of the three HyperSwap addresses — the V3
+factory, the `NonfungiblePositionManager` and the `SwapRouter`. V-06 has now *located* all
+three by on-chain measurement and the fork suite asserts they are one deployment, which is a
+different and weaker thing than the vendor saying so.
 
 **All three are immutable in the router's constructor**, and the position manager is immutable
 in the lock as well. A wrong address is therefore not a configuration mistake to correct later:
 it means redeploying both contracts, while the old lock still holds a real LP position that
-nothing can move. They cannot be guessed.
-
-Of the three, the position manager is both the most consequential and the least known. It holds
-the NFT, so every market's permanent liquidity passes through it, and V-06 has surfaced no
-candidate for it at all.
+nothing can move.
 
 ---
 
@@ -518,3 +603,69 @@ user is told what their protection does and does not cover.
 This is mitigation, not a fix. The bound is genuinely weaker than §14 requires
 until the router can quote both legs, and it must not ship to mainnet in this
 state without an explicit accepted-risk decision.
+
+---
+
+## V-20 — HyperEVM block gas lanes vs. the cost of graduation · **VERIFIED · P0**
+
+```text
+UNKNOWN:            the gas ceiling a graduating transaction must fit inside on HyperEVM
+WHY IT MATTERS:     LOCKED §14 graduates inside the buy that crosses the endpoint. If that
+                    transaction cannot be included in the block lane an ordinary buyer sends
+                    to, then the market that reaches qG cannot be graduated by the person who
+                    got it there - and every crossing buy fails for the user who makes it.
+CURRENT ASSUMPTION: (none needed - measured)
+HOW TO VERIFY:      sample eth_getBlockByNumber gasLimit across the tip; measure the
+                    graduation path on a fork
+BLOCKS:             §14 atomic graduation, §16 failure handling, §178.4 release gate
+OWNER:              Stream A / H
+STATUS:             VERIFIED (PRIMARY) - the constraint is real; the RESPONSE is D-016
+```
+
+**The masterplan does not mention this.** A grep of all 28,051 lines for block lanes, gas
+limits or big blocks returns nothing. This is not a spec the code failed to follow; it is a
+property of the chain that no part of the plan accounts for.
+
+**Measured, Day 8.** 600 blocks sampled from the tip:
+
+```text
+gasLimit  3,000,000   394 of 400 sampled   the default lane
+gasLimit 30,000,000     6 of 400 sampled   the opt-in lane, roughly 1 block in 120
+
+highest gasUsed observed in a default-lane block   2,993,188 of 3,000,000
+```
+
+The default lane is not merely small, it runs **saturated** - 99.8% of its ceiling in an
+ordinary block. There is no headroom to grow into.
+
+**And the graduation path does not fit in it:**
+
+```text
+full graduation, measured on the fork          5,395,811 gas
+  of which createAndInitializePoolIfNecessary  2,777,465 gas
+default lane ceiling                           3,000,000 gas
+```
+
+`createPool` alone is 92.6% of an entire default-lane block. The pool deployment is the
+dominant cost and it is not ours to optimise - it is HyperSwap's pool bytecode.
+
+**Corroboration from an independent direction.** Foundry's `isolate` mode models each
+top-level call as a real transaction. Under it, this suite capped at 3.19M gas and refused to
+rise no matter what `block_gas_limit` was set to, failing as `OutOfGas` inside the pool
+deployment. That was not a tooling defect to work around. Isolate mode was reproducing the
+chain's actual ceiling, and it found this constraint before the block sampling did.
+
+**What this means, stated plainly.** A buy that crosses qG needs ~5.4M gas. A user who has not
+opted into the large lane cannot have that transaction included at all. So under §14 as
+written, the crossing buy fails for essentially every buyer, and the market stalls one wei
+short of graduating - permanently, since every subsequent attempt fails the same way.
+
+**NOT verified, and it matters.** The mechanism for opting an address into the large lane is
+a Hyperliquid L1 action, not an EVM call, so nothing above measures it. What is measured is
+that the two lanes exist, what they cap at, and how often each is produced. Any design that
+depends on a specific opt-in mechanism must confirm it first-hand before it ships.
+
+**Response:** §16 and §95.6 already prescribe one, for exactly this case - "jika dependency
+eksternal mengharuskan retryable workflow: deterministic escrow, permissionless
+`finalizeGraduation()`, no retry caller privilege." The block lane is that external
+dependency. Carried into D-016 rather than decided here; this row records the constraint.

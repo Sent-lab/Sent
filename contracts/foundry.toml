@@ -56,10 +56,10 @@ fail_on_revert = false
 # real transaction, and under it this suite capped at 3.19M no matter what
 # `block_gas_limit` said. That is not a Foundry defect. Isolate mode was
 # reproducing HyperEVM's actual small-lane ceiling, and it found the constraint
-# recorded as V-16: graduation cannot be included in a default-lane block.
+# recorded as V-20: graduation cannot be included in a default-lane block.
 #
 # These two settings exist so the fork tests measure the CONTRACTS. The lane
-# constraint is a deployment fact, tested in its own right by V-16, not something
+# constraint is a deployment fact, tested in its own right by V-20, not something
 # to rediscover as an unexplained OutOfGas in every unrelated mint assertion.
 [profile.fork]
 block_gas_limit = 30000000
