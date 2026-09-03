@@ -538,3 +538,112 @@ defence.
 **UX impact:** none.
 **Migration impact:** none.
 **Approved by:** implementation agent (§415 states the default; this applies it).
+
+---
+
+## D-016 — Graduation escrows and finalises, because it does not fit in a block
+
+**Class:** ESCALATION RESOLVED (§16, §95.6 — the retryable branch, invoked)
+**Date:** Day 8
+**Supersedes:** the atomic reading of §14 steps 3–12
+**Closes:** V-19
+**Rests on:** V-20
+
+**Decision:** the buy that reaches the graduation endpoint closes the curve, refunds the
+buyer's unspent quote, and stops. A permissionless `finalizeGraduation()` mints the HyperSwap
+position in a later transaction. `GRADUATING` becomes a state markets rest in.
+
+**Reason: 5,395,811 does not fit in 3,000,000.**
+
+HyperEVM produces two block lanes, and this was measured rather than read:
+
+```text
+gasLimit  3,000,000   394 of 400 sampled blocks   the default lane
+gasLimit 30,000,000     6 of 400 sampled blocks   the opt-in lane, ~1 block in 120
+
+highest gasUsed seen in a default-lane block   2,993,188 of 3,000,000
+```
+
+The default lane is not merely small, it runs at 99.8% of its ceiling in ordinary blocks. And
+a full graduation costs 5,395,811 gas against the real HyperSwap deployment, of which
+`createAndInitializePoolIfNecessary` alone is 2,777,465 — 92.6% of an entire default-lane
+block before this protocol does anything at all. That cost is HyperSwap's pool bytecode. It is
+not ours to optimise.
+
+So under §14 read atomically, the crossing buy could not be included at all for a buyer on the
+default lane, which is essentially every buyer. The market would stall one wei short of
+graduating, permanently, because every retry fails identically. **The masterplan does not
+mention block lanes anywhere in its 28,051 lines** — this is not a spec the code failed to
+follow, it is a property of the chain that no part of the plan accounts for.
+
+**§16 and §95.6 prescribe this exact response,** for exactly this trigger: *"jika dependency
+eksternal mengharuskan retryable workflow — deterministic escrow, permissionless
+`finalizeGraduation()`, idempotent retry semantics, no retry caller privilege."* The block lane
+is that external dependency. All four conditions hold:
+
+| §16 requires | How |
+|---|---|
+| deterministic escrow | when the curve closes, `distributed`, `curveCollateral` and `graduationDust` are fixed by curve math, and every function that could move them is `onlyPreGrad`. There is no other migration ratio to reach, so there is nothing to front-run. |
+| permissionless finalize | `finalizeGraduation()` takes no argument and never reads `msg.sender`. |
+| idempotent retry | the status check admits exactly one success; any failure reverts the whole call and leaves the escrow untouched for the next attempt. |
+| no caller privilege | there is no parameter and no `msg.sender` read, so there is nothing to point at whoever calls it. |
+
+**§14's "no manual trigger" survives intact,** and this is the part worth being precise about.
+The endpoint is still the only thing that graduates a market — nobody decides, and
+`test_noCallerCanTriggerGraduationManually` still passes with `finalizeGraduation()` among the
+entry points it attacks, because from `PRE_GRAD` it reverts. What the second transaction does
+is carry out a migration that is already owed, whose every input is frozen. It chooses nothing.
+
+**The excess is refunded, not swapped.** §14's crossing order says public UX *boleh* bablas
+through graduation — may, not must — and requires a blended bound only where a blended
+execution exists. Here none does: at the instant the curve closes there is no pool, so there is
+no venue to route the remainder into and no price to route it at. Refunding is the honest
+settlement, and the buyer gets their money back in the same transaction rather than a claim to
+chase.
+
+**Two things get better rather than worse.**
+
+*V-19 closes instead of shipping as accepted risk.* That row was open because `minTokensOut`
+bounded the curve leg while the post-grad leg rode along unprotected — a user's slippage limit
+covering part of their own trade. With no post-grad leg the curve leg IS the trade and the
+bound covers all of it. The SDK's `estimateIsPartial` and `boundCoversPartialRoute` are deleted
+rather than left always-false, because a warning that can never be true is one users learn to
+click past.
+
+*A HyperSwap outage no longer reverts the buyer's trade.* Under the atomic design a failed
+migration unwound their whole buy. Now their curve fill stands and only the migration waits.
+
+**What this costs, stated plainly.**
+
+Between the two transactions a market has no venue. The curve is shut and the pool does not
+exist, so holders cannot sell. The window is one large-lane block — about a minute — but it is
+real, and it is the price of the constraint rather than a design preference.
+
+It also introduces an operational dependency that did not exist: **something has to call
+`finalizeGraduation`.** It is permissionless precisely so that no single party can withhold it,
+and the SDK builds the intent so a holder can do it from the UI when the keeper is down. But a
+market whose curve has closed and which nobody finalises is stuck in the one state where its
+holders cannot act, so this is an alert and not a background job. `graduating_at_block IS NOT
+NULL AND status <> 2` is the query; migration 0008 indexes exactly that set.
+
+**Measured, both halves:**
+
+```text
+crossing buy      198,355 gas   6.6% of the default lane   (unit test, asserted < 1.5M)
+migration       5,388,986 gas   180% of it, 18% of the large lane   (fork test, real venue)
+```
+
+Both are asserted, and the migration assertion is written to **fail if it ever drops below the
+default lane** — if HyperSwap ships a cheaper pool, this decision should be revisited, and a
+failing test is how anyone finds out rather than the split staying because nobody re-measured.
+
+**Rejected: pre-creating the pool at launch.** It moves the 2.78M cost to launch, which only
+relocates the same problem onto the creator. Worse, an empty pool initialised at `pg` sits
+there for a market's whole pre-graduation life, and anyone can add liquidity to it and trade
+the price away from `pg` — which would then trip D-015's deliberate `PoolPriceDiverged` guard
+and brick graduation permanently. That turns a griefing vector into a kill switch.
+
+**Rejected: requiring buyers to use the large lane.** Lane selection is per-address state on
+the Hyperliquid L1, not a transaction field. The protocol cannot require it of a buyer who
+merely happened to be the one whose order crossed the endpoint, and a launchpad whose final
+buy silently fails for everyone who has not opted in is not shippable.

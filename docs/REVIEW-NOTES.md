@@ -307,6 +307,55 @@ could tell it apart from the real thing.
 
 ---
 
+## Shape 6 — the assumption written down in three places
+
+Every defect above is something the code got wrong. This one is different: the code was right
+about a chain that does not exist.
+
+Graduation was atomic — the buy that crossed the endpoint also created the pool, minted the
+position and locked it. That is what §14 describes, it is what the contract did, and it was
+covered by unit tests, an invariant, a schema comment and a projection check. All of them
+passed. All of them were wrong together, because they encoded the same assumption.
+
+The assumption was that a transaction can cost 5.4M gas. HyperEVM's default block lane caps at
+3,000,000 and runs at 99.8% of that in ordinary blocks (V-20). Nothing in the codebase was
+inconsistent with anything else in the codebase. It was inconsistent with the chain.
+
+**Where the assumption had been written down, and what each one did when it broke:**
+
+| Location | What it said | What happened |
+|---|---|---|
+| `LaunchMarket` lifecycle comment | "GRADUATING transient, single-transaction" | changed with the code |
+| `invariant_neverRestsInGraduatingState` | asserted it directly | **failed immediately** — the fuzzer found it before the fork did |
+| `market_state.status` schema comment | "a persisted 1 means the indexer captured a partial state" | silent; a projection would have reported closed curves as open |
+| `sim/projection.ts` | "the projection never rests in GRADUATING" | **passed for the wrong reason** — the fixture ends GRADUATED, so it held no matter what the reducer did |
+| SDK `boundCoversPartialRoute` | described a HyperSwap leg | silent; described a route that no longer exists |
+
+Only one of the five failed honestly. One passed vacuously and three said nothing at all —
+they were prose, and prose does not run.
+
+**What actually found it: a test that would not run offline.**
+
+Not review, and not reasoning. The fork suite refused to execute against real HyperSwap,
+failing as `OutOfGas` inside pool deployment. The first instinct was to treat that as a tooling
+problem and raise a limit; `--gas-limit` and `--block-gas-limit` both had no effect, which was
+the signal. Foundry's `isolate` mode models each top-level call as a real transaction, and it
+was faithfully reproducing the chain's ceiling. The tool was right and the assumption was wrong.
+
+**The lesson is about where assumptions get to hide.** A comment cannot fail. A schema note
+cannot fail. A check that returns early in the wrong state cannot fail once the fixture stops
+reaching that state. Of the five recordings of this assumption, the only one that told the
+truth on its own was the executable one — and it told the truth the moment the code changed
+underneath it, which is the whole argument for writing invariants instead of comments.
+
+Two of the replacements were nearly decoration in the same way. `invariant_graduatingEscrowIsFrozen`
+and `invariant_finalisingConfersNothing` both return early unless the market is in a particular
+state, and a coverage check showed the fuzz campaign reached `GRADUATING` but never finalised —
+so one of them had never once looked at what it guards. Reachability is now proven
+deterministically through the same handler the fuzzer drives.
+
+---
+
 ## What is deliberately not implemented
 
 These are not placeholders. They are recorded refusals, and each names the

@@ -31,7 +31,7 @@ Last updated: Day 8.
 | PARTIAL | 3 | V-06, V-10, V-15 |
 | UNVERIFIED | 9 | V-02, V-03, V-04, V-05, V-11, V-12, V-13, V-14, V-17 |
 | OWNER-BLOCKED | 1 | V-18 |
-| OPEN, surfaced | 1 | V-19 |
+| CLOSED | 1 | V-19 |
 
 **P0 rows still open: V-02, V-03, V-05, V-13.** These can invalidate LOCKED behaviour.
 
@@ -43,6 +43,10 @@ and having its vendor confirm it are different claims and only the second one cl
 V-20 is new, and it is the uncomfortable kind of VERIFIED: what was verified is a constraint
 the masterplan does not account for anywhere in its 28,051 lines. Graduation costs 5.40M gas;
 HyperEVM's default block lane caps at 3.00M. The response is D-016.
+
+V-19 closed as a side effect of that response rather than by being solved on its own terms —
+the split removed the leg the bound could not cover. Recorded as such in the row, because a
+row that closes by accident should not read as a row that was worked.
 
 ---
 
@@ -577,7 +581,7 @@ to locate candidates and to understand mechanisms; none were treated as producti
 
 ---
 
-## V-19 — Crossing-order slippage bound covers only the curve leg · **OPEN, surfaced**
+## V-19 — Crossing-order slippage bound covers only the curve leg · **CLOSED**
 
 ```text
 UNKNOWN:            how to bound the post-graduation leg of a crossing order
@@ -592,17 +596,41 @@ HOW TO RESOLVE:     once the router exists, quote both legs and set the bound
                     from the blended total
 BLOCKS:             §14 acceptance, §178.10 trader UX readiness
 OWNER:              Stream A / D
-STATUS:             OPEN — surfaced in the UI rather than hidden
+STATUS:             CLOSED, Day 8 — the leg it could not bound no longer exists
 ```
 
-**Interim handling.** The intent now carries `estimateIsPartial` and
-`boundCoversPartialRoute`, the review labels the figure "curve leg only", and a
-row states plainly that slippage protection does not cover the HyperSwap leg. A
-user is told what their protection does and does not cover.
+**Interim handling, Day 7.** The intent carried `estimateIsPartial` and
+`boundCoversPartialRoute`, the review labelled the figure "curve leg only", and a
+row stated plainly that slippage protection did not cover the HyperSwap leg. A
+user was told what their protection did and did not cover.
 
-This is mitigation, not a fix. The bound is genuinely weaker than §14 requires
-until the router can quote both legs, and it must not ship to mainnet in this
-state without an explicit accepted-risk decision.
+That was mitigation, not a fix, and this row said so: it must not ship to mainnet
+in that state without an explicit accepted-risk decision.
+
+---
+
+**Closed, Day 8 — and not by accepting the risk.**
+
+D-016 split graduation into a crossing buy and a permissionless finalise, because
+a full migration costs 5,395,811 gas and HyperEVM's default block lane caps at
+3,000,000 (V-20). The buy that closes the curve now refunds what the curve had no
+supply left to sell, because at that instant the pool does not exist — there is
+no venue to route a remainder into and no price to route it at.
+
+So there is no second leg. The curve leg IS the trade, `minTokensOut` bounds all
+of it, and §14's requirement of one user-wide minimum over the whole execution is
+satisfied by there being only one execution to cover.
+
+This row is closed as a **side effect** of an unrelated constraint, which is
+worth recording honestly: the fix was not designed to close it. The block lane
+forced the split; the split happened to dissolve the gap. Had the lane been
+larger, this row would still be open and would still need the router to quote
+both legs.
+
+The two flags are **deleted** from the SDK rather than left always-false. A flag
+that cannot be true is worse than no flag: every UI keeps a branch for a state
+that cannot occur, nobody exercises it, and a warning that is never real is one
+users learn to click past — which costs them the warnings that are.
 
 ---
 
