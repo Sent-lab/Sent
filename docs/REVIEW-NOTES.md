@@ -218,6 +218,14 @@ verification item blocking it:
 - The xStock allowlist, empty — V-02, V-03, V-05
 - Platform accounts, unset — C-08
 - `Logo.tsx` geometry, pending the official SVG export
+- Creator metadata — description, links, image (§95.20) — and share-card
+  generation (§95.25). Both need object storage, which §427 leaves as a CHOOSE
+  decision and no deployment target has been fixed for (§434). The half that
+  does not need storage would be a text column nobody writes to, which is the
+  shape of defect this document is mostly about.
+- `liveMarketCapUsd` (§403). Needs the live xStock/USD display feed, V-11. The
+  field is ABSENT from the response rather than zero: an absent field renders as
+  nothing, a zero renders as a market worth nothing.
 - `/account` holdings and P&L — needs a per-account position read that does not
   exist. Creator earnings moved to `/creator` rather than waiting for it.
 
