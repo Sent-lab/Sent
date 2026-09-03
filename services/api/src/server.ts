@@ -33,7 +33,10 @@ import {
   CANDLE_INTERVALS,
   handleStockback,
   handleCreator,
+  handleAccount,
+  handlePlatformStats,
   handleHealth,
+  EXPLORE_SORTS,
   type ExploreOptions,
 } from "./handlers.ts";
 import { PostgresPort, type PortConfig } from "./port.ts";
@@ -122,7 +125,20 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
 
   // -------------------------------------------------------------------------
 
-  app.get("/health", async (_req, reply) => {
+  /*
+   * §432: "REST endpoints should be versionable and typed."
+   *
+   * Every route is registered twice — once under /v1 and once at the root. The
+   * versioned path is the one to build against; the bare path exists because
+   * clients are already using it, and breaking them to introduce a version is
+   * the opposite of what versioning is for.
+   *
+   * Registered from ONE function rather than two lists. Two lists is how a
+   * route ends up existing under one prefix and not the other, and the failure
+   * is a 404 on a path that demonstrably works somewhere else.
+   */
+  const routes = async (scope: FastifyInstance): Promise<void> => {
+  scope.get("/health", async (_req, reply) => {
     const result = handleHealth(port);
     // A service that is behind still answers, and says so. Returning 200 with
     // fresh-looking data while minutes stale is the failure §211 is written
@@ -131,7 +147,7 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
     return reply.code(result.data.serving ? 200 : 503).send(result);
   });
 
-  app.get("/markets", async (request, reply) => {
+  scope.get("/markets", async (request, reply) => {
     const q = request.query as Record<string, string | undefined>;
 
     // Query values are validated against the allowed set rather than cast into
@@ -143,8 +159,12 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
     const options: Partial<ExploreOptions> = {
       sort,
       limit: q.limit !== undefined ? Number(q.limit) : 25,
+      // Parsed strictly, like the candle interval: `Number("abc")` is NaN and
+      // would reach the handler as a nonsense offset.
+      offset: /^\d+$/.test(q.offset ?? "") ? Number(q.offset) : 0,
       ...(status !== null ? { status } : {}),
       ...(q.quoteAsset !== undefined ? { quoteAsset: q.quoteAsset } : {}),
+      ...(q.q !== undefined && q.q.trim() !== "" ? { query: q.q } : {}),
     };
 
     await port.loadMarkets(options as ExploreOptions);
@@ -152,7 +172,7 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
     return reply.code(result.ok ? 200 : 400).send(result);
   });
 
-  app.get("/markets/:token", async (request, reply) => {
+  scope.get("/markets/:token", async (request, reply) => {
     const { token } = request.params as { token: string };
 
     await port.loadMarket(token);
@@ -160,7 +180,7 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
     return reply.code(result.ok ? 200 : 404).send(result);
   });
 
-  app.get("/markets/:token/trades", async (request, reply) => {
+  scope.get("/markets/:token/trades", async (request, reply) => {
     const { token } = request.params as { token: string };
     const q = request.query as Record<string, string | undefined>;
     const limit = q.limit !== undefined ? Number(q.limit) : 50;
@@ -173,7 +193,7 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
     return reply.code(result.ok ? 200 : 404).send(result);
   });
 
-  app.get("/markets/:token/candles", async (request, reply) => {
+  scope.get("/markets/:token/candles", async (request, reply) => {
     const { token } = request.params as { token: string };
     const q = request.query as Record<string, string | undefined>;
 
@@ -202,7 +222,7 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
    * Returns a complete signable intent, not a price (§694). The user signs the
    * calldata this produced, and the review rows carry the same numbers.
    */
-  app.post("/quote", async (request, reply) => {
+  scope.post("/quote", async (request, reply) => {
     const body = request.body as {
       token?: string;
       side?: "BUY" | "SELL";
@@ -266,7 +286,7 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
    * vault against `msg.sender` rather than by this API. Requiring a signature to
    * READ public data would only teach creators to sign things on request.
    */
-  app.get("/creators/:address", async (request, reply) => {
+  scope.get("/creators/:address", async (request, reply) => {
     const { address } = request.params as { address: string };
 
     if (/^0x[0-9a-fA-F]{40}$/.test(address)) await port.loadCreator(address);
@@ -275,7 +295,7 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
     return reply.code(result.ok ? 200 : 400).send(result);
   });
 
-  app.get("/markets/:token/stockback/:account", async (request, reply) => {
+  scope.get("/markets/:token/stockback/:account", async (request, reply) => {
     const { token, account } = request.params as { token: string; account: string };
 
     await port.loadMarket(token);
@@ -286,10 +306,67 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
     return reply.code(result.ok ? 200 : 404).send(result);
   });
 
+  /*
+   * One wallet's positions, rewards and claim history (§64, §347).
+   *
+   * Public and unauthenticated, like every other route here: it reads what the
+   * chain already publishes. Requiring a signature to read public data would
+   * only teach people to sign things on request, which is the habit §505 is
+   * written against.
+   */
+  scope.get("/accounts/:address", async (request, reply) => {
+    const { address } = request.params as { address: string };
+
+    if (ADDRESS.test(address)) await port.loadAccount(address);
+
+    const result = handleAccount(port, address);
+    return reply.code(result.ok ? 200 : 400).send(result);
+  });
+
+  /*
+   * The Stockback half of an account, on its own path (§432, §347).
+   *
+   * The same data the account route carries, so a client that only needs the
+   * claim centre does not pay for holdings and history it will not render.
+   */
+  scope.get("/accounts/:address/stockback", async (request, reply) => {
+    const { address } = request.params as { address: string };
+
+    if (ADDRESS.test(address)) await port.loadAccount(address);
+
+    const result = handleAccount(port, address);
+    if (!result.ok) return reply.code(400).send(result);
+
+    return reply.code(200).send({
+      ok: true,
+      data: {
+        account: result.data.account,
+        markets: result.data.stockback,
+        totalClaimable: result.data.totalClaimable,
+        claims: result.data.claims,
+      },
+      freshness: result.freshness,
+    });
+  });
+
+  /* §166's live platform stats, from §168's sources. */
+  scope.get("/platform/stats", async (_request, reply) => {
+    const result = handlePlatformStats(port);
+    return reply.code(result.ok ? 200 : 503).send(result);
+  });
+
+  };
+
+  await app.register(routes, { prefix: "/v1" });
+  await app.register(routes);
+
   return app;
 }
 
-const SORTS = ["NEWEST", "PROGRESS", "VOLUME", "HOLDERS"] as const;
+/** Mirrors the handler's own pattern; see `ADDRESS` there for why it is shared. */
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
+const SORTS = EXPLORE_SORTS;
 const STATUSES = ["PRE_GRAD", "GRADUATED"] as const;
 
 /** Unknown or absent sort falls back to the default rather than erroring. */

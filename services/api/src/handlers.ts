@@ -106,6 +106,10 @@ export interface DataPort {
   listCandles(market: string, intervalSeconds: number, limit: number): readonly CandleBar[];
   getCreator(address: string): CreatorRow | null;
   getStockback(market: string, account: string): StockbackRow | null;
+  getAccount(address: string): AccountRow | null;
+  getPlatformStats(): PlatformStatsRow | null;
+  /** How many markets the last `listMarkets` filter matched, before its limit. */
+  countMarkets(options: ExploreOptions): number;
 
   /** Quote from the canonical curve, as the market itself would compute it. */
   quoteBuy(market: string, grossQuoteIn: bigint): QuoteResult | null;
@@ -151,11 +155,92 @@ export interface QuoteResult {
   readonly priceImpactBps: bigint;
 }
 
+/**
+ * §50's sorts, exactly.
+ *
+ * A closed union rather than a string: it reaches a SQL ORDER BY through a
+ * lookup table, and an unrecognised value must be refused by name at the edge
+ * rather than falling through to a default the caller did not ask for.
+ */
+/**
+ * The one address shape this API accepts.
+ *
+ * Written once. Two copies of an address regex is how one endpoint ends up
+ * accepting a checksum-less 39-character paste that another rejects.
+ */
+export const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
+export const EXPLORE_SORTS = [
+  "NEWEST",
+  "PROGRESS",
+  "VOLUME",
+  "HOLDERS",
+  "TRENDING",
+  "GAINERS",
+  "RECENTLY_GRADUATED",
+] as const;
+
+export type ExploreSortName = (typeof EXPLORE_SORTS)[number];
+
 export interface ExploreOptions {
-  readonly sort: "NEWEST" | "PROGRESS" | "VOLUME" | "HOLDERS";
+  readonly sort: ExploreSortName;
   readonly status?: "PRE_GRAD" | "GRADUATED";
   readonly quoteAsset?: string;
   readonly limit: number;
+  /** Name, ticker, or an exact address (§95.21). */
+  readonly query?: string;
+  readonly offset?: number;
+}
+
+export interface AccountRow {
+  readonly holdings: readonly {
+    token: string;
+    market: string;
+    name: string;
+    symbol: string;
+    quoteSymbol: string;
+    quoteDecimals: number;
+    status: string;
+    balance: bigint;
+    price: bigint;
+    value: bigint;
+    lastBlock: bigint;
+  }[];
+  readonly stockback: readonly {
+    token: string;
+    symbol: string;
+    rewardSymbol: string;
+    quoteDecimals: number;
+    claimable: bigint;
+    lifetimeClaimed: bigint;
+    merkleRoot: string | null;
+  }[];
+  readonly claims: readonly {
+    token: string;
+    symbol: string;
+    amount: bigint;
+    timestamp: number;
+    blockNumber: bigint;
+  }[];
+  /** Markets this address launched. Counted, not listed — /creators lists them. */
+  readonly launchCount: number;
+}
+
+export interface PlatformStatsRow {
+  readonly totalLaunches: number;
+  readonly activePreGrad: number;
+  readonly graduated: number;
+  readonly totalVolume: bigint;
+  readonly windowVolume: bigint;
+  readonly creatorFeesEarned: bigint;
+  readonly stockbackDistributed: bigint;
+  readonly activeQuoteAssets: number;
+  readonly launchableQuoteAssets: number;
+  readonly uniqueTraders: number;
+  readonly windowLaunches: number;
+  readonly windowGraduations: number;
+  readonly windowTrades: number;
+  readonly asOfBlock: bigint;
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +306,21 @@ function sourced(value: string, provenance: Provenance, block: bigint, asOf: num
 // Explore
 // ---------------------------------------------------------------------------
 
+/**
+ * A page of explore results.
+ *
+ * The listing used to return a bare array, which cannot say how many results
+ * exist — so a client could only guess whether to offer another page, and §50's
+ * "pagination/infinite load" had nothing to page against.
+ */
+export interface ExplorePage {
+  readonly items: readonly ExploreItem[];
+  readonly total: number;
+  readonly offset: number;
+  readonly limit: number;
+  readonly hasMore: boolean;
+}
+
 export interface ExploreItem {
   readonly token: string;
   readonly market: string;
@@ -243,21 +343,46 @@ export interface ExploreItem {
   readonly launchedAt: number;
 }
 
-export function handleExplore(port: DataPort, options: Partial<ExploreOptions>): ApiResult<ExploreItem[]> {
+export function handleExplore(
+  port: DataPort,
+  options: Partial<ExploreOptions>,
+): ApiResult<ExplorePage> {
   const limit = Math.min(Math.max(options.limit ?? 25, 1), MAX_LIMIT);
+
+  if (options.sort !== undefined && !EXPLORE_SORTS.includes(options.sort)) {
+    return fail(port, "UNSUPPORTED_SORT", `${String(options.sort)} is not a sort this API offers`);
+  }
+
+  // An address query that is nearly an address is refused rather than passed
+  // through as text. A 39-character paste matches nothing exactly and would
+  // fall back to a trigram scan over names, quietly returning the wrong market.
+  const query = options.query?.trim();
+  if (query !== undefined && query.startsWith("0x") && !ADDRESS.test(query)) {
+    return fail(port, "MALFORMED_ADDRESS", `${query} looks like an address but is not one`);
+  }
 
   const resolved: ExploreOptions = {
     sort: options.sort ?? "NEWEST",
     limit,
+    offset: Math.max(options.offset ?? 0, 0),
     ...(options.status !== undefined ? { status: options.status } : {}),
     ...(options.quoteAsset !== undefined ? { quoteAsset: options.quoteAsset } : {}),
+    ...(query !== undefined && query !== "" ? { query } : {}),
   };
 
   const rows = port.listMarkets(resolved);
+  const total = port.countMarkets(resolved);
+  const offset = resolved.offset ?? 0;
 
-  return ok(
-    port,
-    rows.map((row) => ({
+  return ok(port, {
+    total,
+    offset,
+    limit,
+    // Stated rather than inferred from `items.length === limit`, which is wrong
+    // exactly once — on the page that ends flush with the limit, where it
+    // promises another page that does not exist.
+    hasMore: offset + rows.length < total,
+    items: rows.map((row) => ({
       token: row.token,
       market: row.market,
       name: row.name,
@@ -278,7 +403,7 @@ export function handleExplore(port: DataPort, options: Partial<ExploreOptions>):
       creator: row.creator,
       launchedAt: row.launchedAt,
     })),
-  );
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -429,7 +554,7 @@ export interface CreatorResponse {
  * exposed because none exist.
  */
 export function handleCreator(port: DataPort, address: string): ApiResult<CreatorResponse> {
-  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+  if (!ADDRESS.test(address)) {
     return fail(port, "INVALID_ADDRESS", `${address} is not a 20-byte address`);
   }
 
@@ -477,6 +602,195 @@ export function handleCreator(port: DataPort, address: string): ApiResult<Creato
       symbol: a.symbol,
       amount: a.amount.toString(),
     })),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Account (§64, §347)
+// ---------------------------------------------------------------------------
+
+export interface AccountHolding {
+  readonly token: string;
+  readonly market: string;
+  readonly name: string;
+  readonly symbol: string;
+  readonly quoteSymbol: string;
+  readonly quoteDecimals: number;
+  readonly status: string;
+  readonly balance: string;
+  readonly price: Sourced;
+  /** balance × price. A mark, not what a sale would return — see below. */
+  readonly value: Sourced;
+}
+
+export interface AccountResponse {
+  readonly account: string;
+  readonly holdings: readonly AccountHolding[];
+  /** Summed across holdings, in normalized quote units. */
+  readonly portfolioValue: Sourced;
+  readonly stockback: readonly {
+    token: string;
+    symbol: string;
+    rewardSymbol: string;
+    quoteDecimals: number;
+    claimable: string;
+    lifetimeClaimed: string;
+    merkleRoot: string | null;
+  }[];
+  readonly totalClaimable: string;
+  readonly claims: readonly {
+    token: string;
+    symbol: string;
+    amount: string;
+    timestamp: number;
+    blockNumber: string;
+  }[];
+  readonly launchCount: number;
+}
+
+/**
+ * One wallet's positions, rewards and claim history (§64, §347).
+ *
+ * PORTFOLIO VALUE IS A MARK, AND SAYS SO
+ * --------------------------------------
+ * Every holding is valued at the curve's current price. Selling the whole
+ * position walks DOWN the curve and returns less — sometimes much less on a
+ * thin market. The figure is marked CALCULATED rather than INDEXED for exactly
+ * that reason: it is derived, and the only thing that can answer "what would I
+ * get" is a sell quote against the chain.
+ *
+ * CLAIMABLE IS ONLY EVER ATTESTED
+ * -------------------------------
+ * §293 keeps estimated accrual and claimable entitlement apart, and this
+ * endpoint answers the second question only. A cross-market "claim everything"
+ * total that included unattested arithmetic would be a number the vault will
+ * not pay, offered as a button.
+ */
+export function handleAccount(port: DataPort, address: string): ApiResult<AccountResponse> {
+  if (!ADDRESS.test(address)) {
+    return fail(port, "INVALID_ADDRESS", `${address} is not a 20-byte address`);
+  }
+
+  const row = port.getAccount(address.toLowerCase());
+  const now = port.serverTime();
+
+  // An empty account is not an error. Everybody starts here, and a 404 makes a
+  // first visit look like the page is broken rather than empty (§209).
+  if (row === null) {
+    return ok(port, {
+      account: address.toLowerCase(),
+      holdings: [],
+      portfolioValue: sourced("0", "CALCULATED", port.indexedBlock(), now),
+      stockback: [],
+      totalClaimable: "0",
+      claims: [],
+      launchCount: 0,
+    });
+  }
+
+  const portfolio = row.holdings.reduce((sum, h) => sum + h.value, 0n);
+  const claimable = row.stockback.reduce((sum, r) => sum + r.claimable, 0n);
+
+  return ok(port, {
+    account: address.toLowerCase(),
+    holdings: row.holdings.map((h) => ({
+      token: h.token,
+      market: h.market,
+      name: h.name,
+      symbol: h.symbol,
+      quoteSymbol: h.quoteSymbol,
+      quoteDecimals: h.quoteDecimals,
+      status: h.status,
+      balance: h.balance.toString(),
+      price: sourced(h.price.toString(), "CALCULATED", h.lastBlock, now),
+      value: sourced(h.value.toString(), "CALCULATED", h.lastBlock, now),
+    })),
+    portfolioValue: sourced(portfolio.toString(), "CALCULATED", port.indexedBlock(), now),
+    stockback: row.stockback.map((r) => ({
+      token: r.token,
+      symbol: r.symbol,
+      rewardSymbol: r.rewardSymbol,
+      quoteDecimals: r.quoteDecimals,
+      claimable: r.claimable.toString(),
+      lifetimeClaimed: r.lifetimeClaimed.toString(),
+      merkleRoot: r.merkleRoot,
+    })),
+    totalClaimable: claimable.toString(),
+    claims: row.claims.map((c) => ({
+      token: c.token,
+      symbol: c.symbol,
+      amount: c.amount.toString(),
+      timestamp: c.timestamp,
+      blockNumber: c.blockNumber.toString(),
+    })),
+    launchCount: row.launchCount,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Platform statistics (§166, §168)
+// ---------------------------------------------------------------------------
+
+export interface PlatformStatsResponse {
+  readonly totalLaunches: Sourced;
+  readonly activePreGrad: Sourced;
+  readonly graduated: Sourced;
+  readonly totalVolume: Sourced;
+  readonly volume24h: Sourced;
+  readonly creatorFeesEarned: Sourced;
+  readonly stockbackDistributed: Sourced;
+  readonly activeXStockPairs: Sourced;
+  readonly launchableXStockPairs: Sourced;
+  readonly uniqueTraders: Sourced;
+  readonly launches24h: Sourced;
+  readonly graduations24h: Sourced;
+  readonly trades24h: Sourced;
+  /** Named so a client never has to infer what "24h" meant. */
+  readonly windowSeconds: number;
+}
+
+/**
+ * §166's metrics with §168's sources attached.
+ *
+ * Every figure carries its own provenance, because they do not share one: a
+ * count of launches is INDEXED — the projection holds one row per
+ * `TokenLaunched` — while volume is CALCULATED, being a sum over those rows.
+ * §168 forbids vanity metrics, and the first way a metric becomes vanity is by
+ * being presented without saying what produced it.
+ *
+ * `stockbackDistributed` is what holders have been PAID, not what has been
+ * funded. Money sitting in the vault has not been distributed to anyone, and
+ * counting it would be exactly the flattering-but-false figure §168 rules out.
+ */
+export function handlePlatformStats(port: DataPort): ApiResult<PlatformStatsResponse> {
+  const stats = port.getPlatformStats();
+
+  if (stats === null) {
+    return fail(port, "STATS_UNAVAILABLE", "Platform statistics could not be read.");
+  }
+
+  const now = port.serverTime();
+  const at = stats.asOfBlock;
+
+  const counted = (value: number | bigint): Sourced =>
+    sourced(String(value), "INDEXED", at, now);
+  const summed = (value: bigint): Sourced => sourced(value.toString(), "CALCULATED", at, now);
+
+  return ok(port, {
+    totalLaunches: counted(stats.totalLaunches),
+    activePreGrad: counted(stats.activePreGrad),
+    graduated: counted(stats.graduated),
+    totalVolume: summed(stats.totalVolume),
+    volume24h: summed(stats.windowVolume),
+    creatorFeesEarned: summed(stats.creatorFeesEarned),
+    stockbackDistributed: summed(stats.stockbackDistributed),
+    activeXStockPairs: counted(stats.activeQuoteAssets),
+    launchableXStockPairs: counted(stats.launchableQuoteAssets),
+    uniqueTraders: counted(stats.uniqueTraders),
+    launches24h: counted(stats.windowLaunches),
+    graduations24h: counted(stats.windowGraduations),
+    trades24h: counted(stats.windowTrades),
+    windowSeconds: 86_400,
   });
 }
 

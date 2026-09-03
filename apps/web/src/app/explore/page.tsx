@@ -108,7 +108,7 @@ export default async function ExplorePage({
         </p>
       ) : !isOk(result) ? (
         <p className={styles.state}>{result.message}</p>
-      ) : result.data.length === 0 ? (
+      ) : result.data.items.length === 0 ? (
         <div className={styles.empty}>
           <p className={styles.emptyTitle}>No markets match this view.</p>
           <p className={styles.emptyBody}>Try a different filter, or launch the first one.</p>
@@ -118,7 +118,7 @@ export default async function ExplorePage({
         </div>
       ) : (
         <div className={styles.grid}>
-          {result.data.map((item) => (
+          {result.data.items.map((item) => (
             <TokenCard key={item.token} item={item} />
           ))}
         </div>

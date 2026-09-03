@@ -24,7 +24,11 @@ import {
   type StockbackRow,
   type QuoteResult,
   type CreatorRow,
+  type AccountRow,
+  type PlatformStatsRow,
   handleCreator,
+  handleAccount,
+  handlePlatformStats,
 } from "../src/handlers.ts";
 import { intentFingerprint, toNormalized, toRawForPayout } from "@sent/sdk";
 import { computeFees } from "@sent/economics";
@@ -146,6 +150,69 @@ class FakePort implements DataPort {
   };
   getCreator(): CreatorRow | null {
     return this.creator;
+  }
+
+  account: AccountRow | null = {
+    holdings: [
+      {
+        token: TOKEN,
+        market: MARKET,
+        name: "Sent Test",
+        symbol: "TEST",
+        quoteSymbol: "NVDAx",
+        quoteDecimals: 6,
+        status: "PRE_GRAD",
+        balance: 5_000n * 10n ** 18n,
+        price: 20_000_000_000n,
+        value: 100_000_000_000_000n,
+        lastBlock: 900n,
+      },
+    ],
+    stockback: [
+      {
+        token: TOKEN,
+        symbol: "TEST",
+        rewardSymbol: "NVDAx",
+        quoteDecimals: 6,
+        claimable: 456n,
+        lifetimeClaimed: 789n,
+        merkleRoot: `0x${"ab".repeat(32)}`,
+      },
+    ],
+    claims: [
+      { token: TOKEN, symbol: "TEST", amount: 789n, timestamp: 1_700_000_200, blockNumber: 880n },
+    ],
+    launchCount: 1,
+  };
+
+  getAccount(): AccountRow | null {
+    return this.account;
+  }
+
+  stats: PlatformStatsRow | null = {
+    totalLaunches: 12,
+    activePreGrad: 9,
+    graduated: 3,
+    totalVolume: 1_234_000_000_000_000_000_000n,
+    windowVolume: 45_000_000_000_000_000_000n,
+    creatorFeesEarned: 8_020_000_000_000_000_000n,
+    stockbackDistributed: 4_400_000_000_000_000_000n,
+    activeQuoteAssets: 5,
+    launchableQuoteAssets: 4,
+    uniqueTraders: 317,
+    windowLaunches: 2,
+    windowGraduations: 1,
+    windowTrades: 88,
+    asOfBlock: 1000n,
+  };
+
+  getPlatformStats(): PlatformStatsRow | null {
+    return this.stats;
+  }
+
+  /** The fake listing holds one market, so a page is one long. */
+  countMarkets(): number {
+    return this.market ? 1 : 0;
   }
   quoteBuy(_m: string, amount: bigint): QuoteResult | null {
     return {
@@ -683,6 +750,135 @@ console.log("\n--- 10. §221: the creator cockpit ------------------------------
   const bad = handleCreator(port, "0x123");
   check("a malformed address is refused by name", !bad.ok && bad.code === "INVALID_ADDRESS");
   check("and the refusal still carries freshness", bad.freshness !== undefined);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 11. \u00a764/\u00a7347: the account dashboard --------------------------------");
+
+{
+  const port = new FakePort();
+  const result = handleAccount(port, ACCOUNT);
+
+  if (!result.ok) throw new Error("expected success");
+
+  check("holdings are listed", result.data.holdings.length === 1);
+  check("with balances as strings", typeof result.data.holdings[0]?.balance === "string");
+
+  /*
+   * A mark, not a valuation, and the provenance says so.
+   *
+   * Selling the whole position walks DOWN the curve and returns less. CALCULATED
+   * rather than INDEXED is the difference between "this is what the projection
+   * holds" and "this is arithmetic over what the projection holds" — \u00a787 requires
+   * that distinction to survive the wire, and this is the value where confusing
+   * the two would cost a user money.
+   */
+  check(
+    "portfolio value is CALCULATED, not INDEXED",
+    result.data.portfolioValue.provenance === "CALCULATED",
+  );
+  check("and sums the holdings", result.data.portfolioValue.value === "100000000000000");
+
+  // \u00a7293 again, one level up: the cross-market total must not include anything
+  // unattested, or a "claim everything" button spends a number the vault refuses.
+  check("the claimable total is the attested sum", result.data.totalClaimable === "456");
+  check("lifetime claimed is separate from it", result.data.stockback[0]?.lifetimeClaimed === "789");
+  check("the claim history is carried", result.data.claims.length === 1);
+  check("launches are counted, not listed", result.data.launchCount === 1);
+}
+
+{
+  const port = new FakePort();
+  port.account = null;
+
+  const empty = handleAccount(port, ACCOUNT);
+  check("an account with nothing is not an error", empty.ok);
+  check("and its portfolio value is zero, not absent", empty.ok && empty.data.portfolioValue.value === "0");
+
+  const bad = handleAccount(port, "0xnope");
+  check("a malformed address is refused by name", !bad.ok && bad.code === "INVALID_ADDRESS");
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 12. \u00a7166/\u00a7168: platform stats ----------------------------------------");
+
+{
+  const port = new FakePort();
+  const result = handlePlatformStats(port);
+
+  if (!result.ok) throw new Error("expected success");
+
+  check("launches are reported", result.data.totalLaunches.value === "12");
+
+  /*
+   * \u00a7168 forbids vanity metrics, and the first way a metric becomes vanity is
+   * being shown without saying what produced it. A COUNT over indexed rows and a
+   * SUM over those same rows are not the same kind of claim.
+   */
+  check("a count is INDEXED", result.data.totalLaunches.provenance === "INDEXED");
+  check("a sum is CALCULATED", result.data.totalVolume.provenance === "CALCULATED");
+
+  check("the window is stated rather than implied", result.data.windowSeconds === 86_400);
+  check("volume crosses the wire as a string", typeof result.data.totalVolume.value === "string");
+
+  // Distributed means PAID. Counting money still in the vault would be exactly
+  // the flattering-but-false figure \u00a7168 rules out.
+  check(
+    "stockback distributed is what was paid out",
+    result.data.stockbackDistributed.value === "4400000000000000000",
+  );
+}
+
+{
+  const port = new FakePort();
+  port.stats = null;
+
+  const down = handlePlatformStats(port);
+  // A stats block that cannot be computed says so. Serving the last values as
+  // if they were current is how a status page lies during an incident.
+  check("unavailable stats are a named refusal", !down.ok && down.code === "STATS_UNAVAILABLE");
+  check("and still carry freshness", down.freshness !== undefined);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 13. \u00a795.21: search and paging ---------------------------------------");
+
+{
+  const port = new FakePort();
+
+  const page = handleExplore(port, { limit: 10 });
+  if (!page.ok) throw new Error("expected success");
+
+  check("a listing is a page, not a bare array", Array.isArray(page.data.items));
+  check("carrying its total", page.data.total === 1);
+  check("and its offset", page.data.offset === 0);
+
+  // Stated rather than inferred from `items.length === limit`, which is wrong
+  // exactly once: on the page that ends flush with the limit, where it promises
+  // another page that does not exist.
+  check("hasMore is false when the page holds everything", page.data.hasMore === false);
+
+  const sorted = handleExplore(port, { sort: "TRENDING", limit: 10 });
+  check("§50's trending sort is accepted", sorted.ok);
+
+  const graduated = handleExplore(port, { sort: "RECENTLY_GRADUATED", limit: 10 });
+  check("so is recently graduated", graduated.ok);
+
+  const bogus = handleExplore(port, { sort: "MOONING" as never, limit: 10 });
+  check("an unknown sort is refused by name", !bogus.ok && bogus.code === "UNSUPPORTED_SORT");
+
+  /*
+   * A near-address is refused rather than searched as text.
+   *
+   * A truncated paste matches nothing exactly and would fall through to a
+   * trigram scan over names — quietly returning a DIFFERENT market, which is
+   * the one wrong answer a search box must never give.
+   */
+  const truncated = handleExplore(port, { query: "0x1111111111111111111111111111111111111", limit: 10 });
+  check("a truncated address is refused", !truncated.ok && truncated.code === "MALFORMED_ADDRESS");
+
+  const text = handleExplore(port, { query: "TEST", limit: 10 });
+  check("a ticker query is accepted", text.ok);
 }
 
 // ---------------------------------------------------------------------------

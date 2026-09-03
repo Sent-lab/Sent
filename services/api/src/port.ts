@@ -35,6 +35,11 @@ import {
   listCandles as dbListCandles,
   listMarketsByCreator,
   creatorAccruals,
+  countMarkets as dbCountMarkets,
+  listHoldings,
+  accountStockback,
+  listClaimsByAccount,
+  platformStats,
   type ExploreSort,
 } from "@sent/database";
 import { launchMarketAbi, launchpadFactoryAbi, feeVaultAbi } from "@sent/contracts";
@@ -48,6 +53,8 @@ import type {
   QuoteResult,
   CandleBar,
   CreatorRow,
+  AccountRow,
+  PlatformStatsRow,
 } from "./handlers.ts";
 
 const STATUS_NAMES = ["PRE_GRAD", "GRADUATING", "GRADUATED"] as const;
@@ -99,6 +106,17 @@ export class PostgresPort implements DataPort {
       this.connected = false;
     }
     this.indexed = await headBlockIndexed(this.db);
+
+    // Cheap enough to fold into the existing timer, and it means /platform/stats
+    // never waits on a dozen aggregates while a user is looking at it.
+    try {
+      await this.loadPlatformStats();
+    } catch {
+      // A failed aggregate must not stop the freshness snapshot. The stats
+      // endpoint reports STATS_UNAVAILABLE rather than serving the last values
+      // as if they were current.
+      this.cachedStats = null;
+    }
   }
 
   headBlock(): bigint {
@@ -148,6 +166,18 @@ export class PostgresPort implements DataPort {
     return this.cachedCreators.get(address.toLowerCase()) ?? null;
   }
 
+  getAccount(address: string): AccountRow | null {
+    return this.cachedAccounts.get(address.toLowerCase()) ?? null;
+  }
+
+  getPlatformStats(): PlatformStatsRow | null {
+    return this.cachedStats;
+  }
+
+  countMarkets(options: ExploreOptions): number {
+    return this.cachedCounts.get(cacheKey(options)) ?? 0;
+  }
+
   getStockback(market: string, account: string): StockbackRow | null {
     return this.cachedStockback.get(`${market.toLowerCase()}:${account.toLowerCase()}`) ?? null;
   }
@@ -176,21 +206,98 @@ export class PostgresPort implements DataPort {
   private readonly cachedQuotes = new Map<string, QuoteResult>();
   private readonly cachedCandles = new Map<string, CandleBar[]>();
   private readonly cachedCreators = new Map<string, CreatorRow>();
+  private readonly cachedAccounts = new Map<string, AccountRow>();
+  private readonly cachedCounts = new Map<string, number>();
+  private cachedStats: PlatformStatsRow | null = null;
 
   /** Resolved once from the factory, then remembered. */
   private feeVault: `0x${string}` | null = null;
 
   async loadMarkets(options: ExploreOptions): Promise<void> {
-    const views = await dbListMarkets(this.db, {
+    const filter = {
       sort: options.sort as ExploreSort,
       limit: options.limit,
+      offset: options.offset ?? 0,
       ...(options.status !== undefined
         ? { status: STATUS_NAMES.indexOf(options.status as (typeof STATUS_NAMES)[number]) }
         : {}),
       ...(options.quoteAsset !== undefined ? { quoteAsset: options.quoteAsset } : {}),
-    });
+      ...(options.query !== undefined ? { query: options.query } : {}),
+    };
 
-    this.cachedMarkets.set(cacheKey(options), views.map((v) => this.toRow(v)));
+    // The page and its total, together. Counting in a second request would let
+    // a launch land between the two and produce a page whose `hasMore` argues
+    // with its own contents.
+    const [views, total] = await Promise.all([
+      dbListMarkets(this.db, filter),
+      dbCountMarkets(this.db, filter),
+    ]);
+
+    const key = cacheKey(options);
+    this.cachedMarkets.set(key, views.map((v) => this.toRow(v)));
+    this.cachedCounts.set(key, total);
+  }
+
+  /**
+   * One account's positions, rewards and claims (§64, §347).
+   *
+   * Four reads rather than one join. They answer genuinely different questions —
+   * what is held, what is owed, what was paid, what was launched — and a single
+   * statement joining all four would multiply rows against each other and need
+   * DISTINCT to undo it.
+   */
+  async loadAccount(address: string): Promise<void> {
+    const [holdings, stockback, claims, launches] = await Promise.all([
+      listHoldings(this.db, address),
+      accountStockback(this.db, address),
+      listClaimsByAccount(this.db, address),
+      listMarketsByCreator(this.db, address),
+    ]);
+
+    this.cachedAccounts.set(address.toLowerCase(), {
+      holdings: holdings.map((h) => ({
+        token: h.token,
+        market: h.market,
+        name: h.name,
+        symbol: h.symbol,
+        quoteSymbol: this.symbolOf(h.quoteAsset),
+        quoteDecimals: h.quoteDecimals,
+        status: STATUS_NAMES[h.status] ?? "PRE_GRAD",
+        balance: h.balance,
+        price: h.price,
+        value: h.value,
+        lastBlock: h.lastBlock,
+      })),
+      stockback: stockback.map((r) => ({
+        token: r.token,
+        symbol: r.symbol,
+        rewardSymbol: this.symbolOf(r.rewardAsset),
+        quoteDecimals: r.quoteDecimals,
+        claimable: r.claimable,
+        lifetimeClaimed: r.lifetimeClaimed,
+        merkleRoot: r.merkleRoot,
+      })),
+      claims: claims.map((c) => ({
+        token: c.token,
+        symbol: c.symbol,
+        amount: c.amount,
+        timestamp: c.timestamp,
+        blockNumber: c.blockNumber,
+      })),
+      launchCount: launches.length,
+    });
+  }
+
+  /**
+   * §166's platform figures.
+   *
+   * Refreshed on the same timer as the freshness snapshot rather than per
+   * request: these are counts over whole tables, they are the same answer for
+   * every visitor, and a homepage that re-aggregated them per view would make
+   * the stats block the slowest thing on the page.
+   */
+  async loadPlatformStats(): Promise<void> {
+    this.cachedStats = await platformStats(this.db);
   }
 
   async loadMarket(token: string): Promise<void> {
@@ -501,8 +608,22 @@ export class PostgresPort implements DataPort {
   }
 }
 
+/**
+ * The identity of one listing request.
+ *
+ * `query` and `offset` are part of it. Leaving them out would make page two of
+ * a search collide with page one of an unfiltered listing — the second request
+ * would be served the first one's rows, from cache, with no error anywhere.
+ */
 function cacheKey(options: ExploreOptions): string {
-  return `${options.sort}:${options.status ?? "-"}:${options.quoteAsset ?? "-"}:${options.limit}`;
+  return [
+    options.sort,
+    options.status ?? "-",
+    options.quoteAsset ?? "-",
+    options.query ?? "-",
+    options.offset ?? 0,
+    options.limit,
+  ].join(":");
 }
 
 /**

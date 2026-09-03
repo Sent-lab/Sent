@@ -171,13 +171,13 @@ function Rail({
         </p>
       ) : !isOk(result) ? (
         <p className={styles.state}>{result.message}</p>
-      ) : result.data.length === 0 ? (
+      ) : result.data.items.length === 0 ? (
         <p className={styles.state}>
           No markets here yet. The first launch will appear as soon as it is indexed.
         </p>
       ) : (
         <div className={styles.grid}>
-          {result.data.map((item) => (
+          {result.data.items.map((item) => (
             <TokenCard key={item.token} item={item} />
           ))}
         </div>

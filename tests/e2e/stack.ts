@@ -1194,7 +1194,11 @@ try {
     const markets = await get("/markets?limit=10");
     check("the API lists markets", markets.status === 200 && markets.body.ok === true);
 
-    const list = markets.body.data as Record<string, unknown>[];
+    const page = markets.body.data as Record<string, unknown>;
+    const list = page.items as Record<string, unknown>[];
+
+    check("the listing is a page with a total", page.total === 1);
+    check("and says whether more exist", page.hasMore === false);
     check("including the one that was launched", list.some((m) => m.token === token.toLowerCase()));
 
     const listed = list.find((m) => m.token === token.toLowerCase()) as Record<string, unknown>;
@@ -1356,6 +1360,150 @@ try {
 
     const badCreator = await get("/creators/nonsense");
     check("a malformed address is refused", badCreator.status === 400);
+
+    /*
+     * §95.21's search, against real rows.
+     *
+     * The four identities it names — name, ticker, contract, creator — plus the
+     * quote asset. Addresses match exactly and text matches fuzzily, which is
+     * the distinction that keeps a truncated paste from quietly resolving to a
+     * different market with a similar name.
+     */
+    const byTicker = await get("/markets?q=E2E");
+    check("search finds a market by ticker", ((byTicker.body.data as Record<string, unknown>).items as unknown[]).length === 1);
+
+    const byName = await get("/markets?q=end%20to");
+    check("and by a fragment of its name", ((byName.body.data as Record<string, unknown>).items as unknown[]).length === 1);
+
+    const byToken = await get(`/markets?q=${token}`);
+    check("and by contract address", ((byToken.body.data as Record<string, unknown>).items as unknown[]).length === 1);
+
+    const byCreator = await get(`/markets?q=${account.address}`);
+    check("and by creator address", ((byCreator.body.data as Record<string, unknown>).items as unknown[]).length === 1);
+
+    const noMatch = await get("/markets?q=zzzznothing");
+    check("a query that matches nothing is an empty page, not an error", noMatch.status === 200);
+    check("with a total of zero", (noMatch.body.data as Record<string, unknown>).total === 0);
+
+    const truncated = await get("/markets?q=0x1111111111111111111111111111111111111");
+    check("a truncated address is refused rather than searched as text", truncated.status === 400);
+
+    const paged = await get("/markets?limit=10&offset=5");
+    check("an offset past the end is empty, not an error", paged.status === 200);
+    check("and still reports the true total", (paged.body.data as Record<string, unknown>).total === 1);
+
+    for (const sort of ["TRENDING", "GAINERS", "VOLUME", "HOLDERS", "PROGRESS", "NEWEST"]) {
+      const sorted = await get(`/markets?sort=${sort}&limit=5`);
+      check(`the ${sort} sort runs against real rows`, sorted.status === 200);
+    }
+
+    const gradSort = await get("/markets?sort=RECENTLY_GRADUATED&limit=5");
+    check("RECENTLY_GRADUATED lists only graduated markets", gradSort.status === 200);
+    check(
+      "and finds this one",
+      ((gradSort.body.data as Record<string, unknown>).items as Record<string, unknown>[]).length === 1,
+    );
+
+    /*
+     * §64's account dashboard, over the real projection.
+     *
+     * The deployer holds tokens, was paid Stockback, and launched the market, so
+     * every part of the response has something real in it — which is the only
+     * way to tell a working join from one that silently returns nothing.
+     */
+    const acct = await get(`/accounts/${account.address}`);
+    check("the API serves an account", acct.status === 200);
+
+    const dash = acct.body.data as Record<string, unknown>;
+    const holdings = (dash.holdings ?? []) as Record<string, unknown>[];
+    check("with the position they hold", holdings.some((h) => h.token === token.toLowerCase()));
+
+    // A mark, not a valuation: selling walks down the curve. The provenance is
+    // what says so, and §87 requires it to survive the wire.
+    check(
+      "portfolio value is marked CALCULATED",
+      (dash.portfolioValue as Record<string, unknown>)?.provenance === "CALCULATED",
+    );
+    check(
+      "and is non-zero for a real holder",
+      BigInt(String((dash.portfolioValue as Record<string, unknown>)?.value)) > 0n,
+    );
+
+    check("their launch is counted", dash.launchCount === 1);
+
+    const history = (dash.claims ?? []) as Record<string, unknown>[];
+    check("the claim history carries the claim that was paid", history.length === 1);
+    check(
+      "for the amount the vault transferred",
+      entitlement === null || BigInt(String(history[0]?.amount)) === entitlement.cumulative,
+    );
+
+    // Fully claimed, so nothing is left. Zero for the right reason — the
+    // lifetime figure above proves the claim was seen.
+    check("nothing is left claimable across markets", dash.totalClaimable === "0");
+
+    const acctStockback = await get(`/accounts/${account.address}/stockback`);
+    check("the Stockback-only account view answers", acctStockback.status === 200);
+    check(
+      "with the same total",
+      (acctStockback.body.data as Record<string, unknown>).totalClaimable === "0",
+    );
+
+    const strangerAcct = await get("/accounts/0x000000000000000000000000000000000000dEaD");
+    check("an account with nothing is not a 404", strangerAcct.status === 200);
+
+    /*
+     * §166's platform stats, from §168's sources.
+     *
+     * Checked against the same numbers the rest of this file already proved:
+     * one launch, one graduation, and creator fees equal to what the fee vault
+     * credited. A stats block that disagrees with the pages it summarises is
+     * worse than no stats block.
+     */
+    const stats = await get("/platform/stats");
+    check("the API serves platform stats", stats.status === 200);
+
+    const st = stats.body.data as Record<string, Record<string, unknown>>;
+    check("counting the launch", st.totalLaunches?.value === "1");
+    check("and the graduation", st.graduated?.value === "1");
+    check("with no pre-grad markets left", st.activePreGrad?.value === "0");
+    check("volume is non-zero", BigInt(String(st.totalVolume?.value)) > 0n);
+
+    // §168 sources this from the registry, not from a DISTINCT over markets: a
+    // verified asset is an available pair whether or not anyone launched on it.
+    check("the registry's asset is counted as a pair", st.activeXStockPairs?.value === "1");
+    check("and as launchable", st.launchableXStockPairs?.value === "1");
+
+    check(
+      "creator fees match what the vault credited",
+      BigInt(String(st.creatorFeesEarned?.value)) === vaultFees,
+    );
+
+    // Distributed means PAID, not funded. Money still in the vault has not been
+    // distributed to anybody.
+    check(
+      "stockback distributed is what holders were paid",
+      entitlement === null ||
+        BigInt(String(st.stockbackDistributed?.value)) === entitlement.cumulative,
+    );
+
+    check("a count is INDEXED", st.totalLaunches?.provenance === "INDEXED");
+    check("a sum is CALCULATED", st.totalVolume?.provenance === "CALCULATED");
+
+    /*
+     * §432 asks for versionable endpoints. Every route is registered twice, from
+     * one definition — two lists is how a path ends up existing under one prefix
+     * and 404ing under the other.
+     */
+    const versioned = await get("/v1/platform/stats");
+    check("every route also answers under /v1", versioned.status === 200);
+    check(
+      "with the same body",
+      JSON.stringify(versioned.body.data) === JSON.stringify(stats.body.data),
+    );
+
+    const versionedMarket = await get(`/v1/markets/${token}`);
+    check("including market detail", versionedMarket.status === 200);
 
     const health = await get("/health");
     check("health answers", health.status === 200 || health.status === 503);

@@ -27,10 +27,13 @@
 import type {
   ApiResult,
   ExploreItem,
+  ExplorePage,
   MarketDetail,
   TapeItem,
   StockbackResponse,
   CreatorResponse,
+  AccountResponse,
+  PlatformStatsResponse,
   HealthResponse,
 } from "@sent/api/handlers";
 import type { IntentKind, IntentRow } from "@sent/sdk";
@@ -38,10 +41,13 @@ import type { IntentKind, IntentRow } from "@sent/sdk";
 export type {
   ApiResult,
   ExploreItem,
+  ExplorePage,
   MarketDetail,
   TapeItem,
   StockbackResponse,
   CreatorResponse,
+  AccountResponse,
+  PlatformStatsResponse,
   HealthResponse,
   IntentKind,
   IntentRow,
@@ -149,28 +155,61 @@ async function request<T>(
 
 // ---------------------------------------------------------------------------
 
-export type ExploreSort = "NEWEST" | "PROGRESS" | "VOLUME" | "HOLDERS";
+export type ExploreSort =
+  | "NEWEST"
+  | "PROGRESS"
+  | "VOLUME"
+  | "HOLDERS"
+  | "TRENDING"
+  | "GAINERS"
+  | "RECENTLY_GRADUATED";
 export type ExploreStatus = "PRE_GRAD" | "GRADUATED";
 
 export interface ExploreQuery {
+  /** Name, ticker, or an exact address (§95.21). */
+  readonly query?: string;
+  readonly offset?: number;
   readonly sort?: ExploreSort;
   readonly status?: ExploreStatus;
   readonly quoteAsset?: string;
   readonly limit?: number;
 }
 
+/**
+ * Explore, as a PAGE.
+ *
+ * The endpoint used to return a bare array, which cannot say how many results
+ * exist — so a client could only guess whether another page was there. §50 asks
+ * for pagination, and guessing is what `items.length === limit` amounts to: it
+ * is wrong exactly once, on the page that ends flush with the limit.
+ */
 export function listMarkets(
   query: ExploreQuery = {},
   options?: RequestOptions,
-): Promise<ApiResult<ExploreItem[]>> {
+): Promise<ApiResult<ExplorePage>> {
   const params = new URLSearchParams();
   if (query.sort !== undefined) params.set("sort", query.sort);
   if (query.status !== undefined) params.set("status", query.status);
   if (query.quoteAsset !== undefined) params.set("quoteAsset", query.quoteAsset);
   if (query.limit !== undefined) params.set("limit", String(query.limit));
+  if (query.offset !== undefined) params.set("offset", String(query.offset));
+  if (query.query !== undefined && query.query.trim() !== "") params.set("q", query.query);
 
   const qs = params.toString();
-  return request<ExploreItem[]>(`/markets${qs === "" ? "" : `?${qs}`}`, options);
+  return request<ExplorePage>(`/markets${qs === "" ? "" : `?${qs}`}`, options);
+}
+
+export function getAccount(
+  address: string,
+  options?: RequestOptions,
+): Promise<ApiResult<AccountResponse>> {
+  return request<AccountResponse>(`/accounts/${address}`, options);
+}
+
+export function getPlatformStats(
+  options?: RequestOptions,
+): Promise<ApiResult<PlatformStatsResponse>> {
+  return request<PlatformStatsResponse>("/platform/stats", options);
 }
 
 export function getMarket(
