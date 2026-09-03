@@ -78,7 +78,13 @@ import {
   listFindings,
   findBlockGaps,
   listAllMarkets,
+  listCandles,
 } from "@sent/database";
+import {
+  candleHandler,
+  holderReconciliationHandler,
+  healthReconciliationHandler,
+} from "@sent/worker/jobs";
 
 const CONNECTION = process.env.DATABASE_URL;
 
@@ -512,7 +518,106 @@ try {
     check("nor is the trade count", Number(row?.trade_count) === 4);
   }
 
-  section("Stockback funding and datasets");
+  section("Worker handlers, against the real schema");
+
+{
+  // The handlers are where the queue meets the projection. Everything about them
+  // that can be tested without a database is in services/worker/sim/worker.ts;
+  // this is the half that cannot.
+  const market = MARKET;
+
+  // Candles from the trades inserted above. The 60s bucket containing 1_020.
+  await candleHandler(db)({ market, intervalSeconds: 60, bucket: 1_020 });
+
+  const bar = await db.queryOne<Record<string, unknown>>(
+    "SELECT open, high, low, close, volume, trade_count FROM candles WHERE market = $1 AND interval_s = 60 AND bucket = 1020",
+    [Buffer.from(market.slice(2), "hex")],
+  );
+
+  check("the candle handler wrote a bar", bar !== null);
+  check("with the trades in that bucket", Number(bar?.trade_count) === 2);
+  check("volume is the sum of their notionals", big(bar?.volume) === 3_000n);
+
+  // Re-running must produce the same row, not a doubled one. This is the
+  // property the whole at-least-once design rests on.
+  await candleHandler(db)({ market, intervalSeconds: 60, bucket: 1_020 });
+
+  const again = await db.queryOne<Record<string, unknown>>(
+    "SELECT volume, trade_count FROM candles WHERE market = $1 AND interval_s = 60 AND bucket = 1020",
+    [Buffer.from(market.slice(2), "hex")],
+  );
+
+  check("re-running does not double the volume", big(again?.volume) === 3_000n);
+  check("nor the trade count", Number(again?.trade_count) === 2);
+
+  // A bucket with no trades writes nothing rather than a flat bar.
+  await candleHandler(db)({ market, intervalSeconds: 60, bucket: 999_000 });
+  const empty = await db.queryOne<{ count: string }>(
+    "SELECT COUNT(*)::TEXT AS count FROM candles WHERE market = $1 AND bucket = 999000",
+    [Buffer.from(market.slice(2), "hex")],
+  );
+  check("an empty bucket writes no candle", empty?.count === "0");
+
+  // A malformed payload must throw so the runner can retry or dead-letter it,
+  // rather than reading undefined and writing nonsense.
+  check(
+    "a payload missing its market is refused",
+    await refuses(() => candleHandler(db)({ intervalSeconds: 60, bucket: 1_020 })),
+  );
+  check(
+    "a block height sent as a number rather than a string is refused",
+    await refuses(() =>
+      holderReconciliationHandler(db)({ market, throughBlock: 21 as unknown as string }),
+    ),
+  );
+
+  // Reconciliation: drift the stored balance, then let the handler find it.
+  await setBalance(db, market, ALICE, 4_242n * WAD, 21n);
+
+  await holderReconciliationHandler(db)({ market, throughBlock: "21" });
+
+  const repaired = (await listBalances(db, market)).find((b) => b.account === ALICE);
+  check("reconciliation repairs drift from the event log", repaired?.balance === 70n * WAD);
+
+  const findings = await listFindings(db, 10);
+  check(
+    "and records what it found before repairing it",
+    findings.some((f) => f.kind === "holder_balance" && f.observed === (4_242n * WAD).toString()),
+  );
+
+  // A clean market produces no findings — otherwise the alert on this table
+  // fires constantly and stops meaning anything.
+  const before = (await listFindings(db, 100)).length;
+  await holderReconciliationHandler(db)({ market, throughBlock: "21" });
+  check("a second pass finds nothing", (await listFindings(db, 100)).length === before);
+
+  // Health: the gap that was restored earlier must not be reported.
+  await healthReconciliationHandler(db)({ fromBlock: "1", toBlock: "40" });
+  const gapFindings = await listFindings(db, 100);
+  check(
+    "the health sweep reports no gap on a contiguous range",
+    !gapFindings.some((f) => f.kind === "block_gap"),
+  );
+
+  // Candles for the intervals the chart serves, so the API has something to
+  // return for each timeframe.
+  for (const interval of [300, 900, 3_600, 14_400, 86_400]) {
+    await candleHandler(db)({
+      market,
+      intervalSeconds: interval,
+      bucket: Math.floor(1_020 / interval) * interval,
+    });
+  }
+
+  const served = await listCandles(db, market, 300, 10);
+  check("candles exist for the 5m timeframe", served.length > 0);
+  check(
+    "each bar bounds its own open and close",
+    served.every((c) => c.high >= c.open && c.high >= c.close && c.low <= c.open && c.low <= c.close),
+  );
+}
+
+section("Stockback funding and datasets");
 
   {
     await recordStockbackFunding(db, {

@@ -213,6 +213,9 @@ importers:
       '@sent/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@sent/worker':
+        specifier: workspace:*
+        version: link:../../services/worker
 
 packages:
 

@@ -1,0 +1,28 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.plain,
+.dim {
+  flex: 1;
+  min-height: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+/*
+ * A pending series dims the previous one rather than clearing it. An empty plot
+ * reads as "no history", which is a different claim from "loading".
+ */
+.dim {
+  opacity: 0.45;
+}
+
+.error {
+  padding: var(--s-2) var(--s-4);
+  font-size: var(--text-xs);
+  color: var(--warn);
+  border-bottom: 1px solid var(--border);
+}

@@ -29,6 +29,8 @@ import {
   handleMarket,
   handleTape,
   handleQuote,
+  handleCandles,
+  CANDLE_INTERVALS,
   handleStockback,
   handleHealth,
   type ExploreOptions,
@@ -123,6 +125,29 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
 
     const result = handleTape(port, token, limit);
     return reply.code(result.ok ? 200 : 404).send(result);
+  });
+
+  app.get("/markets/:token/candles", async (request, reply) => {
+    const { token } = request.params as { token: string };
+    const q = request.query as Record<string, string | undefined>;
+
+    // Parsed strictly. `Number("1m")` is NaN and `Number("")` is 0, either of
+    // which would reach the handler as a nonsense interval; an unparseable value
+    // becomes -1 so the handler's own validation rejects it with a named error.
+    const intervalSeconds = /^\d+$/.test(q.interval ?? "") ? Number(q.interval) : -1;
+    const limit = /^\d+$/.test(q.limit ?? "") ? Number(q.limit) : 200;
+
+    await port.loadMarket(token);
+    const market = port.getMarket(token);
+
+    // Loaded only for a supported interval: an unsupported one is about to be
+    // refused, and issuing the query first would spend a round trip on it.
+    if (market !== null && CANDLE_INTERVALS.includes(intervalSeconds as never)) {
+      await port.loadCandles(market.market, intervalSeconds, Math.min(Math.max(limit, 1), 500));
+    }
+
+    const result = handleCandles(port, token, intervalSeconds, limit);
+    return reply.code(result.ok ? 200 : result.code === "MARKET_NOT_FOUND" ? 404 : 400).send(result);
   });
 
   /**

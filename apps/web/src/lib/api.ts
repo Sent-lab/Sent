@@ -186,6 +186,42 @@ export function getTape(
   return request<TapeItem[]>(`/markets/${token}/trades?limit=${limit}`, options);
 }
 
+export interface CandleItem {
+  /** Bucket start, unix seconds. */
+  readonly t: number;
+  /** Open, high, low, close and volume — decimal strings in raw quote units. */
+  readonly o: string;
+  readonly h: string;
+  readonly l: string;
+  readonly c: string;
+  readonly v: string;
+  readonly n: number;
+}
+
+export interface CandleResponse {
+  readonly intervalSeconds: number;
+  readonly quoteDecimals: number;
+  readonly candles: readonly CandleItem[];
+}
+
+/**
+ * Candles for one market and interval.
+ *
+ * Served from the projection rather than the chain: history is not a decision
+ * anyone signs, and the freshness envelope says how far behind it is (§211).
+ */
+export function getCandles(
+  token: string,
+  intervalSeconds: number,
+  limit = 200,
+  options?: RequestOptions,
+): Promise<ApiResult<CandleResponse>> {
+  return request<CandleResponse>(
+    `/markets/${token}/candles?interval=${intervalSeconds}&limit=${limit}`,
+    options,
+  );
+}
+
 export function getStockback(
   token: string,
   account: string,

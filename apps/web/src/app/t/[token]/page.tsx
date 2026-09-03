@@ -36,6 +36,7 @@ import {
 import { FreshnessBadge } from "../../../components/Freshness.tsx";
 import { GraduationProgress, type MarketStatus } from "../../../components/GraduationProgress.tsx";
 import { TradePanel } from "../../../components/TradePanel.tsx";
+import { ChartPanel } from "../../../components/ChartPanel.tsx";
 
 import styles from "./terminal.module.css";
 import type { JSX } from "react";
@@ -166,19 +167,12 @@ export default async function TerminalPage({
       {/* --- Chart + trade (§216) ---------------------------------------- */}
       <div className={styles.core}>
         <section className={styles.chart} aria-label="Price chart">
-          <div className={styles.chartPlaceholder}>
-            {/*
-              The chart is not built yet, and this says so rather than rendering
-              an empty axis that reads as a market with no history. §57 specifies
-              a full chart system and the candle data it needs is produced by the
-              worker; wiring it is the next piece of this page.
-            */}
-            <p className={styles.chartTitle}>Chart</p>
-            <p className={styles.chartBody}>
-              Candles are aggregated by the worker service and are not yet wired to this
-              view. Price, collateral and the tape below are live.
-            </p>
-          </div>
+          <ChartPanel
+            token={market.token}
+            quoteSymbol={market.quoteSymbol}
+            quoteDecimals={decimals}
+            graduated={status === "GRADUATED"}
+          />
         </section>
 
         <aside className={styles.trade} aria-label="Trade">

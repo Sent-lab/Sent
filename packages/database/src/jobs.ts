@@ -260,6 +260,51 @@ export async function upsertCandles(
   }
 }
 
+export interface CandleRow {
+  readonly bucket: number;
+  readonly open: bigint;
+  readonly high: bigint;
+  readonly low: bigint;
+  readonly close: bigint;
+  readonly volume: bigint;
+  readonly tradeCount: number;
+}
+
+/**
+ * Read candles for one interval, oldest first.
+ *
+ * The LIMIT takes the NEWEST rows and the result is then reversed, because a
+ * chart wants the most recent window in chronological order. Ordering ascending
+ * and limiting would return the market's first hour forever.
+ */
+export async function listCandles(
+  db: Db,
+  market: string,
+  intervalSeconds: number,
+  limit: number,
+): Promise<CandleRow[]> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT bucket, open, high, low, close, volume, trade_count
+     FROM candles
+     WHERE market = $1 AND interval_s = $2
+     ORDER BY bucket DESC
+     LIMIT $3`,
+    [toBytes(market), intervalSeconds, Math.max(1, Math.min(limit, 1000))],
+  );
+
+  return rows
+    .map((r) => ({
+      bucket: Number(big(r.bucket, "bucket")),
+      open: big(r.open, "open"),
+      high: big(r.high, "high"),
+      low: big(r.low, "low"),
+      close: big(r.close, "close"),
+      volume: big(r.volume, "volume"),
+      tradeCount: Number(r.trade_count),
+    }))
+    .reverse();
+}
+
 // ---------------------------------------------------------------------------
 // Reconciliation
 // ---------------------------------------------------------------------------

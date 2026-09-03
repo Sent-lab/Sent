@@ -16,6 +16,9 @@ import {
   handleStockback,
   handleHealth,
   type DataPort,
+  type CandleBar,
+  handleCandles,
+  CANDLE_INTERVALS,
   type MarketRow,
   type TradeRow,
   type StockbackRow,
@@ -97,6 +100,15 @@ class FakePort implements DataPort {
   getMarket(token: string): MarketRow | null {
     return this.market && this.market.token.toLowerCase() === token ? this.market : null;
   }
+  candles: CandleBar[] = [
+    { bucket: 1_699_999_800, open: 100n, high: 140n, low: 90n, close: 120n, volume: 500n, tradeCount: 3 },
+    { bucket: 1_699_999_860, open: 120n, high: 130n, low: 110n, close: 115n, volume: 300n, tradeCount: 2 },
+  ];
+
+  listCandles(_market: string, _intervalSeconds: number, limit: number): readonly CandleBar[] {
+    return this.candles.slice(0, limit);
+  }
+
   listTrades(): readonly TradeRow[] {
     return [
       {
@@ -496,6 +508,74 @@ console.log("\n--- 7. Health tells the truth about itself ----------------------
 
   port.connected = false;
   check("a disconnected service reports NOT serving", !handleHealth(port).data.serving);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 9. Candles ----------------------------------------------------------");
+
+{
+  const port = new FakePort();
+
+  const result = handleCandles(port, TOKEN, 60);
+  check("a supported interval is served", result.ok);
+
+  if (result.ok) {
+    check("bars come back", result.data.candles.length === 2);
+    check("oldest first", (result.data.candles[0]?.t ?? 0) < (result.data.candles[1]?.t ?? 0));
+
+    // Every OHLCV value crosses as a decimal string. A JSON number here would be
+    // a lossy double for any market priced above 2^53 raw units (§424).
+    const bar = result.data.candles[0];
+    check(
+      "every price is a string, never a number",
+      typeof bar?.o === "string" &&
+        typeof bar?.h === "string" &&
+        typeof bar?.l === "string" &&
+        typeof bar?.c === "string" &&
+        typeof bar?.v === "string",
+    );
+
+    // Without this a client cannot place the decimal point at all, and assuming
+    // eighteen renders a six-decimal xStock a trillion times too small.
+    check("quote decimals travel with the bars", result.data.quoteDecimals === 6);
+    check("the interval is echoed back", result.data.intervalSeconds === 60);
+
+    // A bar's high must bound its open and close, or the chart draws a wick
+    // shorter than its own body.
+    check(
+      "each bar is internally consistent",
+      result.data.candles.every(
+        (c) =>
+          BigInt(c.h) >= BigInt(c.o) &&
+          BigInt(c.h) >= BigInt(c.c) &&
+          BigInt(c.l) <= BigInt(c.o) &&
+          BigInt(c.l) <= BigInt(c.c),
+      ),
+    );
+  }
+
+  // Refused rather than clamped: silently answering a 37-second request with a
+  // minute bar would let a client bug ship.
+  const odd = handleCandles(port, TOKEN, 37);
+  check("an unsupported interval is refused", !odd.ok);
+  check("and says so by name", !odd.ok && odd.code === "UNSUPPORTED_INTERVAL");
+
+  const zero = handleCandles(port, TOKEN, 0);
+  check("a zero interval is refused", !zero.ok);
+
+  const missing = handleCandles(port, "0xdeadbeef", 60);
+  check("an unknown market is not found", !missing.ok && missing.code === "MARKET_NOT_FOUND");
+
+  const huge = handleCandles(port, TOKEN, 60, 100_000);
+  check("an oversized limit does not error", huge.ok);
+
+  check(
+    "every advertised interval is accepted",
+    CANDLE_INTERVALS.every((interval) => handleCandles(port, TOKEN, interval).ok),
+  );
+
+  // The envelope travels with candles like every other response (§87).
+  check("candles carry their freshness", result.freshness !== undefined);
 }
 
 // ---------------------------------------------------------------------------

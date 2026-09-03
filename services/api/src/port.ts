@@ -30,6 +30,7 @@ import {
   getActiveCommitment,
   getClaimedTotal,
   headBlockIndexed,
+  listCandles as dbListCandles,
   type ExploreSort,
 } from "@sent/database";
 import { launchMarketAbi } from "@sent/contracts";
@@ -41,6 +42,7 @@ import type {
   TradeRow,
   StockbackRow,
   QuoteResult,
+  CandleBar,
 } from "./handlers.ts";
 
 const STATUS_NAMES = ["PRE_GRAD", "GRADUATING", "GRADUATED"] as const;
@@ -123,6 +125,11 @@ export class PostgresPort implements DataPort {
     return rows.slice(0, limit);
   }
 
+  listCandles(market: string, intervalSeconds: number, limit: number): readonly CandleBar[] {
+    const rows = this.cachedCandles.get(`${market.toLowerCase()}:${intervalSeconds}`) ?? [];
+    return rows.slice(-limit);
+  }
+
   getStockback(market: string, account: string): StockbackRow | null {
     return this.cachedStockback.get(`${market.toLowerCase()}:${account.toLowerCase()}`) ?? null;
   }
@@ -149,6 +156,7 @@ export class PostgresPort implements DataPort {
   private readonly cachedTrades = new Map<string, TradeRow[]>();
   private readonly cachedStockback = new Map<string, StockbackRow>();
   private readonly cachedQuotes = new Map<string, QuoteResult>();
+  private readonly cachedCandles = new Map<string, CandleBar[]>();
 
   async loadMarkets(options: ExploreOptions): Promise<void> {
     const views = await dbListMarkets(this.db, {
@@ -239,6 +247,31 @@ export class PostgresPort implements DataPort {
       // Leaving the cache empty makes the handler return QUOTE_UNAVAILABLE with
       // retryable set, rather than inventing a price the chain did not give.
     }
+  }
+
+  /**
+   * Load candles from the projection.
+   *
+   * From the projection rather than the chain, unlike a quote. History is not a
+   * decision a user signs, and re-deriving five hundred bars from logs on every
+   * chart load would cost far more than the freshness is worth — the envelope
+   * says how far behind it is (§211).
+   */
+  async loadCandles(market: string, intervalSeconds: number, limit: number): Promise<void> {
+    const rows = await dbListCandles(this.db, market, intervalSeconds, limit);
+
+    this.cachedCandles.set(
+      `${market.toLowerCase()}:${intervalSeconds}`,
+      rows.map((r) => ({
+        bucket: r.bucket,
+        open: r.open,
+        high: r.high,
+        low: r.low,
+        close: r.close,
+        volume: r.volume,
+        tradeCount: r.tradeCount,
+      })),
+    );
   }
 
   async loadStockback(market: string, account: string, quoteDecimals: number): Promise<void> {

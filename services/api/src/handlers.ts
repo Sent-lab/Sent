@@ -101,11 +101,22 @@ export interface DataPort {
   listMarkets(options: ExploreOptions): readonly MarketRow[];
   getMarket(token: string): MarketRow | null;
   listTrades(market: string, limit: number): readonly TradeRow[];
+  listCandles(market: string, intervalSeconds: number, limit: number): readonly CandleBar[];
   getStockback(market: string, account: string): StockbackRow | null;
 
   /** Quote from the canonical curve, as the market itself would compute it. */
   quoteBuy(market: string, grossQuoteIn: bigint): QuoteResult | null;
   quoteSell(market: string, tokensIn: bigint): QuoteResult | null;
+}
+
+export interface CandleBar {
+  readonly bucket: number;
+  readonly open: bigint;
+  readonly high: bigint;
+  readonly low: bigint;
+  readonly close: bigint;
+  readonly volume: bigint;
+  readonly tradeCount: number;
 }
 
 export interface QuoteResult {
@@ -340,6 +351,84 @@ export function handleTape(port: DataPort, token: string, limit = 50): ApiResult
       timestamp: t.timestamp,
     })),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Candles
+// ---------------------------------------------------------------------------
+
+/**
+ * Intervals the API serves.
+ *
+ * §57 lists 1s and 5s among the possible timeframes and allows the exact set to
+ * follow data capacity. Sub-minute candles are not served: HyperEVM blocks do
+ * not arrive fast enough for a one-second bar to carry information, and a chart
+ * of mostly-empty buckets is a worse answer than a coarser one that is full.
+ */
+export const CANDLE_INTERVALS = [60, 300, 900, 3_600, 14_400, 86_400] as const;
+
+const MAX_CANDLES = 500;
+
+export interface CandleItem {
+  /** Bucket start, unix seconds. */
+  readonly t: number;
+  readonly o: string;
+  readonly h: string;
+  readonly l: string;
+  readonly c: string;
+  readonly v: string;
+  readonly n: number;
+}
+
+export interface CandleResponse {
+  readonly intervalSeconds: number;
+  /** Quote decimals, so a client can render the axis without a second call. */
+  readonly quoteDecimals: number;
+  readonly candles: readonly CandleItem[];
+}
+
+/**
+ * Serve candles for one market and interval.
+ *
+ * Keys are short because a five-hundred-bar response repeats them five hundred
+ * times, and this is the one endpoint where that difference is measurable. The
+ * VALUES are still decimal strings — §424 does not bend for payload size.
+ */
+export function handleCandles(
+  port: DataPort,
+  token: string,
+  intervalSeconds: number,
+  limit = 200,
+): ApiResult<CandleResponse> {
+  const row = port.getMarket(token.toLowerCase());
+  if (row === null) return fail(port, "MARKET_NOT_FOUND", `no launched market for token ${token}`);
+
+  // Validated against the served set rather than clamped into it. A request for
+  // a 37-second candle is a client bug, and silently answering with a minute bar
+  // would let that bug ship.
+  if (!CANDLE_INTERVALS.includes(intervalSeconds as (typeof CANDLE_INTERVALS)[number])) {
+    return fail(
+      port,
+      "UNSUPPORTED_INTERVAL",
+      `interval must be one of ${CANDLE_INTERVALS.join(", ")} seconds`,
+    );
+  }
+
+  const capped = Math.min(Math.max(limit, 1), MAX_CANDLES);
+
+  return ok(port, {
+    intervalSeconds,
+    quoteDecimals: row.quoteDecimals,
+    candles: port.listCandles(row.market, intervalSeconds, capped).map((bar) => ({
+      t: bar.bucket,
+      o: bar.open.toString(),
+      h: bar.high.toString(),
+      l: bar.low.toString(),
+      c: bar.close.toString(),
+      v: bar.volume.toString(),
+      n: bar.tradeCount,
+    })),
+  });
 }
 
 // ---------------------------------------------------------------------------

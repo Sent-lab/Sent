@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Runs the projection SQL against a real PostgreSQL.",
   "dependencies": {
-    "@sent/database": "workspace:*"
+    "@sent/database": "workspace:*",
+    "@sent/worker": "workspace:*"
   },
   "scripts": {
     "test": "node --experimental-strip-types projection.ts"
