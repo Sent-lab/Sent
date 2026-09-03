@@ -152,6 +152,46 @@ export async function rollbackTo(db: Db, blockNumber: bigint): Promise<number> {
      WHERE market NOT IN (SELECT DISTINCT market FROM trades)`,
   );
 
+  /*
+   * Rebuild `balances` from the events that survived.
+   *
+   * `market_state` was recomputed above and `balances` was not, which left it
+   * holding deltas from blocks that no longer exist. That is not a cosmetic
+   * drift: the next block re-applies its own transfers on top of the stale
+   * total, the running balance goes negative, and the schema's own check
+   * constraint refuses the write — so the indexer fails every tick from then on
+   * and never recovers.
+   *
+   * Rebuilt rather than adjusted, for the same reason `market_state` is: an
+   * incrementally corrected aggregate is how a projection drifts from the chain
+   * without anyone noticing (§138). The event log is the derived truth, so it
+   * wins outright.
+   */
+  await db.query("DELETE FROM balances");
+
+  await db.query(
+    `INSERT INTO balances (market, account, balance, last_block)
+     SELECT market, account, SUM(delta), MAX(block_number)
+     FROM balance_events
+     GROUP BY market, account
+     HAVING SUM(delta) > 0`,
+  );
+
+  // Holder counts derive from `balances`, so they can only be trusted once the
+  // balances themselves have been rebuilt.
+  await db.query(
+    `UPDATE market_state ms SET holder_count = COALESCE(b.holders, 0)
+     FROM (
+       SELECT market, COUNT(*) AS holders FROM balances WHERE balance > 0 GROUP BY market
+     ) b
+     WHERE ms.market = b.market`,
+  );
+
+  await db.query(
+    `UPDATE market_state SET holder_count = 0
+     WHERE market NOT IN (SELECT DISTINCT market FROM balances)`,
+  );
+
   return deleted.length;
 }
 

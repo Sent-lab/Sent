@@ -119,6 +119,12 @@ export class Indexer {
 
     this.client = createPublicClient({
       transport: config.wsUrl !== undefined ? webSocket(config.wsUrl) : http(config.rpcUrl),
+      // viem caches `eth_blockNumber` for its polling interval, which defaults to
+      // four seconds regardless of what this service was configured to do. An
+      // indexer told to poll every 100ms would still see a head that only moves
+      // every four — so the cache is tied to the configured cadence instead, and
+      // the setting means what it says.
+      cacheTime: config.pollIntervalMs,
     });
   }
 
@@ -171,6 +177,61 @@ export class Indexer {
   /** One pass: catch up to the head, a batch at a time. */
   async tick(): Promise<void> {
     this.headBlock = await this.client.getBlockNumber();
+
+    /*
+     * Check the tip before assuming there is nothing to do.
+     *
+     * The loop below only moves FORWARDS, so once the cursor reaches the head it
+     * stops looking — and the two most ordinary reorgs are invisible from there:
+     *
+     *   Same height, different hash. A one-block reorg replaces the tip and
+     *   leaves the height unchanged. `indexedBlock === headBlock`, the loop does
+     *   not run, and the orphaned block's trades stay in the projection forever
+     *   while the chain has no memory of them.
+     *
+     *   A shorter chain. A deeper reorg, a rewound node or a replaced one leaves
+     *   the head BELOW the cursor. The indexer then sits idle believing it is
+     *   ahead of the chain, and nothing ever reports a problem.
+     *
+     * Neither is exotic. The first is the common case on any chain with
+     * competing blocks, and it is exactly what the reorg tracker was written to
+     * handle — it was simply never asked.
+     */
+    if (this.headBlock <= this.indexedBlock) {
+      const tip = await this.client.getBlock({
+        blockNumber: this.headBlock,
+        includeTransactions: false,
+      });
+
+      const decision = this.tracker.inspect({
+        number: tip.number,
+        hash: tip.hash,
+        parentHash: tip.parentHash,
+      });
+
+      if (decision.action === "reorg") {
+        await this.handleReorg(decision.rollbackTo);
+        return;
+      }
+
+      if (decision.action === "reindex_required") {
+        this.reindexesRequired += 1;
+        console.error(`[indexer] ${decision.reason}`);
+        await this.fullReindex();
+        return;
+      }
+
+      // A head below the cursor with a matching hash still means rows above it
+      // describe blocks that are gone.
+      if (this.headBlock < this.indexedBlock) {
+        console.warn(
+          `[indexer] chain head ${this.headBlock} is below the cursor ${this.indexedBlock}; rolling back`,
+        );
+        await this.handleReorg(this.headBlock);
+      }
+
+      return;
+    }
 
     while (this.indexedBlock < this.headBlock && this.running) {
       const from = this.indexedBlock + 1n;
@@ -383,6 +444,38 @@ export class Indexer {
       if (settled !== undefined) await markFinalized(tx, settled);
     });
 
+    /*
+     * Commit the range's headers to the tracker, ending with its LAST block.
+     *
+     * Only the range's FIRST block used to be committed, which left the tracker
+     * claiming a head far below where the indexer had actually reached. The next
+     * range then began at `to + 1`, the tracker compared it against a head one
+     * block after the previous range's START, and anything wider than a single
+     * block was reported as a gap — which `processRange` throws on.
+     *
+     * In steady state ranges are one block wide and this never fired. It fires
+     * the moment the indexer falls behind and catches up in a batch, which is
+     * exactly when it must not: the tick throws, the cursor stops, and indexing
+     * wedges until someone restarts it.
+     *
+     * The headers already fetched for blocks carrying logs are committed too, so
+     * the fork-location window is denser at no extra round trip.
+     */
+    const committed: BlockRef[] = [ref];
+
+    for (const [number, header] of [...headers].sort(([a], [b]) => (a < b ? -1 : 1))) {
+      if (number > ref.number) {
+        committed.push({ number, hash: header.hash, parentHash: header.parentHash });
+      }
+    }
+
+    if (to > ref.number && !committed.some((b) => b.number === to)) {
+      const last = await this.client.getBlock({ blockNumber: to, includeTransactions: false });
+      committed.push({ number: last.number, hash: last.hash, parentHash: last.parentHash });
+    }
+
+    for (const block of committed) this.tracker.commit(block);
+
     // The transaction committed, so the in-memory view may now match it.
     for (const entry of this.pendingMarkets) {
       this.knownMarkets.set(entry.market, {
@@ -393,7 +486,6 @@ export class Indexer {
     }
     this.pendingMarkets = [];
 
-    this.tracker.commit(ref);
     this.indexedBlock = to;
     return true;
   }

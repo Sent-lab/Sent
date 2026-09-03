@@ -94,7 +94,10 @@ function artifact(name: string, file = `${name}.sol`): Artifact {
 const account = privateKeyToAccount(DEPLOYER_KEY);
 const transport = http(RPC_URL);
 
-const publicClient = createPublicClient({ transport });
+// `cacheTime: 0` because viem caches `eth_blockNumber` for its polling interval
+// by default — four seconds of a frozen head, which in a test that mines and
+// reverts within milliseconds looks exactly like a chain that stopped moving.
+const publicClient = createPublicClient({ transport, cacheTime: 0 });
 const wallet = createWalletClient({ account, transport });
 
 async function deploy(
@@ -135,6 +138,24 @@ async function send(
   });
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
   if (receipt.status !== "success") throw new Error(`${functionName} reverted`);
+}
+
+/**
+ * Poll until a condition holds, or give up.
+ *
+ * Polling rather than sleeping a fixed interval: a fixed sleep is either flaky
+ * or slow, and usually manages both.
+ */
+async function waitFor<T>(probe: () => Promise<T | null>, timeoutMs = 30_000): Promise<T | null> {
+  const deadlineAt = Date.now() + timeoutMs;
+
+  while (Date.now() < deadlineAt) {
+    const result = await probe();
+    if (result !== null) return result;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+
+  return null;
 }
 
 const db = new Database({ connectionString: DATABASE_URL });
@@ -304,7 +325,6 @@ try {
   await send(token, artifact("LaunchToken").abi, "approve", [market, balance]);
   await send(market, marketAbi, "sell", [balance / 10n, 0n, deadline]);
 
-  const head = await publicClient.getBlockNumber();
 
   // --- Index it ----------------------------------------------------------
 
@@ -323,16 +343,10 @@ try {
 
   await indexer.start();
 
-  // Wait for the projection to catch up rather than sleeping a fixed interval:
-  // a fixed sleep is either flaky or slow, and usually manages both.
-  const deadlineAt = Date.now() + 30_000;
-  let indexed = null as Awaited<ReturnType<typeof getMarketByToken>>;
-
-  while (Date.now() < deadlineAt) {
-    indexed = await getMarketByToken(db, token);
-    if (indexed !== null && indexed.tradeCount >= 3) break;
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
+  const indexed = await waitFor(async () => {
+    const view = await getMarketByToken(db, token);
+    return view !== null && view.tradeCount >= 3 ? view : null;
+  });
 
   indexer.stop();
 
@@ -383,11 +397,133 @@ try {
     check("every trade recorded a non-zero core fee", trades.every((t) => t.coreFee > 0n));
     check("every buy paid stockback", trades.filter((t) => t.side === 0).every((t) => t.stockback > 0n));
 
-    console.log(`       lastBlock ${indexed.lastBlock}, chain head at trade time ${head}`);
+    // Against a head read NOW, not the one captured before indexing began. The
+    // earlier form compared a live value to a stale snapshot and failed in CI
+    // when a block arrived in between — an assertion about the test's own timing
+    // rather than about the projection.
+    const headNow = await publicClient.getBlockNumber();
+
     check(
-      "the head the indexer reached covers every trade",
-      indexed.lastBlock > 0n && indexed.lastBlock <= head,
+      "the last indexed block is a real block at or below the head",
+      indexed.lastBlock > 0n && indexed.lastBlock <= headNow,
     );
+    check("and is at or after the launch", indexed.lastBlock >= indexed.launchedAtBlock);
+
+    // --- A real reorg ------------------------------------------------------
+
+    section("Surviving a reorg the chain actually performed");
+
+    /*
+     * Reorg handling has been tested against synthetic logs and never against a
+     * node that genuinely reorganised. It is also the most safety-critical path
+     * in the indexer: §138's rebuildable projection is a claim about exactly
+     * this, and a rollback that leaves one stale row makes the database disagree
+     * with the chain permanently and silently.
+     *
+     * anvil's snapshot and revert produce a real one — the same block heights
+     * come back with different hashes and different contents, which is precisely
+     * what a reorg is.
+     */
+    const snapshot = (await publicClient.request({
+      method: "evm_snapshot" as never,
+      params: [] as never,
+    })) as string;
+
+    /*
+     * A trade that is about to be un-happened.
+     *
+     * Deliberately small. A larger buy runs into the curve endpoint, where the
+     * market accepts only the portion that reaches qG and emits THAT as the
+     * gross — so two different requested amounts produce the same recorded
+     * trade, and this test would be unable to tell the orphan from its
+     * replacement.
+     */
+    await send(market, marketAbi, "buy", [ONE_QUOTE, 0n, deadline]);
+
+    await indexer.start();
+    const orphaned = await waitFor(async () => {
+      const view = await getMarketByToken(db, token);
+      return view !== null && view.tradeCount === 4 ? view : null;
+    });
+    indexer.stop();
+
+    check("the doomed trade was indexed first", orphaned !== null);
+
+    const orphanedHead = await publicClient.getBlockNumber();
+
+    // Rewind. The chain now has no memory of that trade.
+    await publicClient.request({
+      method: "evm_revert" as never,
+      params: [snapshot] as never,
+    });
+
+    // A different history from the same height: a different size instead.
+    await send(market, marketAbi, "buy", [ONE_QUOTE * 2n, 0n, deadline]);
+
+    const rewoundHead = await publicClient.getBlockNumber();
+    console.log(`       orphaned head ${orphanedHead}, rewound head ${rewoundHead}`);
+    check("the chain really did rewind", rewoundHead <= orphanedHead);
+
+    await indexer.start();
+
+    const reconciled = await waitFor(async () => {
+      const view = await getMarketByToken(db, token);
+      if (view === null) return null;
+
+      // Settled when the projection agrees with the chain again, whatever the
+      // chain now says — not when it reaches a number this test predicted.
+      const onChain = (await publicClient.readContract({
+        address: market,
+        abi: marketAbi,
+        functionName: "distributed",
+      })) as bigint;
+
+      return view.distributed === onChain ? view : null;
+    });
+
+    indexer.stop();
+
+    check("the projection reconverged on the chain", reconciled !== null);
+    check("a reorg was actually detected", indexer.status().reorgsHandled > 0);
+
+    if (reconciled !== null) {
+      const finalCollateral = (await publicClient.readContract({
+        address: market,
+        abi: marketAbi,
+        functionName: "curveCollateral",
+      })) as bigint;
+
+      check("collateral matches the surviving chain", reconciled.curveCollateral === finalCollateral);
+
+      // The orphaned trade must be GONE, not merely outnumbered. A rollback that
+      // leaves it behind produces a tape showing a trade that never happened.
+      const tape = await listTrades(db, market, 20);
+      check("the tape holds four trades, not five", tape.length === 4);
+
+      /*
+       * Notionals are stored NORMALIZED to eighteen decimals, because that is
+       * the basis the contract's own accounting uses. This quote asset has six,
+       * so a raw amount scales by 10^12 on its way into the projection.
+       */
+      const normalized = (raw: bigint): bigint => raw * 10n ** 12n;
+
+      check(
+        "the orphaned trade is gone from the tape",
+        !tape.some((t) => t.notional === normalized(ONE_QUOTE)),
+      );
+      check(
+        "and the replacement is present",
+        tape.some((t) => t.notional === normalized(ONE_QUOTE * 2n)),
+      );
+
+      // Every derived table cascades from `blocks`, so an orphaned block left
+      // behind would take its rows with it.
+      const staleBlocks = await db.query<{ c: string }>(
+        "SELECT COUNT(*)::TEXT AS c FROM blocks WHERE number > $1",
+        [rewoundHead.toString()],
+      );
+      check("no block above the new head survived", staleBlocks[0]?.c === "0");
+    }
   }
 } finally {
   await db.close();
