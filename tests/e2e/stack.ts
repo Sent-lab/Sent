@@ -711,6 +711,10 @@ try {
         const dataset = await getLatestDataset(db, market);
         check("and stored it", dataset !== null);
 
+        // Hoisted: the claim phase below needs it, and a proof is only valid
+        // against the root it was built for.
+        let entitlement: Awaited<ReturnType<typeof getEntitlementForRoot>> = null;
+
         if (dataset !== null) {
           // §364. The vault would reject a commitment above its funding, and a
           // rejected commitment is an outage that looks like theft.
@@ -721,7 +725,7 @@ try {
 
           check("something was actually distributed", dataset.totalCumulative > 0n);
 
-          const entitlement = await getEntitlementForRoot(
+          entitlement = await getEntitlementForRoot(
             db,
             market,
             account.address,
@@ -759,6 +763,245 @@ try {
 
             check("the entitlement is positive", entitlement.cumulative > 0n);
           }
+        }
+
+        // --- The money path (§179) -----------------------------------------
+
+        section("Claiming, with real attestor signatures");
+
+        /*
+         * §179's rehearsal runs all the way to "claim paired xStock Stockback"
+         * and "creator fee collection/claim". Neither had ever been executed
+         * outside Foundry, and they are the two paths where a defect means
+         * somebody's money does not arrive.
+         *
+         * The attestor quorum is real: two separate keys sign the EIP-712
+         * commitment the finalizer computed, the vault verifies both, and the
+         * activation delay is waited out on the chain's own clock rather than
+         * bypassed. A test that skipped the delay would not be testing the thing
+         * that protects holders from a bad root.
+         */
+        if (dataset !== null && entitlement !== null) {
+          const vaultAbi = artifact("HolderRewardVault").abi;
+
+          /*
+           * Anvil's second and third accounts, SORTED BY ADDRESS.
+           *
+           * The vault requires strictly ascending signers, which is how it
+           * proves a quorum is distinct rather than the same key twice. Signing
+           * in arbitrary order is refused with `SignaturesNotSorted`, and that
+           * refusal is the guard working — so the order is produced here rather
+           * than assumed.
+           */
+          const attestors = [
+            privateKeyToAccount(
+              "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+            ),
+            privateKeyToAccount(
+              "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
+            ),
+          ].sort((a, b) =>
+            BigInt(a.address) < BigInt(b.address) ? -1 : 1,
+          );
+
+          for (const attestor of attestors) {
+            await send(rewardVault, vaultAbi, "addAttestor", [attestor.address]);
+          }
+          await send(rewardVault, vaultAbi, "setQuorum", [2n]);
+
+          const commitment = {
+            market: market as Address,
+            token: token as Address,
+            rewardAsset: quote,
+            distributionVersion: 1n,
+            epochSequence: dataset.epochSequence,
+            totalCumulative: dataset.totalCumulative,
+            merkleRoot: dataset.merkleRoot as Hex,
+            datasetHash: dataset.datasetHash as Hex,
+          };
+
+          /*
+           * The typed data mirrors COMMITMENT_TYPEHASH exactly, including the
+           * chainId and vault carried as FIELDS rather than only in the domain.
+           * That is what makes a signature useless outside the exact chain,
+           * vault, market and version it was produced for.
+           */
+          const signatures: Hex[] = [];
+
+          for (const attestor of attestors) {
+            signatures.push(
+              await attestor.signTypedData({
+                domain: {
+                  name: "SENT Stockback",
+                  version: "1",
+                  chainId,
+                  verifyingContract: rewardVault,
+                },
+                types: {
+                  StockbackCommitment: [
+                    { name: "chainId", type: "uint256" },
+                    { name: "vault", type: "address" },
+                    { name: "market", type: "address" },
+                    { name: "token", type: "address" },
+                    { name: "rewardAsset", type: "address" },
+                    { name: "distributionVersion", type: "uint256" },
+                    { name: "epochSequence", type: "uint256" },
+                    { name: "totalCumulative", type: "uint256" },
+                    { name: "merkleRoot", type: "bytes32" },
+                    { name: "datasetHash", type: "bytes32" },
+                  ],
+                },
+                primaryType: "StockbackCommitment",
+                message: {
+                  chainId: BigInt(chainId),
+                  vault: rewardVault,
+                  ...commitment,
+                },
+              }),
+            );
+          }
+
+          await send(rewardVault, vaultAbi, "submitCommitment", [commitment, signatures]);
+          check("the vault accepted a quorum-signed commitment", true);
+
+          // Not claimable yet. The delay is the window in which a bad root can be
+          // cancelled, and skipping it would test nothing.
+          const early = await publicClient
+            .simulateContract({
+              address: rewardVault,
+              abi: vaultAbi,
+              functionName: "activate",
+              args: [market],
+              account: account.address,
+            })
+            .then(() => false)
+            .catch(() => true);
+
+          check("activation is refused before the delay elapses", early);
+
+          // Past the six-hour activation delay, on the chain's own clock.
+          await publicClient.request({
+            method: "evm_increaseTime" as never,
+            params: [6 * 3_600 + 60] as never,
+          });
+          await publicClient.request({ method: "evm_mine" as never, params: [] as never });
+
+          await send(rewardVault, vaultAbi, "activate", [market]);
+          check("the commitment activated after the delay", true);
+
+          const beforeClaim = (await publicClient.readContract({
+            address: quote,
+            abi: quoteAbi,
+            functionName: "balanceOf",
+            args: [account.address],
+          })) as bigint;
+
+          await send(rewardVault, vaultAbi, "claim", [
+            market,
+            account.address,
+            entitlement.cumulative,
+            entitlement.proof,
+          ]);
+
+          const afterClaim = (await publicClient.readContract({
+            address: quote,
+            abi: quoteAbi,
+            functionName: "balanceOf",
+            args: [account.address],
+          })) as bigint;
+
+          /*
+           * The assertion this whole phase exists for: a proof built off-chain by
+           * the finalizer, stored in PostgreSQL, read back over the wire, and paid
+           * out by the contract — with the amount matching to the wei.
+           */
+          check(
+            "the claim paid exactly the computed entitlement",
+            afterClaim - beforeClaim === entitlement.cumulative,
+          );
+
+          console.log(
+            `       claimed ${afterClaim - beforeClaim} against root ${dataset.merkleRoot.slice(0, 12)}`,
+          );
+
+          // Cumulative, not incremental: claiming again pays nothing rather than
+          // paying twice.
+          const twice = await publicClient
+            .simulateContract({
+              address: rewardVault,
+              abi: vaultAbi,
+              functionName: "claim",
+              args: [market, account.address, entitlement.cumulative, entitlement.proof],
+              account: account.address,
+            })
+            .then(() => false)
+            .catch(() => true);
+
+          check("claiming the same cumulative twice is refused", twice);
+
+          // A tampered amount must fail the proof, or the root secures nothing.
+          const tampered = await publicClient
+            .simulateContract({
+              address: rewardVault,
+              abi: vaultAbi,
+              functionName: "claim",
+              args: [market, account.address, entitlement.cumulative + 1n, entitlement.proof],
+              account: account.address,
+            })
+            .then(() => false)
+            .catch(() => true);
+
+          check("a claim for one wei more is refused", tampered);
+        }
+
+        section("Creator fees");
+
+        // §179: "creator fee collection/claim". The creator earns 65% of the core
+        // fee, and this is the only path by which it reaches them.
+        {
+          const feeVaultAbi = artifact("FeeVault").abi;
+
+          const owed = (await publicClient.readContract({
+            address: feeVault,
+            abi: feeVaultAbi,
+            functionName: "creatorBalance",
+            args: [account.address, quote],
+          })) as bigint;
+
+          check("the creator accrued fees from the trades", owed > 0n);
+
+          const beforeFees = (await publicClient.readContract({
+            address: quote,
+            abi: quoteAbi,
+            functionName: "balanceOf",
+            args: [account.address],
+          })) as bigint;
+
+          await send(feeVault, feeVaultAbi, "claimCreatorFees", [quote, account.address]);
+
+          const afterFees = (await publicClient.readContract({
+            address: quote,
+            abi: quoteAbi,
+            functionName: "balanceOf",
+            args: [account.address],
+          })) as bigint;
+
+          check("the claim paid exactly what was owed", afterFees - beforeFees === owed);
+          console.log(`       creator claimed ${owed}`);
+
+          // A second claim must find nothing, not pay again.
+          const twiceFees = await publicClient
+            .simulateContract({
+              address: feeVault,
+              abi: feeVaultAbi,
+              functionName: "claimCreatorFees",
+              args: [quote, account.address],
+              account: account.address,
+            })
+            .then(() => false)
+            .catch(() => true);
+
+          check("a second creator claim is refused", twiceFees);
         }
 
         // A graduated market must refuse further curve trades. If the projection
