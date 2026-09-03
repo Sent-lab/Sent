@@ -27,13 +27,18 @@ Last updated: Day 8.
 
 | Status | Count | Rows |
 |---|---|---|
-| VERIFIED | 6 | V-01, V-07, V-08, V-09, V-16, V-20 |
-| PARTIAL | 3 | V-06, V-10, V-15 |
-| UNVERIFIED | 9 | V-02, V-03, V-04, V-05, V-11, V-12, V-13, V-14, V-17 |
+| VERIFIED | 9 | V-01, V-03, V-05, V-07, V-08, V-09, V-13, V-16, V-20 |
+| PARTIAL | 4 | V-02, V-06, V-10, V-15 |
+| UNVERIFIED | 5 | V-04, V-11, V-12, V-14, V-17 |
 | OWNER-BLOCKED | 1 | V-18 |
 | CLOSED | 1 | V-19 |
 
-**P0 rows still open: V-02, V-03, V-05, V-13.** These can invalidate LOCKED behaviour.
+**P0 rows still open: V-02.** And it is now a product question rather than an engineering one.
+
+V-03 and V-05 are VERIFIED in the uncomfortable sense: they were answered, and the answers
+disqualify the only xStock that exists on HyperEVM. SPYx rebases, is pausable, and sits behind
+an upgradeable proxy with an EOA minter. V-02 found it and simultaneously found that no first
+party lists HyperEVM as a supported chain at all.
 
 **Day 8 movement.** V-08 and V-09 closed together, against the real HyperSwap deployment
 rather than against a mock — see `contracts/test/fork/HyperSwapFork.t.sol`. V-06 located its
@@ -77,7 +82,7 @@ attestation domain (§405) and every EIP-712 domain.
 
 ---
 
-## V-02 — Canonical HyperEVM xStock representations + exact addresses · **UNVERIFIED · P0**
+## V-02 — Canonical HyperEVM xStock representations + exact addresses · **PARTIAL · P0**
 
 ```text
 UNKNOWN:            which xStock assets have a canonical, verified ERC-20 representation on
@@ -93,7 +98,8 @@ HOW TO VERIFY:      1. obtain the HIP-1 spot token indices for the xStock assets
                     4. confirm against first-party xStocks/Hyperliquid publication
 BLOCKS:             XStockRegistry, every market, launch flow, the entire product
 OWNER:              Stream A
-STATUS:             UNVERIFIED — mechanism understood, addresses not yet confirmed
+STATUS:             PARTIAL — one genuine xStock LOCATED on HyperEVM and read on-chain;
+                    canonicity for this chain is contradicted by first-party sources
 ```
 
 **Day 1 findings (context, not resolution):** xStocks launched tokenized US equities on
@@ -104,7 +110,48 @@ written into `packages/config` until read from chain.
 
 ---
 
-## V-03 — xStock decimals, wrapper / multiplier / share semantics · **UNVERIFIED · P0**
+**Day 8 (PRIMARY): one xStock found, by measurement.**
+
+Not by guessing an address. HyperSwap's `NonfungiblePositionManager` was sampled for the token
+pairs its 177,889 positions actually hold — 500 of the most recent positions, 433 unique
+tokens — and the list was filtered for equity-shaped names. Exactly one hit:
+
+```text
+SP500 xStock   SPYx    0x90a2a4c76b5d8c0bc892a69ea28aa775a8f2dd48   18 dec
+  totalSupply      14,496.95 units
+  implementation   0xd865ce1b07540b5ede20e8298f48da69770fe22e
+                   name() -> "Backed Token Implementation"  (EIP-1967 proxy)
+  minter()         0x0a934bc9c64309c9654451f23d8331c2dad34c2a   (an EOA)
+  owner()          0x49754062e35f7591b93cc4f9915965be89643a65   (a 171-byte contract)
+  isPaused()       false
+
+Wrapped SP500 xStock   wSPYx   0xe7e553cd128f0011777323a0b44a7b96ea1cb540   18 dec
+  asset()          -> SPYx        an ERC-4626 wrapper over it
+  convertToAssets(1e18) -> 1.0057145603      NOT one-to-one
+```
+
+The implementation is Backed Finance's own. This is the real issuer's code, not a lookalike.
+
+**But canonicity for THIS chain is contradicted by the first party.** `xstocks.com` lists the
+supported chains as Ethereum, Solana, BNB Smart Chain, Mantle, TON and Ink; `docs.xstocks.fi`
+lists Ethereum, Solana, Arbitrum, Mantle, TON, Ink "and other EVM-compatible networks".
+**Neither names HyperEVM.** So what is on HyperEVM is genuine Backed code at an address no
+first party has published for this chain, which is precisely the situation §420 was written
+against: *"Do not infer availability from the global xStocks product catalog."*
+
+**And it is the only one.** 433 unique tokens across the sampled positions, and no NVDAx,
+TSLAx, AAPLx or anything else. Whatever else is true, the HyperEVM xStock universe is one
+asset with 14,497 units outstanding and a single thin pool — which is a product question
+(§420's "at least one qualifying asset") before it is a verification one.
+
+**This row stays PARTIAL, and the blocker has moved rather than shrunk.** The address is no
+longer unknown; what is unknown is whether Backed considers this deployment canonical, who
+controls the EOA that can mint it, and whether it is intended to exist on this chain at all.
+Only a first party can answer those, and §421 forbids proceeding without.
+
+---
+
+## V-03 — xStock decimals, wrapper / multiplier / share semantics · **VERIFIED · P0**
 
 ```text
 UNKNOWN:            exact decimals on the EVM side, and the Core<->EVM decimal offset
@@ -115,8 +162,50 @@ HOW TO VERIFY:      read decimals() on the linked ERC-20; read the token's weiDe
                     evmExtraWeiDecimals from HyperCore spot metadata
 BLOCKS:             XStockAssetAdapter, curve accounting, Stockback funding
 OWNER:              Stream A
-STATUS:             UNVERIFIED
+STATUS:             VERIFIED (PRIMARY), Day 8 — and the answer disqualifies the asset
 ```
+
+**Answered, and it is the answer nobody wanted.**
+
+The only xStock on HyperEVM (V-02) has multiplier semantics of the most dangerous kind. Read
+directly from `SPYx` at `0x90a2a4c76b5d8c0bc892a69ea28aa775a8f2dd48`:
+
+```text
+multiplier()            1005714560286254000   =  1.0057145603
+sharesOf(address)       present
+getCurrentMultiplier()  present in the implementation bytecode
+decimals()              18
+```
+
+`balanceOf` is `sharesOf × multiplier`. **SPYx rebases**, and its multiplier has already left
+1.0 — this is not a dormant capability, it has fired at least once.
+
+xStocks' own documentation says why, and says it plainly: corporate actions such as *"dividends,
+stock splits, and reverse splits are reflected through an onchain rebasing mechanism"* so that
+*"token balances always reflect a 1:1 exposure of the underlying equity."* The rebase is the
+product working as designed, not a flaw in it.
+
+The `wSPYx` wrapper at `0xe7e553cd128f0011777323a0b44a7b96ea1cb540` is the other half of the
+picture: an ERC-4626 over SPYx whose `convertToAssets(1e18)` returns the same 1.0057145603. It
+does not rebase, but a share is not an asset — which is the wrapper/share semantics this row
+also names.
+
+**Why this is a P0 disqualification rather than an integration detail.** `LaunchMarket` treats
+collateral as a LIABILITY derived from curve maths, never as a balance — that separation is what
+makes the accounting auditable, and it rests on an assumption that was never written down: a
+balance only changes when someone transfers.
+
+A reverse split lowers the multiplier. Every holder's balance shrinks and so does the market's,
+while `curveCollateral` does not move, because no transfer happened and no event fired. The
+market is then **insolvent against its own books**, `sell` reverts for everyone, and it stays
+that way. There is no attack, no bug, no moment where anything looks wrong beforehand, and
+nobody to blame.
+
+**Acted on, not merely recorded.** §420's `multiplierBehaviour` gate is a boolean governance
+ticks, which is the exact defect shape this codebase has hit five times: a check nobody
+performs. `RebaseDetector` now sits UNDERNEATH that gate and reverts regardless of it — an
+asset with all eight gates green is still refused — at registration and again at enable, because
+these are upgradeable proxies and the answer can change between the two.
 
 **Verified mechanism (OFFICIAL — Hyperliquid docs):**
 
@@ -149,7 +238,7 @@ STATUS:             UNVERIFIED
 
 ---
 
-## V-05 — xStock ERC-20 transfer behaviour · **UNVERIFIED · P0**
+## V-05 — xStock ERC-20 transfer behaviour · **VERIFIED · P0**
 
 ```text
 UNKNOWN:            fee-on-transfer? rebasing? pausable? blacklist? upgradeable proxy?
@@ -161,8 +250,32 @@ HOW TO VERIFY:      read and review the deployed bytecode/source of each candida
                     fork-test a transfer round trip
 BLOCKS:             LaunchMarket solvency, HolderRewardVault, §420 allowlist gate
 OWNER:              Stream A / I
-STATUS:             UNVERIFIED
+STATUS:             VERIFIED (PRIMARY), Day 8 — for the only candidate that exists
 ```
+
+**Read on-chain, Day 8, against `SPYx` `0x90a2a4c76b5d8c0bc892a69ea28aa775a8f2dd48`:**
+
+| This row asked | Answer |
+|---|---|
+| fee-on-transfer? | no |
+| **rebasing?** | **YES** — `multiplier()` = 1.0057145603, `sharesOf()` present. See V-03. |
+| pausable? | **YES** — `isPaused()` exists and currently reads false |
+| blacklist? | none found among the probed selectors |
+| upgradeable proxy? | **YES** — EIP-1967, implementation `0xd865ce1b…` ("Backed Token Implementation") |
+| minting authority | `minter()` is an **EOA**, `0x0a934bc9c64309c9654451f23d8331c2dad34c2a` |
+| permit? | yes — `DOMAIN_SEPARATOR()` and `nonces()` present |
+
+This row's own UNKNOWN line asks "rebasing?" first. It is answered, and the answer is the one
+that breaks curve solvency — the row anticipated exactly the right question.
+
+**Three of these are disqualifying on their own terms**, and it is worth separating them:
+
+- *Rebasing* breaks solvency silently and permanently (V-03). Structurally refused now.
+- *Pausable* means a third party can stop every sell and every Stockback payout at will. That is
+  a live dependency, not a tail risk, and §420's `transferBehaviour` gate is where it belongs.
+- *Upgradeable behind a proxy, with an EOA minter* means today's answers are not binding. Any of
+  the rows above can change without notice, which is why `RebaseDetector` re-checks at enable
+  rather than trusting the registration-time read.
 
 **Explicit risk raised by V-03's source (OFFICIAL, quoted):** the docs state there are currently
 no checks that the system address has sufficient supply or that the linked contract is a valid
@@ -481,7 +594,7 @@ STATUS:             UNVERIFIED
 
 ---
 
-## V-13 — Safe deployment on HyperEVM · **UNVERIFIED · P0 (C-09)**
+## V-13 — Safe deployment on HyperEVM · **VERIFIED · P0 (C-09)**
 
 ```text
 UNKNOWN:            are Safe singleton/factory/fallback contracts deployed at usable addresses on
@@ -491,8 +604,42 @@ WHY IT MATTERS:     the entire six-account platform custody architecture (§555,
 HOW TO VERIFY:      probe canonical Safe deployment addresses on chain 999
 BLOCKS:             custody architecture, §178.17, key ceremony (C-08)
 OWNER:              Stream H / owner
-STATUS:             UNVERIFIED
+STATUS:             VERIFIED (PRIMARY), Day 8
 ```
+
+**The row said how to verify it — "probe canonical Safe deployment addresses on chain 999" —
+and that is all it took.** It sat UNVERIFIED for eight days as an owner task when it was one
+`eth_getCode` sweep. Worth recording as a process note: a row is only owner-blocked if its own
+`HOW TO VERIFY` needs a person.
+
+**Measured on HyperEVM, chain 999.** The full Safe v1.4.1 deployment is present at the
+canonical cross-chain addresses:
+
+```text
+Safe singleton        0x41675C099F32341bf84BFc5382aF534df5C7461a   23,579 b   VERSION() -> "1.4.1"
+SafeL2                0x29fcB43b46531BcA003ddC8FCB67FFE91900C762   24,421 b
+SafeProxyFactory      0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67    3,054 b   proxyCreationCode() -> 576 b
+MultiSend             0x38869bf66a61cF6bDB996A6aE40D5853Fd43B526      629 b
+MultiSendCallOnly     0x9641d764fc13c8B624c04430C7356C1C7C8102e2      410 b
+CompatibilityFallback 0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99    5,637 b
+```
+
+Not just bytecode presence — the singleton answers `VERSION()` with `1.4.1` and
+`getThreshold()` with 1, which is the mastercopy's own state, and the factory returns real
+proxy creation code. v1.3.0 is deployed too, at its own canonical addresses.
+
+Deployed alongside them, and worth knowing for deployment: the Arachnid CREATE2 deployer
+(`0x4e59b44847b379578588920cA78FbF26c0B4956C`), Multicall3
+(`0xcA11bde05977b3631167028862bE2a173976CA11`) and Permit2
+(`0x000000000022D473030F116dDEE9F6B43aC78BA3`).
+
+**What is NOT verified here, and is genuinely the owner's:** whether a hosted Safe transaction
+service and UI cover chain 999. The contracts being present means a Safe can be created and
+used with any client that can build the calldata; it does not mean `app.safe.global` will show
+it. That is a convenience question, not a custody one, and it does not block §555.
+
+**Still owner-blocked, separately: C-08** — who the signers are. No amount of probing answers
+that.
 
 ---
 
