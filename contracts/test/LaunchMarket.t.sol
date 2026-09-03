@@ -418,6 +418,89 @@ contract LaunchMarketTest is Test {
         assertEq(market.curveCollateral(), 0, "and only then is collateral zeroed");
     }
 
+    /// @dev The measurement D-016 rests on.
+    ///
+    ///      The whole redesign is justified by one number: a crossing buy has to
+    ///      fit in HyperEVM's default block lane, which caps at 3,000,000 gas and
+    ///      is already running at 99.8% of that in ordinary blocks. If it does
+    ///      not fit, nothing has been solved and the stall has only moved.
+    ///
+    ///      This is measurable without a fork precisely BECAUSE of the redesign:
+    ///      the crossing buy now makes no HyperSwap call at all, so its cost no
+    ///      longer depends on the venue. That independence is the point, and
+    ///      asserting it here is what stops it being quietly given back later by
+    ///      someone re-adding an external call to the buy path.
+    ///
+    ///      The bound is 1,500,000 - half the lane. The headroom is deliberate:
+    ///      a real xStock transfer costs more than this mock's, and a lane that
+    ///      is 99.8% full is a lane where a transaction near the ceiling waits.
+    function test_theCrossingBuyFitsInADefaultLaneBlock() public {
+        _buy(alice, 40e18);
+        uint256 grossNeeded = _prepareEndpointBuy(bob);
+
+        vm.prank(bob);
+        uint256 before = gasleft();
+        market.buy(grossNeeded, 0, block.timestamp + 1);
+        uint256 used = before - gasleft();
+
+        emit log_named_uint("crossing buy gas", used);
+
+        assertEq(
+            uint256(market.status()),
+            uint256(LaunchMarket.Status.GRADUATING),
+            "and it really did cross"
+        );
+        assertLt(used, 1_500_000, "a crossing buy must fit in a default-lane block");
+    }
+
+    /// @dev The other half of the crossing order: what the buyer gets back.
+    ///
+    ///      §14 lets a public flow run through graduation, and the user must not
+    ///      be silently short. With no pool to route the remainder into, the only
+    ///      honest settlement is to return it in the same transaction - never a
+    ///      claim to collect later, and never quietly kept.
+    function test_theCrossingBuyRefundsWhatTheCurveDidNotSell() public {
+        _buy(alice, 40e18);
+
+        // Derived here rather than taken from `_prepareEndpointBuy`, which pads
+        // its figure by 1e18 so callers cannot land a wei short. That pad is the
+        // overshoot every other test wants and the exact thing this one measures,
+        // so reusing it would compare the refund against a number that already
+        // contains it.
+        uint256 remaining = _curveParams().qG - market.distributed();
+        uint256 netToEndpoint = Curve.quoteInFor(_curveParams(), market.distributed(), remaining);
+
+        uint256 overshoot = netToEndpoint * 4;
+        quote.mint(bob, overshoot);
+        vm.prank(bob);
+        quote.approve(address(market), type(uint256).max);
+
+        uint256 quoteBefore = quote.balanceOf(bob);
+
+        vm.prank(bob);
+        market.buy(overshoot, 0, block.timestamp + 1);
+
+        uint256 spent = quoteBefore - quote.balanceOf(bob);
+
+        assertLt(spent, overshoot, "the buyer did not pay the whole overshoot");
+
+        // The curve is paid net-of-fees, so the buyer's outlay is the endpoint
+        // grossed up by the 2% BUY fee and nothing more. A wei of fee rounding is
+        // the only slack allowed.
+        uint256 expectedGross = (netToEndpoint * 10_000) / 9_800;
+        assertApproxEqRel(
+            spent, expectedGross, 1e15, "the buyer paid the endpoint, not their input"
+        );
+
+        // And the market kept nothing it was not owed. Everything still here is
+        // either curve collateral or dust bound for the LP.
+        assertEq(
+            quote.balanceOf(address(market)),
+            market.collateralInAssetUnits() + market.graduationDust(),
+            "no unaccounted quote left behind by the refund"
+        );
+    }
+
     /// @dev §16: finalising twice must not mint a second position. The status
     ///      check is the whole mechanism, so it is asserted rather than assumed.
     function test_graduationCannotHappenTwice() public {

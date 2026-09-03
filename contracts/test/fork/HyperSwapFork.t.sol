@@ -78,6 +78,11 @@ contract HyperSwapForkTest is Test {
 
     uint256 constant PRICE_WAD = 500_000_000_000;
 
+    /// Measured across 600 blocks at the tip, Day 8: 394 of 400 sampled blocks
+    /// carried the first limit, 6 the second. See V-20.
+    uint256 constant DEFAULT_LANE_GAS = 3_000_000;
+    uint256 constant LARGE_LANE_GAS = 30_000_000;
+
     bool forked;
 
     function setUp() public {
@@ -170,6 +175,44 @@ contract HyperSwapForkTest is Test {
         uint160 expected =
             V3Math.initialSqrtPriceX96(PRICE_WAD, 18, address(token) < WHYPE);
         assertEq(actual, expected, "spot price continuity on the real venue");
+    }
+
+    /// @dev V-20, measured rather than recalled - the number D-016 turns on.
+    ///
+    ///      The design splits graduation across two transactions because the
+    ///      migration does not fit in HyperEVM's default block lane. That claim
+    ///      is only worth anything if the migration's cost is measured against
+    ///      the real venue, since HyperSwap's `createPool` is the dominant term
+    ///      and it is not ours to make cheaper.
+    ///
+    ///      The companion assertion lives in `LaunchMarket.t.sol`, where the
+    ///      crossing buy is held under half the default lane. Together they are
+    ///      the whole argument: the part every user pays fits in the lane every
+    ///      user sends to, and the part that does not fit is paid once, by
+    ///      whoever finalises.
+    function test_theMigrationNeedsTheLargeBlockLane() public {
+        if (!forked) return;
+
+        uint256 tokenAmount = 342_105_263e18;
+        uint256 quoteAmount = (tokenAmount * PRICE_WAD) / 1e18;
+
+        token.mint(address(router), tokenAmount);
+        deal(WHYPE, address(router), quoteAmount);
+
+        uint256 before = gasleft();
+        market.graduate(router, WHYPE, tokenAmount, quoteAmount, PRICE_WAD);
+        uint256 used = before - gasleft();
+
+        emit log_named_uint("migration gas, real venue", used);
+        emit log_named_uint("default lane ceiling", DEFAULT_LANE_GAS);
+        emit log_named_uint("large lane ceiling", LARGE_LANE_GAS);
+
+        // The finding, asserted so it cannot quietly stop being true. If
+        // HyperSwap ever ships a cheaper pool and this drops under the default
+        // lane, D-016 should be revisited - and this failing is how anyone finds
+        // out, rather than the split staying because nobody re-measured.
+        assertGt(used, DEFAULT_LANE_GAS, "if this ever fails, re-open D-016");
+        assertLt(used, LARGE_LANE_GAS, "and it must still fit the large lane");
     }
 
     /// @dev V-09, the whole question, against the real position manager.
