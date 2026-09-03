@@ -51,6 +51,7 @@ import {
   type Transaction,
 } from "@sent/database";
 import { scheduleForRange } from "@sent/worker";
+import { makeCurve, marginalPrice } from "@sent/economics";
 import {
   launchpadFactoryAbi,
   launchMarketAbi,
@@ -102,7 +103,10 @@ export class Indexer {
   private readonly tracker: ChainTracker;
 
   /** market address -> quote decimals, so a trade can be normalized on arrival. */
-  private readonly knownMarkets = new Map<string, { token: string; quoteDecimals: number }>();
+  private readonly knownMarkets = new Map<
+    string,
+    { token: string; quoteDecimals: number; p0: bigint }
+  >();
   private readonly tokenToMarket = new Map<string, string>();
 
   private running = false;
@@ -492,6 +496,7 @@ export class Indexer {
       this.knownMarkets.set(entry.market, {
         token: entry.token,
         quoteDecimals: entry.quoteDecimals,
+        p0: entry.p0,
       });
       this.tokenToMarket.set(entry.token, entry.market);
     }
@@ -616,7 +621,7 @@ export class Indexer {
     // market the database does not have — the next tick would then treat the
     // token's transfers as belonging to a known market, and every insert would
     // fail the foreign key, forever. Applied by `advance` once the commit lands.
-    this.pendingMarkets.push({ market, token, quoteDecimals });
+    this.pendingMarkets.push({ market, token, quoteDecimals, p0 });
   }
 
   private async handleMarketLog(tx: Transaction, log: Log, timestamp: number): Promise<void> {
@@ -650,7 +655,7 @@ export class Indexer {
           stockback: a.stockback as bigint,
           distributedAfter: a.newDistributed as bigint,
           collateralAfter: a.newCollateral as bigint,
-          priceAfter: 0n,
+          priceAfter: this.priceAfter(market, a.newDistributed as bigint),
           timestamp,
         },
         logIndex,
@@ -682,7 +687,7 @@ export class Indexer {
         creatorFee: ceilBps(a.coreFee as bigint, 6_500n),
         platformFee: (a.coreFee as bigint) - ceilBps(a.coreFee as bigint, 6_500n),
         stockback: a.stockback as bigint,
-        priceAfter: 0n,
+        priceAfter: this.priceAfter(market, a.newDistributed as bigint),
         distributedAfter: a.newDistributed as bigint,
         timestamp,
       });
@@ -800,6 +805,34 @@ export class Indexer {
    * eighteen is what produced the bug this replaces, and a wrong scale is
    * indistinguishable from a real number once it is in the database.
    */
+  /**
+   * Marginal price after a trade, from the canonical curve.
+   *
+   * Stored on every trade because it is what candles, the tape and the chart are
+   * built from. It was a hardcoded zero, which meant every price in the
+   * projection was zero: a flat tape, and a chart that would have drawn a
+   * straight line along the axis for a market that had actually moved 25x.
+   *
+   * Derived through `marginalPrice` from `@sent/economics` — the same function
+   * the API and the simulations use, and the one differentially tested against
+   * the Solidity. Re-deriving `p0 + dP * q / qG` here would be a second
+   * implementation of the price of everything (§1064).
+   *
+   * The curve is rebuilt from the market's own `p0`, which is recorded at launch
+   * and never re-anchored (§402).
+   */
+  private priceAfter(market: string, distributed: bigint): bigint {
+    const known =
+      this.knownMarkets.get(market) ?? this.pendingMarkets.find((m) => m.market === market);
+
+    // A trade for a market this indexer has never seen cannot be priced. Zero is
+    // wrong, but so is any other number, and the trade is already being recorded
+    // against a market row that must exist for the insert to succeed.
+    if (known === undefined) return 0n;
+
+    return marginalPrice(makeCurve(known.p0), distributed);
+  }
+
   private async quoteDecimalsOf(asset: `0x${string}`): Promise<number> {
     const cached = this.quoteDecimalsCache.get(asset);
     if (cached !== undefined) return cached;
@@ -824,7 +857,12 @@ export class Indexer {
   private readonly quoteDecimalsCache = new Map<string, number>();
 
   /** Markets discovered in the current transaction, applied only on commit. */
-  private pendingMarkets: { market: string; token: string; quoteDecimals: number }[] = [];
+  private pendingMarkets: {
+    market: string;
+    token: string;
+    quoteDecimals: number;
+    p0: bigint;
+  }[] = [];
 
   private launchedAddressesIn(logs: readonly Log[]): string[] {
     const found: string[] = [];
@@ -847,14 +885,23 @@ export class Indexer {
   }
 
   private async loadKnownMarkets(): Promise<void> {
-    const rows = await this.db.query<{ market: unknown; token: unknown; quote_decimals: number }>(
-      "SELECT market, token, quote_decimals FROM markets",
-    );
+    const rows = await this.db.query<{
+      market: unknown;
+      token: unknown;
+      quote_decimals: number;
+      p0: string;
+    }>("SELECT market, token, quote_decimals, p0 FROM markets");
 
     for (const row of rows) {
       const market = `0x${Buffer.from(row.market as Uint8Array).toString("hex")}`;
       const token = `0x${Buffer.from(row.token as Uint8Array).toString("hex")}`;
-      this.knownMarkets.set(market, { token, quoteDecimals: row.quote_decimals });
+      this.knownMarkets.set(market, {
+        token,
+        quoteDecimals: row.quote_decimals,
+        // Needed to derive the price after each trade; without it every trade
+        // in the projection would be priced at zero.
+        p0: BigInt(row.p0),
+      });
       this.tokenToMarket.set(token, market);
     }
   }

@@ -417,6 +417,41 @@ try {
     );
 
     check("every trade recorded a non-zero core fee", trades.every((t) => t.coreFee > 0n));
+
+    /*
+     * Price is what candles, the tape and the chart are all built from, and it
+     * was stored as a hardcoded zero — a flat tape and a chart drawing a
+     * straight line along the axis for a market that had actually moved.
+     */
+    check("every trade recorded a price", trades.every((t) => t.priceAfter > 0n));
+
+    // The curve only rises as tokens are distributed, so a later trade prices at
+    // or above an earlier one. Buys move it up; the sell here moves it back down,
+    // so this compares against the curve rather than assuming monotonic time.
+    const byDistribution = [...trades].sort((a, b) =>
+      a.distributedAfter < b.distributedAfter ? -1 : 1,
+    );
+    check(
+      "price rises with distribution, as a linear curve must",
+      byDistribution.every((t, i) => i === 0 || t.priceAfter >= byDistribution[i - 1]!.priceAfter),
+    );
+
+    /*
+     * Against the MARKET's own price function, not a number computed here.
+     *
+     * The indexer derives price through `marginalPrice` from @sent/economics;
+     * the contract has its own `marginalPrice`. The two are differentially
+     * tested against each other already, and this puts the derived value next to
+     * the deployed one on real state.
+     */
+    const onChainPrice = (await publicClient.readContract({
+      address: market,
+      abi: marketAbi,
+      functionName: "marginalPrice",
+    })) as bigint;
+
+    const latest = [...trades].sort((a, b) => (a.blockNumber < b.blockNumber ? 1 : -1))[0];
+    check("the latest indexed price matches the market exactly", latest?.priceAfter === onChainPrice);
     check("every buy paid stockback", trades.filter((t) => t.side === 0).every((t) => t.stockback > 0n));
 
     // Against a head read NOW, not the one captured before indexing began. The
