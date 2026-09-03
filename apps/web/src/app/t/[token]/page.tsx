@@ -169,6 +169,7 @@ export default async function TerminalPage({
             quoteSymbol={market.quoteSymbol}
             quoteDecimals={decimals}
             graduated={status === "GRADUATED"}
+            graduatedAt={market.graduatedAt}
           />
         </section>
 

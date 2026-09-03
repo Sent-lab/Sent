@@ -60,6 +60,8 @@ export interface MarketRow {
   readonly tradeCount: number;
   readonly launchedAt: number;
   readonly lastBlock: bigint;
+  /** Chain timestamp of the graduating block, or null before graduation. */
+  readonly graduatedAt: number | null;
 }
 
 export interface TradeRow {
@@ -276,6 +278,15 @@ export interface MarketDetail {
   readonly graduationProgressBps: Sourced;
   readonly holderCount: Sourced;
   /**
+   * Chain timestamp of the block a market graduated in, or null.
+   *
+   * Served so a chart can place its graduation marker at the moment it actually
+   * happened. Without it the only options are to omit the marker or to guess a
+   * position, and a precise-looking mark in an arbitrary place is worse than no
+   * mark at all (§57).
+   */
+  readonly graduatedAt: number | null;
+  /**
    * Authenticity comes from the factory registry, never from the address shape
    * (§4). Exposed so a UI can render a verified badge without inventing its own
    * rule from the suffix.
@@ -304,6 +315,7 @@ export function handleMarket(port: DataPort, token: string): ApiResult<MarketDet
     curveCollateral: sourced(row.curveCollateral.toString(), "INDEXED", row.lastBlock, port.serverTime()),
     graduationProgressBps: sourced(((row.distributed * 10_000n) / row.qG).toString(), "CALCULATED", row.lastBlock, port.serverTime()),
     holderCount: sourced(String(row.holderCount), "INDEXED", row.lastBlock, port.serverTime()),
+    graduatedAt: row.graduatedAt,
     authentic: true,
   });
 }

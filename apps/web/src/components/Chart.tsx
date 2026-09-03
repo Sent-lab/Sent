@@ -222,7 +222,10 @@ export function Chart({
                 the moment a market changed venue is a fact about the data. */}
             {graduatedAtBucket !== undefined &&
               (() => {
-                const index = candles.findIndex((candle) => candle.t >= graduatedAtBucket);
+                // An EXACT bucket match. `>=` would fall through to the next
+                // bar whenever the graduating bucket is absent from the series,
+                // which draws the marker beside the event rather than on it.
+                const index = candles.findIndex((candle) => candle.t === graduatedAtBucket);
                 if (index < 0) return null;
                 const geo = scale.barAt(index, candles.length);
 

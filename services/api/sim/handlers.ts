@@ -62,6 +62,8 @@ const baseMarket: MarketRow = {
   tradeCount: 137,
   launchedAt: 1_700_000_000,
   lastBlock: 900n,
+  // Not graduated. The marker must be absent, not placed at zero.
+  graduatedAt: null,
 };
 
 class FakePort implements DataPort {
@@ -508,6 +510,27 @@ console.log("\n--- 7. Health tells the truth about itself ----------------------
 
   port.connected = false;
   check("a disconnected service reports NOT serving", !handleHealth(port).data.serving);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 8b. Graduation timestamp -------------------------------------------");
+
+{
+  const port = new FakePort();
+
+  const pre = handleMarket(port, TOKEN);
+  check("a pre-graduation market has no graduation timestamp", pre.ok && pre.data.graduatedAt === null);
+
+  // Null and not zero: a chart placing a marker at epoch zero would draw it off
+  // the left edge of every series, which reads as a rendering fault rather than
+  // as a market that has not graduated.
+  check("it is null rather than zero", pre.ok && pre.data.graduatedAt !== 0);
+
+  port.market = { ...baseMarket, status: "GRADUATED", graduatedAt: 1_700_050_000 };
+
+  const post = handleMarket(port, TOKEN);
+  check("a graduated market carries the timestamp", post.ok && post.data.graduatedAt === 1_700_050_000);
+  check("and reports the status", post.ok && post.data.status === "GRADUATED");
 }
 
 // ---------------------------------------------------------------------------

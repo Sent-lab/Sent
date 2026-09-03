@@ -311,6 +311,7 @@ export class PostgresPort implements DataPort {
     tradeCount: number;
     launchedAt: number;
     lastBlock: bigint;
+    graduatedAt: number | null;
   }): MarketRow {
     return {
       token: v.token,
@@ -330,6 +331,7 @@ export class PostgresPort implements DataPort {
       tradeCount: v.tradeCount,
       launchedAt: v.launchedAt,
       lastBlock: v.lastBlock,
+      graduatedAt: v.graduatedAt,
     };
   }
 }

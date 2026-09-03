@@ -19,16 +19,16 @@
  * old series stays rendered and dims until the new one lands: an empty plot
  * reads as "this market has no history", which is a different and wrong claim.
  *
- * NO GRADUATION MARKER YET
- * ------------------------
- * §57 requires one, and `Chart` can draw it — but the API does not yet serve the
- * timestamp at which a market graduated, and there is no way to place the marker
- * correctly without it. Drawing it at the first visible bar would put a precise
- * claim in an arbitrary position, which is worse than leaving it out.
+ * THE GRADUATION MARKER IS PLACED, NOT GUESSED (§57)
+ * --------------------------------------------------
+ * The API serves the chain timestamp of the block a market graduated in, and the
+ * marker goes in the bucket that CONTAINS that timestamp — floored to the
+ * interval, exactly as the aggregator buckets trades. Any other placement would
+ * put a precise-looking claim next to the wrong bar.
  *
- * The venue indicator, which §57 also requires, IS correct and is passed here:
- * it says whether the price is coming from the curve or the pool, which is the
- * part that changes how the numbers should be read.
+ * It is omitted entirely when the moment falls outside the visible window. A
+ * marker clamped to the edge of the chart would say "it happened here" about a
+ * bar it did not happen in.
  */
 
 import { useEffect, useState } from "react";
@@ -44,6 +44,8 @@ export interface ChartPanelProps {
   readonly quoteSymbol: string;
   readonly quoteDecimals: number;
   readonly graduated: boolean;
+  /** Chain timestamp of the graduating block, or null. */
+  readonly graduatedAt: number | null;
 }
 
 export function ChartPanel({
@@ -51,6 +53,7 @@ export function ChartPanel({
   quoteSymbol,
   quoteDecimals,
   graduated,
+  graduatedAt,
 }: ChartPanelProps): JSX.Element {
   // Five minutes: long enough that a quiet market still shows shape, short
   // enough that an active one moves.
@@ -110,8 +113,35 @@ export function ChartPanel({
           onIntervalChange={setIntervalSeconds}
           loading={loading}
           {...(graduated ? { venue: "Pool" as const } : { venue: "Curve" as const })}
+          {...markerFor(graduatedAt, intervalSeconds, data?.candles ?? [])}
         />
       </div>
     </div>
   );
+}
+
+/**
+ * Which bucket to mark, if any.
+ *
+ * Floors the graduation timestamp to the interval — the same rule the candle
+ * aggregator uses, so the marker lands on the bar that actually contains the
+ * event rather than beside it.
+ *
+ * Returns nothing when the bucket is outside the loaded window. Clamping it to
+ * an edge would assert that graduation happened in a bar it did not.
+ */
+function markerFor(
+  graduatedAt: number | null,
+  intervalSeconds: number,
+  candles: readonly { t: number }[],
+): { graduatedAtBucket?: number } {
+  if (graduatedAt === null || candles.length === 0) return {};
+
+  const bucket = Math.floor(graduatedAt / intervalSeconds) * intervalSeconds;
+
+  const first = candles[0]?.t ?? 0;
+  const last = candles[candles.length - 1]?.t ?? 0;
+  if (bucket < first || bucket > last) return {};
+
+  return { graduatedAtBucket: bucket };
 }

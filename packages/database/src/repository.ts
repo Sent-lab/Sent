@@ -42,6 +42,10 @@ export interface MarketStateRecord {
   readonly tradeCount: number;
   readonly pool: `0x${string}` | null;
   readonly lastBlock: bigint;
+  /** Set once the market graduated; null before that. */
+  readonly graduatedAtBlock: bigint | null;
+  /** Chain timestamp of that block, for the §57 chart marker. */
+  readonly graduatedAt: number | null;
 }
 
 export interface TradeRecord {
@@ -190,7 +194,12 @@ const MARKET_COLUMNS = `
   m.token, m.market, m.creator, m.quote_asset, m.quote_decimals,
   m.name, m.symbol, m.p0, m.pg, m.qg, m.launched_at, m.launched_at_block,
   s.status, s.distributed, s.curve_collateral, s.holder_count, s.trade_count,
-  s.pool, s.last_block
+  s.pool, s.last_block, s.graduated_at_block,
+  -- The chain timestamp of the graduating block, so a chart can mark the moment
+  -- rather than approximating it. A LEFT JOIN: a market that has not graduated
+  -- has no block to join to, and an inner join here would drop every pre-grad
+  -- market from the listing entirely.
+  gb.timestamp AS graduated_at
 `;
 
 interface MarketRow {
@@ -213,6 +222,8 @@ interface MarketRow {
   trade_count: number;
   pool: unknown;
   last_block: string;
+  graduated_at_block: string | null;
+  graduated_at: string | null;
 }
 
 export interface MarketView extends MarketRecord, Omit<MarketStateRecord, "market"> {}
@@ -238,13 +249,18 @@ function toMarketView(row: MarketRow): MarketView {
     tradeCount: row.trade_count,
     pool: row.pool === null ? null : addr(row.pool, "pool"),
     lastBlock: big(row.last_block, "last_block"),
+    graduatedAtBlock: bigOrNull(row.graduated_at_block, "graduated_at_block"),
+    graduatedAt:
+      row.graduated_at === null ? null : Number(big(row.graduated_at, "graduated_at")),
   };
 }
 
 export async function getMarketByToken(db: Db, token: string): Promise<MarketView | null> {
   const row = await db.queryOne<MarketRow>(
     `SELECT ${MARKET_COLUMNS}
-     FROM markets m JOIN market_state s ON s.market = m.market
+     FROM markets m
+       JOIN market_state s ON s.market = m.market
+       LEFT JOIN blocks gb ON gb.number = s.graduated_at_block
      WHERE m.token = $1`,
     [toBytes(token)],
   );
@@ -286,7 +302,9 @@ export async function listMarkets(
 
   const rows = await db.query<MarketRow>(
     `SELECT ${MARKET_COLUMNS}
-     FROM markets m JOIN market_state s ON s.market = m.market
+     FROM markets m
+       JOIN market_state s ON s.market = m.market
+       LEFT JOIN blocks gb ON gb.number = s.graduated_at_block
      ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
      ORDER BY ${order[options.sort]}
      LIMIT $${params.length}`,
