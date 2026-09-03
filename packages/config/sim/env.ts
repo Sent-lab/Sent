@@ -22,6 +22,7 @@ import {
   assertProductionConfigReady,
   XSTOCK_ALLOWLIST,
   REFERENCE_PRICE_FEEDS,
+  GRADUATION_ROUTER,
 } from "../src/chain.ts";
 
 let failures = 0;
@@ -299,6 +300,28 @@ section("Production readiness is still gated (§279)");
   // problems and omits the fifth is one an operator resolves and then meets
   // again.
   check("and the refusal names it", namesTheAnchor);
+
+  /*
+   * §180 requires "Graduation + permanent LP path proven".
+   *
+   * The router and the lock are written and tested; what is missing is three
+   * HyperSwap addresses, two of which are immutable in the router's
+   * constructor. Guessing them produces a router that looks configured and
+   * mints a market's entire liquidity into a contract nobody verified.
+   */
+  check("no graduation router is deployed yet (V-06, V-09)", GRADUATION_ROUTER === null);
+
+  let namesGraduation = false;
+  try {
+    assertProductionConfigReady();
+  } catch (error) {
+    namesGraduation = error instanceof Error && error.message.includes("graduation router");
+  }
+
+  // Named separately from the HyperSwap addresses, because it is fixed by a
+  // different action: those are a research task, this is a deployment that
+  // cannot happen until they land.
+  check("and the refusal says markets cannot graduate", namesGraduation);
 }
 
 console.log(failures === 0 ? "\nconfig: all checks passed" : `\nconfig: ${failures} FAILED`);

@@ -69,6 +69,30 @@ contract Deploy is Script {
          */
         referencePrice = new ReferencePriceAdapter(config.governance);
 
+        /*
+         * The graduation router is NOT deployed here, and that is deliberate.
+         *
+         * It is written and tested — `GraduationRouter`, `PermanentLiquidityLock`
+         * and `V3Math` — but its constructor takes three HyperSwap addresses
+         * that V-06 has not confirmed, and two of them are immutable once
+         * deployed. Guessing them produces a router that looks configured and
+         * mints a market's entire liquidity into a contract nobody verified.
+         *
+         * §279 forbids a placeholder standing in for an unverified dependency,
+         * and a factory with no router already refuses to launch anything —
+         * which is the honest failure and the one an operator can act on.
+         *
+         * Deployment order, once V-06 and V-09 close:
+         *
+         *   1. PermanentLiquidityLock(positionManager, <predicted router>)
+         *   2. GraduationRouter(factory, v3Factory, positionManager, swapRouter, lock)
+         *   3. governance calls factory.setRouter(router)
+         *
+         * The lock names the router and the router names the lock, so one
+         * address is predicted rather than set afterwards — a setter there
+         * would be exactly the admin path §413 forbids.
+         */
+
         vm.stopBroadcast();
 
         _report(config, registry, factory, referencePrice);
@@ -132,7 +156,9 @@ contract Deploy is Script {
 
         console2.log("");
         console2.log("NOT DONE - required before any launch:");
-        console2.log("  1. governance calls factory.setRouter(...)   [blocked on V-06, V-09]");
+        console2.log("  1. deploy the lock + router, then factory.setRouter(...)");
+        console2.log("     the router is written and tested; its HyperSwap");
+        console2.log("     addresses are  [blocked on V-06, V-09]");
         console2.log("  2. governance registers and enables xStocks  [blocked on V-02, V-03, V-05]");
         console2.log("  3. governance configures a price feed per asset on the adapter,");
         console2.log("     then calls factory.setReferencePrice(...)  [blocked on V-11]");

@@ -26,7 +26,14 @@ contract GQuote is ERC20 {
 /// @notice A market, as far as the router's authenticity check is concerned.
 contract GMarket {
     address public TOKEN;
+    address public liquidityLock;
+
     constructor(address token) { TOKEN = token; }
+
+    /// @dev The router tells a market where its position went, once, inside
+    ///      `graduate`. A market that could not receive that would leave the
+    ///      lock unreachable and post-grad fees uncollectable forever.
+    function setLiquidityLock(address lock) external { liquidityLock = lock; }
 
     function graduate(
         GraduationRouter router,
@@ -184,6 +191,12 @@ contract GraduationRouterTest is Test {
 
         assertEq(positionManager.ownerOf(positionId), address(lock), "the lock holds it");
         assertEq(lock.marketOf(positionId), address(market), "and knows whose fees it collects");
+
+        // And the market learns where its position went, in the same
+        // transaction. Without it the lock is unreachable and post-grad fees
+        // are uncollectable forever — the position is locked either way, but
+        // §11's creator rights would be locked with it.
+        assertEq(market.liquidityLock(), address(lock), "the market knows its lock");
     }
 
     /// @dev The V-09 answer, as an assertion about the ABI rather than about

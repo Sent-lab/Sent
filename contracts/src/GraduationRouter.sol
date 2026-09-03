@@ -232,6 +232,11 @@ contract GraduationRouter is IGraduationRouter {
             address(this), address(LOCK), positionId, abi.encode(msg.sender)
         );
 
+        // The market learns where its position went, once. It cannot know
+        // earlier: the lock is told which market a position belongs to at mint
+        // time, and the position does not exist until then.
+        ILaunchMarketLock(msg.sender).setLiquidityLock(address(LOCK));
+
         /*
          * §417: what would not fit goes to the lock, never to creator or
          * platform.
@@ -305,6 +310,10 @@ interface ILaunchpad {
 
 interface ILaunchMarketToken {
     function TOKEN() external view returns (address);
+}
+
+interface ILaunchMarketLock {
+    function setLiquidityLock(address lock) external;
 }
 
 interface IERC20Decimals {

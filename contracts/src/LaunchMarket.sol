@@ -436,6 +436,117 @@ contract LaunchMarket is ReentrancyGuard {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Post-graduation LP fees (§396, §397, §399, §418)
+    // -----------------------------------------------------------------------
+
+    /// @notice The lock that holds this market's LP position after graduation.
+    /// @dev Set once, by the router, during the graduation transaction. The
+    ///      market cannot know it earlier: the lock is told which market a
+    ///      position belongs to at mint time, and the position does not exist
+    ///      until then.
+    address public liquidityLock;
+
+    event PostGradFeesSettled(
+        uint256 tokenFees, uint256 quoteFees, uint256 stockbackFunded
+    );
+
+    error NotTheRouter();
+    error LockAlreadySet();
+    error NotGraduated();
+
+    /// @dev Called by the router inside `graduate`, once, forever.
+    function setLiquidityLock(address lock) external {
+        if (msg.sender != address(router)) revert NotTheRouter();
+        if (liquidityLock != address(0)) revert LockAlreadySet();
+        liquidityLock = lock;
+    }
+
+    /// @notice Collect this market's LP fees and split them (§399). Anyone may call.
+    ///
+    /// @dev PERMISSIONLESS, for the reason §414 gives: a permissioned collector
+    ///      is a party who can stop paying the creator by doing nothing. There is
+    ///      nothing to gain by calling it — every destination is fixed.
+    ///
+    /// TWO ASSETS, NEVER COLLAPSED (§400, §418)
+    /// ----------------------------------------
+    /// A V3 position earns fees in BOTH pool assets, and §418 forbids assuming
+    /// otherwise. The two are settled separately and credited under their own
+    /// asset in the vault, because §400 says not to collapse them into one
+    /// nominal number — a creator's claim is in the assets actually collected.
+    ///
+    /// §397 forbids selling the TOKEN side to fund Stockback: that would be
+    /// protocol-induced sell pressure on the market's own token, with MEV
+    /// exposure, to simplify an accounting line.
+    ///
+    /// THE SPLIT (§396, FINAL LOCK)
+    /// ----------------------------
+    ///   TOKEN side:  65% creator, 35% platform
+    ///   quote side:  65% creator, then the platform's 35% halved —
+    ///                17.5% Stockback, 17.5% platform
+    ///
+    /// Stockback is funded only from the paired xStock, because that is the
+    /// reward asset (§419). The same split applied to TOKEN fees would fund a
+    /// reward denominated in something holders were never promised.
+    function collectPostGradFees()
+        external
+        nonReentrant
+        returns (uint256 tokenFees, uint256 quoteFees)
+    {
+        if (status != Status.GRADUATED) revert NotGraduated();
+        if (liquidityLock == address(0)) revert NotGraduated();
+
+        // Balances BEFORE, because the lock pays this contract directly and the
+        // market may already hold quote it has not settled — reading a balance
+        // after and calling it a fee would credit the curve's own dust as
+        // revenue.
+        uint256 tokenBefore = IERC20(TOKEN).balanceOf(address(this));
+        uint256 quoteBefore = IERC20(QUOTE_ASSET).balanceOf(address(this));
+
+        ILiquidityLock(liquidityLock).collect(positionId);
+
+        tokenFees = IERC20(TOKEN).balanceOf(address(this)) - tokenBefore;
+        quoteFees = IERC20(QUOTE_ASSET).balanceOf(address(this)) - quoteBefore;
+
+        uint256 stockbackFunded;
+
+        if (tokenFees > 0) {
+            // §397: TOKEN-side platform revenue stays with the platform. It is
+            // never converted, so no part of it reaches Stockback.
+            (uint256 creatorToken, uint256 platformToken) = Fees.splitCore(tokenFees);
+            IERC20(TOKEN).safeTransfer(address(FEE_VAULT), tokenFees);
+            FEE_VAULT.accrue(CREATOR, TOKEN, creatorToken, platformToken);
+        }
+
+        if (quoteFees > 0) {
+            (uint256 creatorQuote, uint256 platformQuote) = Fees.splitCore(quoteFees);
+
+            /*
+             * Half the platform's share, rounded DOWN to Stockback.
+             *
+             * Rounding the other way would take a wei from the platform on every
+             * odd amount, which is harmless — but §327's principle is that dust
+             * decisions are made deliberately and in one direction. Down keeps
+             * the platform's retained share the residual, matching how every
+             * other split in this contract resolves its remainder.
+             */
+            stockbackFunded = platformQuote / 2;
+            uint256 platformRetained = platformQuote - stockbackFunded;
+
+            if (stockbackFunded > 0) {
+                IERC20(QUOTE_ASSET).safeTransfer(address(REWARD_VAULT), stockbackFunded);
+                REWARD_VAULT.fund(stockbackFunded);
+            }
+
+            IERC20(QUOTE_ASSET).safeTransfer(
+                address(FEE_VAULT), creatorQuote + platformRetained
+            );
+            FEE_VAULT.accrue(CREATOR, QUOTE_ASSET, creatorQuote, platformRetained);
+        }
+
+        emit PostGradFeesSettled(tokenFees, quoteFees, stockbackFunded);
+    }
+
     /// @notice Curve liability expressed in RAW asset units.
     /// @dev `curveCollateral` is normalized. Any solvency comparison against this
     ///      contract's balance must go through here, or it is only correct by
@@ -611,4 +722,13 @@ contract LaunchMarket is ReentrancyGuard {
     function _denormalizeForPayout(uint256 normalized) private view returns (uint256) {
         return XStockAssetAdapter.toRawForPayout(_adapterConfig(), normalized);
     }
+}
+
+/// @dev The one function the market calls on its lock.
+///
+///      Declared narrowly rather than importing `PermanentLiquidityLock`: with
+///      the full contract in scope the market would compile against a type that
+///      might later grow a function it should never call.
+interface ILiquidityLock {
+    function collect(uint256 tokenId) external returns (uint256 amount0, uint256 amount1);
 }

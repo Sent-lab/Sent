@@ -70,6 +70,33 @@ export const HYPERSWAP_V3 = {
 } as const;
 
 /**
+ * The graduation fee tier (§416, V-07).
+ *
+ * 1% — the widest standard tier, and the one V-07 confirmed is enabled on
+ * HyperSwap with a tick spacing of 200. It is the right choice for a pool one
+ * day old: a new launch is volatile and thinly traded, and 0.05% or 0.3% would
+ * price that risk like a stablecoin pair's — for an LP that can never withdraw.
+ *
+ * Mirrors `GraduationRouter.FEE_TIER`. The contract is the authority; this is
+ * here so an indexer and a UI can read the pool without a chain call.
+ */
+export const GRADUATION_FEE_TIER = 10_000;
+export const GRADUATION_TICK_SPACING = 200;
+
+/**
+ * The deployed graduation router, once V-06 and V-09 close.
+ *
+ * Null, and the launch flow already behaves correctly without it: a factory
+ * with no router refuses to launch, because §16 forbids a GRADUATED status
+ * without a complete migration and a market that could never graduate should
+ * never have been created.
+ */
+export const GRADUATION_ROUTER: `0x${string}` | null = null;
+
+/** The permanent LP lock that holds every graduated position (§17, V-09). */
+export const LIQUIDITY_LOCK: `0x${string}` | null = null;
+
+/**
  * Fee tiers enabled on the HyperSwap V3 factory.
  * VERIFIED Day 1 (V-07, PRIMARY: factory.feeAmountTickSpacing per tier).
  *
@@ -161,6 +188,19 @@ export function assertProductionConfigReady(): void {
 
   if (!HYPERSWAP_V3.verified) problems.push("HyperSwap V3 addresses unverified (V-06)");
   if (HYPERSWAP_V3.positionManager === null) problems.push("position manager missing (V-06)");
+
+  /*
+   * The graduation router is written and tested; its addresses are not known.
+   *
+   * Checked separately from the HyperSwap block because it fails for a
+   * different reason and is fixed by a different action: the addresses above
+   * are a research task, this is a deployment that cannot happen until they
+   * land. An operator reading one message and resolving it would otherwise meet
+   * the other immediately afterwards.
+   */
+  if (GRADUATION_ROUTER === null) {
+    problems.push("no graduation router deployed (V-06, V-09) — markets cannot graduate");
+  }
   if (XSTOCK_ALLOWLIST.length === 0) problems.push("xStock allowlist empty (V-02/V-03/V-05)");
   if (PLATFORM_ACCOUNTS.governanceSafe === null) problems.push("platform accounts unset (C-08)");
 
