@@ -192,6 +192,19 @@ asserted:
 
 ---
 
+## Where the bugs have actually been
+
+Fifteen defects were found and fixed during the build, and none of them was
+caught by a unit test. They fell into two shapes — a seam between two components
+that were each individually correct, and a placeholder that outlived the reason
+it was written.
+
+[`docs/REVIEW-NOTES.md`](docs/REVIEW-NOTES.md) lists every one of them and what
+the pattern implies for reviewing this codebase. It is the first thing worth
+reading before auditing anything here.
+
+---
+
 ## Security
 
 Not audited. Do not deploy this.
