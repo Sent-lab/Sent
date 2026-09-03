@@ -48,6 +48,7 @@ import {
   insertBalanceEvent,
   insertFeeAccrual,
   insertFeeClaim,
+  insertMetadata,
   registerExclusions,
   recordCommitmentSubmitted,
   markCommitmentActivated,
@@ -754,7 +755,20 @@ export class Indexer {
 
   private async handleFactoryLog(tx: Transaction, log: Log, timestamp: number): Promise<void> {
     const decoded = tryDecode(launchpadFactoryAbi, log);
-    if (decoded?.eventName !== "TokenLaunched") return;
+    if (decoded === null) return;
+
+    /*
+     * Metadata arrives on its own event (§95.20).
+     *
+     * Handled before the launch branch because it is not a launch: a revision
+     * comes long afterwards, from a different transaction, and falling through
+     * the `TokenLaunched` guard would drop every one of them.
+     */
+    if (decoded.eventName === "LaunchMetadata") {
+      return this.handleMetadataLog(tx, decoded.args as Record<string, unknown>, log, timestamp);
+    }
+
+    if (decoded.eventName !== "TokenLaunched") return;
 
     const a = decoded.args as Record<string, unknown>;
 
@@ -786,6 +800,10 @@ export class Indexer {
       qG: (TOTAL_SUPPLY * 50n) / 76n,
       launchedAt: timestamp,
       launchedAtBlock: this.positionOf(log).blockNumber,
+      // The commitment the address was derived from (§412). Stored so revision
+      // 0's published content can be checked against it without re-deriving an
+      // address — which makes §231's trust signal a fact rather than a claim.
+      launchIntentHash: String(a.launchIntentHash) as `0x${string}`,
     });
 
     /*
@@ -1290,6 +1308,63 @@ export class Indexer {
         // notices going wrong.
         return;
     }
+  }
+
+  /**
+   * A token's metadata, at launch or revised (§95.20).
+   *
+   * ORDER IS THE CONTRACT'S, NOT THE LOG'S
+   * --------------------------------------
+   * `revision` comes from the factory's own counter rather than from log index.
+   * Two revisions in one block are indistinguishable by position — and log
+   * order is not something the chain promises to preserve across a reorg — so
+   * the counter is the only ordering that survives one.
+   *
+   * The row is keyed on (token, revision), which makes a replay idempotent for
+   * free: the same revision written twice is the same row.
+   */
+  private async handleMetadataLog(
+    tx: Transaction,
+    a: Record<string, unknown>,
+    log: Log,
+    timestamp: number,
+  ): Promise<void> {
+    const token = String(a.token).toLowerCase();
+
+    /*
+     * The row references `markets`, and at LAUNCH that row is staged rather
+     * than committed — the factory emits `TokenLaunched` first and this second,
+     * inside one transaction. `pendingMarkets` is what makes the staged one
+     * visible; without checking it, every launch's own metadata would be
+     * dropped and only revisions would survive.
+     */
+    if (
+      !this.tokenToMarket.has(token) &&
+      !this.pendingMarkets.some((m) => m.token === token)
+    ) {
+      return;
+    }
+
+    const { blockNumber, logIndex } = this.positionOf(log);
+
+    const links = Array.isArray(a.links)
+      ? (a.links as { label: string; url: string }[]).map((l) => ({
+          label: String(l.label),
+          url: String(l.url),
+        }))
+      : [];
+
+    await insertMetadata(tx, {
+      token,
+      revision: a.revision as bigint,
+      description: String(a.description),
+      imageCid: String(a.imageCid),
+      links,
+      author: String(a.creator).toLowerCase(),
+      blockNumber,
+      logIndex,
+      timestamp,
+    });
   }
 
   /**

@@ -49,6 +49,7 @@ import {
   type ExploreSort,
 } from "@sent/database";
 import { launchMarketAbi, launchpadFactoryAbi, feeVaultAbi } from "@sent/contracts";
+import { matchesCommitment } from "@sent/sdk";
 
 import { BoundedCache, CACHE_LIMITS } from "./cache.ts";
 
@@ -678,6 +679,13 @@ export class PostgresPort implements DataPort {
     pool: `0x${string}` | null;
     volume24h: bigint;
     trades24h: number;
+    launchIntentHash?: `0x${string}` | undefined;
+    metadata: {
+      revision: bigint;
+      description: string;
+      imageCid: string;
+      links: readonly { label: string; url: string }[];
+    } | null;
   }): MarketRow {
     return {
       token: v.token,
@@ -700,6 +708,8 @@ export class PostgresPort implements DataPort {
       tradeCount: v.tradeCount,
       volume24h: v.volume24h,
       trades24h: v.trades24h,
+      metadata: v.metadata,
+      metadataVerified: verifyMetadata(v),
       launchedAt: v.launchedAt,
       lastBlock: v.lastBlock,
       graduatedAt: v.graduatedAt,
@@ -714,6 +724,43 @@ export class PostgresPort implements DataPort {
  * a search collide with page one of an unfiltered listing — the second request
  * would be served the first one's rows, from cache, with no error anywhere.
  */
+/**
+ * Whether the launch-time metadata hashes to the commitment in the address.
+ *
+ * ONLY REVISION 0 CAN BE VERIFIED
+ * -------------------------------
+ * `launchIntentHash` is bound into the CREATE2 salt (§412), so it commits to
+ * what the creator reviewed at launch and to nothing after. A revision is a new
+ * event with its own number and deliberately cannot alter the address — so
+ * checking a revision against the launch commitment would report every honest
+ * correction as tampering.
+ *
+ * Null, not false, when it cannot be determined. "We have not checked" and
+ * "this does not match" are opposite claims about a creator, and a UI that
+ * rendered the first as the second would accuse people who did nothing wrong.
+ */
+function verifyMetadata(v: {
+  launchIntentHash?: `0x${string}` | undefined;
+  metadata: {
+    revision: bigint;
+    description: string;
+    imageCid: string;
+    links: readonly { label: string; url: string }[];
+  } | null;
+}): boolean | null {
+  if (v.launchIntentHash === undefined || v.metadata === null) return null;
+  if (v.metadata.revision !== 0n) return null;
+
+  return matchesCommitment(
+    {
+      description: v.metadata.description,
+      imageCid: v.metadata.imageCid,
+      links: v.metadata.links,
+    },
+    v.launchIntentHash,
+  );
+}
+
 function cacheKey(options: ExploreOptions): string {
   return [
     options.sort,

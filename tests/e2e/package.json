@@ -11,7 +11,8 @@
     "@sent/finalizer": "workspace:*",
     "@sent/stockback": "workspace:*",
     "@sent/api": "workspace:*",
-    "@sent/worker": "workspace:*"
+    "@sent/worker": "workspace:*",
+    "@sent/sdk": "workspace:*"
   },
   "scripts": {
     "test": "node --experimental-strip-types stack.ts"

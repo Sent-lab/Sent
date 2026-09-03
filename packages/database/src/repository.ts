@@ -19,6 +19,14 @@ import { Database, Transaction, big, bigOrNull, addr, hexBytes, toBytes } from "
 export type Db = Database | Transaction;
 
 export interface MarketRecord {
+  /**
+   * The commitment the token's address was derived from (§412).
+   *
+   * Optional because a projection rebuilt from before this event carried it has
+   * no value to supply, and a zero would be indistinguishable from a real
+   * commitment to empty metadata.
+   */
+  readonly launchIntentHash?: `0x${string}` | undefined;
   readonly token: `0x${string}`;
   readonly market: `0x${string}`;
   readonly creator: `0x${string}`;
@@ -203,8 +211,9 @@ export async function insertMarket(db: Db, m: MarketRecord): Promise<void> {
   await db.query(
     `INSERT INTO markets (
        token, market, creator, quote_asset, name, symbol,
-       p0, pg, qg, quote_decimals, launched_at_block, launched_at, effective_salt
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       p0, pg, qg, quote_decimals, launched_at_block, launched_at, effective_salt,
+       launch_intent_hash
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      ON CONFLICT (token) DO NOTHING`,
     [
       toBytes(m.token),
@@ -220,6 +229,7 @@ export async function insertMarket(db: Db, m: MarketRecord): Promise<void> {
       m.launchedAtBlock.toString(),
       m.launchedAt,
       toBytes("0x00"),
+      m.launchIntentHash === undefined ? null : toBytes(m.launchIntentHash),
     ],
   );
 
@@ -309,7 +319,17 @@ const MARKET_COLUMNS = `
   -- and the explore card both show volume — and a second query for it would be
   -- a second round trip that can disagree with the row it decorates.
   COALESCE(w.volume, 0) AS volume_24h,
-  COALESCE(w.trades, 0) AS trades_24h
+  COALESCE(w.trades, 0) AS trades_24h,
+  m.launch_intent_hash,
+  -- The newest metadata revision, carried on every market row.
+  --
+  -- Joined here rather than fetched per card: an explore page showing
+  -- twenty-five markets would otherwise issue twenty-five extra queries, and
+  -- the description and image are the two fields a card is mostly made of.
+  md.revision      AS metadata_revision,
+  md.description   AS metadata_description,
+  md.image_cid     AS metadata_image_cid,
+  md.links         AS metadata_links
 `;
 
 interface MarketRow {
@@ -336,6 +356,11 @@ interface MarketRow {
   graduated_at: string | null;
   volume_24h: string;
   trades_24h: string;
+  launch_intent_hash: unknown;
+  metadata_revision: string | null;
+  metadata_description: string | null;
+  metadata_image_cid: string | null;
+  metadata_links: unknown;
 }
 
 /**
@@ -353,13 +378,44 @@ function marketQuery(windowParam: string): string {
      FROM markets m
        JOIN market_state s ON s.market = m.market
        LEFT JOIN blocks gb ON gb.number = s.graduated_at_block
-       ${WINDOW_JOIN.replace("$WINDOW_START", windowParam)}`;
+       ${WINDOW_JOIN.replace("$WINDOW_START", windowParam)}
+       ${METADATA_JOIN}`;
 }
+
+/**
+ * The newest metadata revision for a market.
+ *
+ * A LATERAL with LIMIT 1 rather than a `DISTINCT ON` subquery: the index is
+ * (token, revision DESC), so this is one index seek per row instead of a sort
+ * over every revision the table holds.
+ */
+const METADATA_JOIN = `
+  LEFT JOIN LATERAL (
+    SELECT tm.revision, tm.description, tm.image_cid, tm.links
+    FROM token_metadata tm
+    WHERE tm.token = m.token
+    ORDER BY tm.revision DESC
+    LIMIT 1
+  ) md ON TRUE
+`;
 
 export interface MarketView extends MarketRecord, Omit<MarketStateRecord, "market"> {
   /** Notional traded in the last 24h, normalized. Zero for a quiet market. */
   readonly volume24h: bigint;
   readonly trades24h: number;
+  /**
+   * The newest metadata revision, or null when the market has none.
+   *
+   * Null rather than an empty object: a market launched before metadata
+   * existed, and one launched with a deliberately blank description, are
+   * different — and only one of them should render an empty description field.
+   */
+  readonly metadata: {
+    readonly revision: bigint;
+    readonly description: string;
+    readonly imageCid: string;
+    readonly links: readonly MetadataLinkRow[];
+  } | null;
 }
 
 function toMarketView(row: MarketRow): MarketView {
@@ -388,6 +444,21 @@ function toMarketView(row: MarketRow): MarketView {
       row.graduated_at === null ? null : Number(big(row.graduated_at, "graduated_at")),
     volume24h: big(row.volume_24h, "volume_24h"),
     trades24h: Number(big(row.trades_24h, "trades_24h")),
+    launchIntentHash:
+      row.launch_intent_hash === null || row.launch_intent_hash === undefined
+        ? undefined
+        : hexBytes(row.launch_intent_hash, "launch_intent_hash"),
+    metadata:
+      row.metadata_revision === null
+        ? null
+        : {
+            revision: big(row.metadata_revision, "metadata_revision"),
+            description: String(row.metadata_description ?? ""),
+            imageCid: String(row.metadata_image_cid ?? ""),
+            links: Array.isArray(row.metadata_links)
+              ? (row.metadata_links as MetadataLinkRow[])
+              : [],
+          },
   };
 }
 
@@ -2022,6 +2093,146 @@ export async function platformStats(
     windowTrades: n("window_trades"),
     asOfBlock: b("as_of_block"),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Token metadata (§95.20, §115)
+// ---------------------------------------------------------------------------
+
+export interface MetadataLinkRow {
+  readonly label: string;
+  readonly url: string;
+}
+
+export interface MetadataRow {
+  readonly token: `0x${string}`;
+  readonly revision: bigint;
+  readonly description: string;
+  readonly imageCid: string;
+  readonly links: readonly MetadataLinkRow[];
+  readonly author: `0x${string}`;
+  readonly blockNumber: bigint;
+  readonly timestamp: number;
+}
+
+/**
+ * Record one revision of a token's metadata.
+ *
+ * Revision 0 is the launch and is the only one that hashes to the commitment in
+ * the token's address. Later revisions are additions to the record, never
+ * replacements — keeping only the newest would discard the one version anybody
+ * can verify.
+ */
+export async function insertMetadata(
+  db: Db,
+  m: {
+    token: string;
+    revision: bigint;
+    description: string;
+    imageCid: string;
+    links: readonly MetadataLinkRow[];
+    author: string;
+    blockNumber: bigint;
+    logIndex: number;
+    timestamp: number;
+  },
+): Promise<void> {
+  await db.query(
+    `INSERT INTO token_metadata (
+       token, revision, description, image_cid, links,
+       author, block_number, log_index, timestamp
+     ) VALUES ($1,$2,$3,$4,$5::JSONB,$6,$7,$8,$9)
+     ON CONFLICT (token, revision) DO NOTHING`,
+    [
+      toBytes(m.token),
+      m.revision.toString(),
+      m.description,
+      m.imageCid,
+      JSON.stringify(m.links),
+      toBytes(m.author),
+      m.blockNumber.toString(),
+      m.logIndex,
+      m.timestamp,
+    ],
+  );
+}
+
+function toMetadataRow(r: Record<string, unknown>): MetadataRow {
+  const links = r.links;
+
+  return {
+    token: addr(r.token, "token"),
+    revision: big(r.revision, "revision"),
+    description: String(r.description),
+    imageCid: String(r.image_cid),
+    // `pg` returns JSONB already parsed. Guarded anyway: a row written by an
+    // older shape would otherwise reach a renderer as a string that looks like
+    // an array, and `.map` on it throws inside a page render.
+    links: Array.isArray(links) ? (links as MetadataLinkRow[]) : [],
+    author: addr(r.author, "author"),
+    blockNumber: big(r.block_number, "block_number"),
+    timestamp: Number(big(r.timestamp, "timestamp")),
+  };
+}
+
+/** The newest revision, which is what a page shows. */
+export async function getMetadata(db: Db, token: string): Promise<MetadataRow | null> {
+  const row = await db.queryOne<Record<string, unknown>>(
+    `SELECT token, revision, description, image_cid, links, author, block_number, timestamp
+     FROM token_metadata WHERE token = $1
+     ORDER BY revision DESC LIMIT 1`,
+    [toBytes(token)],
+  );
+
+  return row === null ? null : toMetadataRow(row);
+}
+
+/**
+ * The launch-time revision, and the commitment it must hash to.
+ *
+ * Returned together because neither is useful alone: the content without the
+ * commitment cannot be checked, and the commitment without the content is a
+ * hash of nothing anybody can see. §231's trust signals need both.
+ */
+export async function getLaunchMetadata(
+  db: Db,
+  token: string,
+): Promise<{ metadata: MetadataRow; commitment: `0x${string}` | null } | null> {
+  const row = await db.queryOne<Record<string, unknown>>(
+    `SELECT tm.token, tm.revision, tm.description, tm.image_cid, tm.links,
+            tm.author, tm.block_number, tm.timestamp,
+            m.launch_intent_hash
+     FROM token_metadata tm
+       JOIN markets m ON m.token = tm.token
+     WHERE tm.token = $1 AND tm.revision = 0`,
+    [toBytes(token)],
+  );
+
+  if (row === null) return null;
+
+  return {
+    metadata: toMetadataRow(row),
+    commitment:
+      row.launch_intent_hash === null || row.launch_intent_hash === undefined
+        ? null
+        : hexBytes(row.launch_intent_hash, "launch_intent_hash"),
+  };
+}
+
+/** Every revision, newest first. The audit trail §95.20 asks about. */
+export async function listMetadataRevisions(
+  db: Db,
+  token: string,
+  limit = 20,
+): Promise<MetadataRow[]> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT token, revision, description, image_cid, links, author, block_number, timestamp
+     FROM token_metadata WHERE token = $1
+     ORDER BY revision DESC LIMIT $2`,
+    [toBytes(token), Math.max(1, Math.min(limit, 100))],
+  );
+
+  return rows.map(toMetadataRow);
 }
 
 // ---------------------------------------------------------------------------

@@ -245,6 +245,9 @@ importers:
       '@sent/indexer':
         specifier: workspace:*
         version: link:../../services/indexer
+      '@sent/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
       '@sent/stockback':
         specifier: workspace:*
         version: link:../../packages/stockback

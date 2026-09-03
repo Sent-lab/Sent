@@ -49,6 +49,8 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
+import { launchIntentHash, type TokenMetadata } from "@sent/sdk";
+
 import {
   Database,
   migrate,
@@ -62,6 +64,8 @@ import {
   getClaimedTotal,
   getExclusions,
   listXStockAssets,
+  listMetadataRevisions,
+  getLaunchMetadata,
   EventListener,
 } from "@sent/database";
 import { Indexer, DEFAULT_CONFIG } from "@sent/indexer";
@@ -297,6 +301,7 @@ try {
           launchIntentHash: `0x${"99".repeat(32)}` as Hex,
           xStockUsdWad: 0n,
           expectedToken: "0x0000000000000000000000000000000000000000" as Address,
+          metadata: { description: "", imageCid: "", links: [] },
         },
       ],
       account: account.address,
@@ -349,6 +354,7 @@ try {
           // A thousand times the feed. Before the adapter, this launched.
           xStockUsdWad: parseEther("100000"),
           expectedToken: "0x0000000000000000000000000000000000000000" as Address,
+          metadata: { description: "", imageCid: "", links: [] },
         },
       ],
       account: account.address,
@@ -362,18 +368,46 @@ try {
 
   section("Launching a market");
 
+  /*
+   * Real metadata, and a real commitment (§95.20, §412).
+   *
+   * `launchIntentHash` was `0x2222…` — a placeholder standing in for the hash
+   * of "the launch intent the creator reviewed", which the factory has always
+   * described it as. The commitment was in the token's address the whole time;
+   * the content it commits to was published nowhere and could not be checked.
+   *
+   * Here it is computed from the metadata actually being published, so the
+   * whole loop is exercised: hash into the salt, content into an event, both
+   * out of the API, and a verification that has to agree.
+   */
+  const metadata: TokenMetadata = {
+    description: "A market that exists only inside this test.",
+    imageCid: "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+    links: [
+      { label: "website", url: "https://example.com" },
+      // Accepted by the chain, refused by the API. The chain stores bytes;
+      // deciding what is a link belongs where the link is rendered.
+      { label: "bad", url: "javascript:alert(1)" },
+    ],
+  };
+
   const params = {
     name: "End To End",
     symbol: "E2E",
     quoteAsset: quote,
     userSalt: `0x${"11".repeat(32)}` as Hex,
-    launchIntentHash: `0x${"22".repeat(32)}` as Hex,
+    launchIntentHash: launchIntentHash(metadata),
     // The price the creator reviewed, not the anchor. It must be within 5% of
     // what the feed says or the launch is refused — see the phase above.
     xStockUsdWad: parseEther("100"),
     // Zero means "do not enforce a previewed address". The creator-bound salt is
     // covered by the factory's own tests; this is about the indexer.
     expectedToken: "0x0000000000000000000000000000000000000000" as Address,
+    metadata: {
+      description: metadata.description,
+      imageCid: metadata.imageCid,
+      links: metadata.links.map((l) => ({ label: l.label, url: l.url })),
+    },
   };
 
   await send(factory, factoryAbi, "launch", [params]);
@@ -1265,6 +1299,52 @@ try {
     );
   }
 
+  section("Metadata revisions (§95.20)");
+
+  /*
+   * A creator correcting a typo, on-chain.
+   *
+   * Immutability here would not be a virtue — it would be the reason a creator
+   * hosts the real description somewhere else, which is exactly what putting it
+   * on-chain was meant to avoid. What a revision cannot do is rewrite history:
+   * the launch content stays published, still hashes to the address, and every
+   * revision after it is visibly a revision.
+   */
+  {
+    await send(factory, factoryAbi, "reviseMetadata", [
+      token,
+      {
+        description: "A market that exists only inside this test. (corrected)",
+        imageCid: metadata.imageCid,
+        links: [{ label: "website", url: "https://example.com" }],
+      },
+    ]);
+
+    await indexer.start();
+
+    const revised = await waitFor(async () => {
+      const rows = await listMetadataRevisions(db, token, 10);
+      return rows.length >= 2 ? rows : null;
+    });
+
+    indexer.stop();
+
+    check("the revision was indexed", revised !== null);
+    check("newest first", revised?.[0]?.revision === 1n);
+    check("with the corrected text", revised?.[0]?.description.includes("corrected") === true);
+
+    // The launch-time content is still there. Discarding it would throw away
+    // the only version that hashes to the commitment in the address.
+    check("and the launch revision is still kept", revised?.[1]?.revision === 0n);
+    check(
+      "with its original text",
+      revised?.[1]?.description === metadata.description,
+    );
+
+    const launch = await getLaunchMetadata(db, token);
+    check("the launch commitment is stored", launch?.commitment === launchIntentHash(metadata));
+  }
+
   section("The xStock registry projection (§420, §168)");
 
   /*
@@ -1905,6 +1985,82 @@ try {
     // §53: honest about the metric. The window travels with the figure so
     // nothing can be rendered as exact concurrency.
     check("and states its window", Number(presence?.windowSeconds) > 0);
+
+    /*
+     * §95.20's metadata, and the commitment §412 has always carried.
+     *
+     * The loop being closed: the hash went into the salt, the salt into the
+     * address, the content into an event, and the verification reads both back
+     * out. Before this, only the hash existed — a commitment to content nobody
+     * could see, which is a commitment to nothing.
+     */
+    const meta = md.metadata as Record<string, unknown>;
+
+    check("the API serves on-chain metadata", meta !== null && meta !== undefined);
+    check("and the image CID, not a gateway URL", meta?.imageCid === metadata.imageCid);
+
+    /*
+     * The NEWEST revision, which by now is the correction made a phase earlier.
+     * A page shows what the creator most recently said, not what they said
+     * first — the first is still on-chain and still verifiable, but it is not
+     * the current description.
+     */
+    check("serving the newest revision", meta?.revision === "1");
+    check(
+      "with the corrected description",
+      String(meta?.description).includes("corrected"),
+    );
+
+    /*
+     * NULL, not false, and this is the case that matters.
+     *
+     * `launchIntentHash` commits to what the creator reviewed AT LAUNCH and to
+     * nothing after — a revision deliberately cannot alter the address. So a
+     * revision is unverifiable against it, and reporting that as `false` would
+     * mark every honest correction as tampering.
+     */
+    check("a revision is unverifiable, not unverified", meta?.verified === null);
+
+    // The revision carried only the safe link, so nothing was dropped from it.
+    const links = (meta?.links ?? []) as Record<string, unknown>[];
+    check("its one link is served", links.length === 1);
+    check("and nothing was dropped from it", meta?.unsafeLinksRemoved === 0);
+    check("the safe link survives", links[0]?.url === "https://example.com");
+
+    /*
+     * The launch revision, still verifiable against the address.
+     *
+     * This is the loop closing: content on-chain, commitment in the address,
+     * and an agreement between them that nobody — including this API — can
+     * fake, because changing the description changes the hash.
+     */
+    const launchRevision = await getLaunchMetadata(db, token);
+    check(
+      "the launch content still hashes to the address commitment",
+      launchRevision !== null &&
+        launchRevision.commitment === launchIntentHash({
+          description: launchRevision.metadata.description,
+          imageCid: launchRevision.metadata.imageCid,
+          links: launchRevision.metadata.links,
+        }),
+    );
+
+    // And the negative, or the check above would pass for anything.
+    check(
+      "and different content would not",
+      launchRevision !== null &&
+        launchRevision.commitment !== launchIntentHash({
+          description: "something the creator never wrote",
+          imageCid: launchRevision.metadata.imageCid,
+          links: launchRevision.metadata.links,
+        }),
+    );
+
+    // A card should not need a second request for the two fields it is mostly
+    // made of.
+    const card = (markets.body.data as Record<string, unknown>).items as Record<string, unknown>[];
+    const cardMeta = card[0]?.metadata as Record<string, unknown>;
+    check("explore cards carry metadata too", String(cardMeta?.description).includes("corrected"));
 
     const health = await get("/health");
     check("health answers", health.status === 200 || health.status === 503);

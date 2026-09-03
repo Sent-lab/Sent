@@ -78,6 +78,18 @@ const baseMarket: MarketRow = {
   tradeCount: 137,
   volume24h: 1_500_000n,
   trades24h: 9,
+  metadata: {
+    revision: 0n,
+    description: "a market for something",
+    imageCid: "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+    links: [
+      { label: "website", url: "https://example.com" },
+      // Refused at the render boundary, not on-chain. The chain stores bytes;
+      // deciding what is a link is the job of whatever renders one.
+      { label: "bad", url: "javascript:alert(1)" },
+    ],
+  },
+  metadataVerified: true,
   launchedAt: 1_700_000_000,
   lastBlock: 900n,
   // Not graduated. The marker must be absent, not placed at zero.
@@ -1252,6 +1264,77 @@ console.log("\n--- 16. §52/§53: market heat and pulse ------------------------
   // confident-looking screen that claims the platform is dead.
   check("an unavailable pulse is a named refusal", !down.ok && down.code === "PULSE_UNAVAILABLE");
   check("and still carries freshness", down.freshness !== undefined);
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n--- 17. §95.20: on-chain metadata ----------------------------------------");
+
+{
+  const port = new FakePort();
+  const detail = handleMarket(port, TOKEN);
+
+  if (!detail.ok) throw new Error("expected success");
+
+  const md = detail.data.metadata;
+  check("metadata is served", md !== null);
+  check("with the description as written", md?.description === "a market for something");
+  check("and the image CID, not a gateway URL", md?.imageCid.startsWith("bafy") === true);
+
+  /*
+   * The scheme filter, at the render boundary.
+   *
+   * The chain deliberately does not validate URLs — a `javascript:` URL is
+   * inert in calldata and dangerous only where something renders it, and
+   * on-chain validation would charge every creator gas for a guarantee the
+   * client still has to enforce. So this is where it happens.
+   */
+  check("an unsafe scheme is filtered out", md?.links.length === 1);
+  check("and the drop is counted, not hidden", md?.unsafeLinksRemoved === 1);
+  check("the safe link survives", md?.links[0]?.url === "https://example.com");
+
+  // §412: the commitment was always in the address; the content is what was
+  // missing. Publishing it is what makes the check possible at all.
+  check("the launch content is verified against the address", md?.verified === true);
+}
+
+{
+  const port = new FakePort();
+
+  /*
+   * Null, not false.
+   *
+   * "We have not checked" and "this does not match" are opposite claims about a
+   * creator. A UI rendering the first as the second would accuse people who did
+   * nothing wrong — which is worse than showing no badge at all.
+   */
+  port.market = { ...baseMarket, metadataVerified: null };
+
+  const detail = handleMarket(port, TOKEN);
+  check("an unverifiable commitment is null, not false", detail.ok && detail.data.metadata?.verified === null);
+}
+
+{
+  const port = new FakePort();
+  port.market = { ...baseMarket, metadata: null, metadataVerified: null };
+
+  const detail = handleMarket(port, TOKEN);
+
+  // A market launched before metadata existed, and one launched with a blank
+  // description, are different things. Only the second should render an empty
+  // description field.
+  check("a market with no metadata reports null", detail.ok && detail.data.metadata === null);
+}
+
+{
+  const port = new FakePort();
+  const page = handleExplore(port, { limit: 10 });
+
+  if (!page.ok) throw new Error("expected success");
+
+  // A card is mostly an image and a line of text. Fetching them per card would
+  // be twenty-five extra requests on one explore page.
+  check("explore cards carry metadata too", page.data.items[0]?.metadata !== null);
+  check("filtered the same way", page.data.items[0]?.metadata?.unsafeLinksRemoved === 1);
 }
 
 // ---------------------------------------------------------------------------

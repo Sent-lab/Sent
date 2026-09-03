@@ -37,6 +37,7 @@ import {
   type TransactionIntent,
 } from "@sent/sdk";
 import { computeFees, referenceMarketCapUsd, TOTAL_SUPPLY } from "@sent/economics";
+import { isSafeUrl } from "@sent/sdk";
 
 // ---------------------------------------------------------------------------
 // Port — what the API needs from the projection
@@ -67,6 +68,23 @@ export interface MarketRow {
   /** Notional traded in the last 24h, normalized. */
   readonly volume24h: bigint;
   readonly trades24h: number;
+  /** The newest metadata revision, or null when there is none (§95.20). */
+  readonly metadata: {
+    readonly revision: bigint;
+    readonly description: string;
+    readonly imageCid: string;
+    readonly links: readonly { label: string; url: string }[];
+  } | null;
+  /**
+   * Whether revision 0's published content hashes to the commitment in the
+   * token's address (§412).
+   *
+   * Null when it cannot be determined — no metadata indexed, or a market
+   * launched before the event carried the hash. Null is NOT false: "we have not
+   * checked" and "this does not match" are opposite claims, and rendering the
+   * first as the second would accuse honest creators.
+   */
+  readonly metadataVerified: boolean | null;
   readonly launchedAt: number;
   readonly lastBlock: bigint;
   /** Chain timestamp of the graduating block, or null before graduation. */
@@ -438,6 +456,8 @@ export interface ExploreItem {
   readonly holderCount: Sourced;
   readonly creator: string;
   readonly launchedAt: number;
+  /** Description and image, so a card does not need a second request. */
+  readonly metadata: MetadataView | null;
 }
 
 export function handleExplore(
@@ -499,6 +519,7 @@ export function handleExplore(
       holderCount: sourced(String(row.holderCount), "INDEXED", row.lastBlock, port.serverTime()),
       creator: row.creator,
       launchedAt: row.launchedAt,
+      metadata: toMetadataView(row),
     })),
   });
 }
@@ -575,6 +596,49 @@ export interface MarketDetail {
 
   readonly volume24h: Sourced;
   readonly trades24h: Sourced;
+
+  /** Creator-supplied metadata (§95.20), on-chain. */
+  readonly metadata: MetadataView | null;
+}
+
+export interface MetadataView {
+  readonly revision: string;
+  readonly description: string;
+  /** IPFS CID. The client picks a gateway; this API does not. */
+  readonly imageCid: string;
+  readonly links: readonly { label: string; url: string }[];
+  /** Links dropped for an unsafe scheme, so a UI can say so rather than hide it. */
+  readonly unsafeLinksRemoved: number;
+  /**
+   * Whether the LAUNCH content hashes to the commitment in the token's address
+   * (§412). Null means undetermined, which is not the same as false.
+   */
+  readonly verified: boolean | null;
+}
+
+/**
+ * Metadata as it leaves this API.
+ *
+ * The link filter is the reason this is a function rather than a spread. §95.20
+ * asks for social URL validation and the chain deliberately does not do it — a
+ * scheme is only dangerous where it is rendered — so this is where it happens,
+ * and the count of what was dropped travels with the result so a UI can say
+ * "2 links hidden" rather than silently showing fewer than the creator
+ * published.
+ */
+export function toMetadataView(row: MarketRow): MetadataView | null {
+  if (row.metadata === null) return null;
+
+  const safe = row.metadata.links.filter((l) => isSafeUrl(l.url));
+
+  return {
+    revision: row.metadata.revision.toString(),
+    description: row.metadata.description,
+    imageCid: row.metadata.imageCid,
+    links: safe.map((l) => ({ label: l.label, url: l.url })),
+    unsafeLinksRemoved: row.metadata.links.length - safe.length,
+    verified: row.metadataVerified,
+  };
 }
 
 export function handleMarket(port: DataPort, token: string): ApiResult<MarketDetail> {
@@ -626,6 +690,8 @@ export function handleMarket(port: DataPort, token: string): ApiResult<MarketDet
 
     volume24h: sourced(row.volume24h.toString(), "CALCULATED", row.lastBlock, port.serverTime()),
     trades24h: sourced(String(row.trades24h), "CALCULATED", row.lastBlock, port.serverTime()),
+
+    metadata: toMetadataView(row),
   });
 }
 
