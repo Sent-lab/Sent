@@ -362,7 +362,14 @@ These are not placeholders. They are recorded refusals, and each names the
 verification item blocking it:
 
 - `XStockAssetAdapter` multiplier semantics — V-03
-- The graduation router — V-06, V-09
+- The graduation router's **deployment** — V-06. The router, the permanent lock
+  and `V3Math` are all built, and V-09 closed on Day 8 against the real
+  HyperSwap `NonfungiblePositionManager`. What is not done is putting an address
+  in `packages/config`: all three HyperSwap addresses are immutable in the
+  router's constructor, so a wrong one means redeploying both contracts while
+  the old lock still holds a real LP position that nothing can move. The
+  addresses are located and mutually verified on-chain; first-party confirmation
+  is the missing half, and `Deploy.s.sol` refuses rather than guessing.
 - The xStock allowlist, empty — V-02, V-03, V-05
 - Platform accounts, unset — C-08
 - `Logo.tsx` geometry, pending the official SVG export
@@ -384,8 +391,12 @@ verification item blocking it:
   factory's dependency on it are built and tested; which aggregator to point at
   is a decision with §253's criteria attached, and manipulation resistance rules
   out the easy answer. Every launch is refused until it is made.
-- `/account` holdings and P&L — needs a per-account position read that does not
-  exist. Creator earnings moved to `/creator` rather than waiting for it.
+- `/account` **P&L** — holdings and portfolio value now ship; realised and
+  unrealised P&L do not. They need a cost basis per account per market, which
+  means folding every trade rather than reading a balance, and the trade history
+  to fold it from only exists from the indexer's start block. A P&L that
+  silently began mid-history would be wrong in the direction that flatters,
+  which is the worst direction for a number a user might act on.
 
 §279 forbids a mock or placeholder standing in for any of them in production,
 and `assertProductionConfigReady` enforces that at startup on chain 999.
