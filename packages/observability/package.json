@@ -1,0 +1,16 @@
+{
+  "name": "@sent/observability",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Structured logs and metrics per Masterplan 146 and 437.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./logger": "./src/logger.ts",
+    "./metrics": "./src/metrics.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types sim/observability.ts"
+  }
+}

@@ -92,6 +92,8 @@ importers:
 
   packages/economics: {}
 
+  packages/observability: {}
+
   packages/realtime: {}
 
   packages/sdk:
@@ -126,6 +128,9 @@ importers:
       '@sent/economics':
         specifier: workspace:*
         version: link:../../packages/economics
+      '@sent/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@sent/realtime':
         specifier: workspace:*
         version: link:../../packages/realtime
