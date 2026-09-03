@@ -61,6 +61,9 @@ services:
       FACTORY_ADDRESS: ${FACTORY_ADDRESS:?FACTORY_ADDRESS must be set}
       REWARD_VAULT_ADDRESS: ${REWARD_VAULT_ADDRESS:?REWARD_VAULT_ADDRESS must be set}
       API_PORT: 8080
+      # Without this the browser cannot call the API at all: the web tier is a
+      # different origin and every request is preflighted.
+      API_ALLOWED_ORIGINS: ${API_ALLOWED_ORIGINS:-http://localhost:3000}
     ports:
       - "8080:8080"
     depends_on:

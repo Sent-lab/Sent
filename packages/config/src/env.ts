@@ -135,6 +135,7 @@ export interface ApiEnv {
   readonly port: number;
   readonly host: string;
   readonly refreshIntervalMs: number;
+  readonly allowedOrigins: readonly string[];
 }
 
 export function apiEnv(env: Env = process.env): ApiEnv {
@@ -142,7 +143,43 @@ export function apiEnv(env: Env = process.env): ApiEnv {
     port: integer(env, "API_PORT", 8080),
     host: optional(env, "API_HOST", "0.0.0.0"),
     refreshIntervalMs: integer(env, "API_REFRESH_INTERVAL_MS", 2_000),
+    allowedOrigins: origins(env, "API_ALLOWED_ORIGINS"),
   };
+}
+
+/**
+ * Parse a comma-separated origin list.
+ *
+ * Each entry must be a bare origin — scheme, host and optional port, with no
+ * path. A trailing slash makes the string fail to match the `Origin` header a
+ * browser actually sends, which produces a CORS failure that looks like a
+ * missing configuration rather than a typo.
+ *
+ * An unset value means no browser origin is allowed, which is the right default
+ * for an API that also serves bots.
+ */
+function origins(env: Env, key: string): readonly string[] {
+  const raw = env[key];
+  if (raw === undefined || raw.trim() === "") return [];
+
+  return raw.split(",").map((entry) => {
+    const value = entry.trim();
+
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      throw new ConfigError(`${key} entry "${value}" is not a URL`);
+    }
+
+    if (parsed.origin !== value) {
+      throw new ConfigError(
+        `${key} entry "${value}" must be a bare origin like "${parsed.origin}" — no path or trailing slash`,
+      );
+    }
+
+    return value;
+  });
 }
 
 export interface RealtimeEnv {

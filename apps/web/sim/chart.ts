@@ -20,6 +20,7 @@ import {
   PAD_L,
   PAD_R,
   VOL_H,
+  MAX_SLOT,
   TIMEFRAMES,
   type Candle,
 } from "../src/lib/chart-scale.ts";
@@ -158,10 +159,22 @@ section("Bars fill the plot without overlapping");
   if (scale !== null) {
     const plotW = VIEW_W - PAD_L - PAD_R;
 
-    // A single bar occupies the whole width.
+    // A single bar is capped and sits at the RIGHT edge. Letting it divide the
+    // plot evenly renders one trade as a slab across the whole chart — a correct
+    // layout that does not look like a chart.
     const only = scale.barAt(0, 1);
-    check("one bar starts at the left padding", only.x >= PAD_L - 0.01);
-    check("and does not cross the price axis", only.x + only.w <= VIEW_W - PAD_R + 0.01);
+    check("a lone bar is not wider than the cap", only.w <= MAX_SLOT);
+    check("and sits against the price axis", only.x + only.w >= VIEW_W - PAD_R - MAX_SLOT);
+    check("still inside the plot", only.x >= PAD_L - 0.01 && only.x + only.w <= VIEW_W - PAD_R + 0.01);
+
+    // A short series clusters at the right rather than stretching.
+    const short = [scale.barAt(0, 3), scale.barAt(1, 3), scale.barAt(2, 3)];
+    check("a three-bar series stays narrow", short.every((b) => b.w <= MAX_SLOT));
+    check(
+      "and ends at the right edge",
+      (short[2]?.x ?? 0) + (short[2]?.w ?? 0) >= VIEW_W - PAD_R - 1,
+    );
+    check("leaving its empty space on the left", (short[0]?.x ?? 0) > PAD_L + 100);
 
     // Adjacent bars must not overlap, or a rising bar paints over its neighbour.
     const a = scale.barAt(10, 100);
@@ -174,13 +187,12 @@ section("Bars fill the plot without overlapping");
     check("500 bars still have width", dense.w > 0);
     check("and the last one is inside the plot", dense.x + dense.w <= VIEW_W - PAD_R + 0.01);
 
-    // Bars span the plot end to end rather than bunching at one side.
-    const first = scale.barAt(0, 50);
-    const last = scale.barAt(49, 50);
-    check(
-      "the series spans the plot",
-      first.x >= PAD_L - 0.01 && last.x + last.w >= PAD_L + plotW - 1,
-    );
+    // A full series fills the plot: at 500 bars the slot is well under the cap,
+    // so the whole width is used and the left edge is reached.
+    const first = scale.barAt(0, 500);
+    const last = scale.barAt(499, 500);
+    check("a full series starts at the left padding", first.x >= PAD_L - 0.01 && first.x < PAD_L + 5);
+    check("and ends at the price axis", last.x + last.w >= PAD_L + plotW - 1);
   }
 }
 

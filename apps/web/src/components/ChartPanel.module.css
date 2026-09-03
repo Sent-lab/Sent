@@ -1,12 +1,23 @@
+/*
+ * Sized by the flex parent, NOT by `height: 100%`.
+ *
+ * The terminal's chart slot sets `min-height` and no `height`, and a percentage
+ * height has no base to resolve against in that case — it silently falls back to
+ * the content height, which is how this panel ended up 193px tall inside a 420px
+ * box while every rule looked correct.
+ */
 .root {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  min-width: 0;
   min-height: 0;
 }
 
+/* Flex, not block: the chart inside has to be able to stretch through it. */
 .plain,
 .dim {
+  display: flex;
   flex: 1;
   min-height: 0;
   transition: opacity var(--dur-fast) var(--ease-out);

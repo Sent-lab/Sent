@@ -47,6 +47,7 @@ async function main(): Promise<void> {
     rpcUrl: chain.rpcUrl,
     confirmations: chain.confirmations,
     refreshIntervalMs: api.refreshIntervalMs,
+    allowedOrigins: api.allowedOrigins,
     quoteSymbols,
   });
 

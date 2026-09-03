@@ -43,6 +43,19 @@ export interface ServerConfig extends PortConfig {
   readonly chainId: number;
   /** How often the freshness snapshot is refreshed, in ms. */
   readonly refreshIntervalMs: number;
+  /**
+   * Origins allowed to call this API from a browser.
+   *
+   * §434 puts the web tier and the API tier behind separate hostnames, so every
+   * request from the app is cross-origin and needs these headers. An empty list
+   * means no browser may call it — which is the correct default for a service
+   * that also serves bots and other backends.
+   *
+   * An explicit list, never a wildcard: `*` would let any page on the internet
+   * read this API with a user's cookies attached the moment credentials are
+   * ever added, and getting that wrong later is much harder to notice.
+   */
+  readonly allowedOrigins: readonly string[];
 }
 
 /**
@@ -69,6 +82,38 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
       return serialise(payload);
     }
     return payload;
+  });
+
+  /*
+   * CORS.
+   *
+   * Deliberately hand-rolled rather than pulled from a plugin: the entire policy
+   * is six lines, and it is the kind of policy that should be readable in the
+   * file it applies to rather than configured somewhere else.
+   *
+   * The origin is echoed back only when it is on the list. Echoing whatever
+   * arrives is the common shortcut and is equivalent to a wildcard.
+   */
+  const allowed = new Set(config.allowedOrigins);
+
+  app.addHook("onRequest", async (request, reply) => {
+    const origin = request.headers.origin;
+    if (origin === undefined || !allowed.has(origin)) return;
+
+    reply.header("access-control-allow-origin", origin);
+    // Tells caches that the response body varies by origin. Without it a shared
+    // cache can serve one origin's allowed response to another origin.
+    reply.header("vary", "origin");
+    reply.header("access-control-allow-methods", "GET, POST, OPTIONS");
+    reply.header("access-control-allow-headers", "content-type");
+    reply.header("access-control-max-age", "600");
+  });
+
+  // Preflight. Answered for any path so a new route cannot silently fail from
+  // the browser while working perfectly from curl.
+  app.options("/*", async (request, reply) => {
+    const origin = request.headers.origin;
+    return reply.code(origin !== undefined && allowed.has(origin) ? 204 : 403).send();
   });
 
   const refresh = setInterval(() => void port.refresh(), config.refreshIntervalMs);

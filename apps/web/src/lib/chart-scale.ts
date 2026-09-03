@@ -48,6 +48,14 @@ export const PAD_T = 12;
 export const PAD_B = 28; // time axis
 export const VOL_H = 60; // volume band, inside the plot's lower edge
 
+/**
+ * Widest a single candle may be drawn, in viewBox units.
+ *
+ * Without a cap, a market with three trades renders as three slabs spanning the
+ * whole plot. The cap is what keeps a young market looking like a young market.
+ */
+export const MAX_SLOT = 24;
+
 export interface Scale {
   readonly ticks: readonly { value: bigint; y: number; label: string }[];
   y(value: bigint): number;
@@ -130,11 +138,22 @@ export function buildScale(candles: readonly Candle[], quoteDecimals: number): S
     },
     barAt(index: number, total: number): { x: number; w: number } {
       const plotW = VIEW_W - PAD_L - PAD_R;
-      const slot = plotW / total;
+
+      // Capped. Dividing the plot evenly is the obvious implementation and it
+      // renders a market with three trades as three enormous slabs filling the
+      // screen — technically a correct layout and visibly not a chart.
+      const slot = Math.min(plotW / total, MAX_SLOT);
+
+      // Right-aligned, so the newest bar sits against the price axis where a
+      // reader looks for it, and a short series leaves its empty space on the
+      // left rather than stretching to fill.
+      const left = PAD_L + (plotW - slot * total);
+
       // A one-unit gutter, but never wider than the slot itself — at 500 bars a
       // fixed gutter would leave negative width and the bars would disappear.
       const gap = Math.min(1, slot * 0.2);
-      return { x: PAD_L + index * slot + gap / 2, w: Math.max(slot - gap, 0.5) };
+
+      return { x: left + index * slot + gap / 2, w: Math.max(slot - gap, 0.5) };
     },
   };
 }

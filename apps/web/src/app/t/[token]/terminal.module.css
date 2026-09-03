@@ -173,6 +173,9 @@
   background: var(--bg-raised);
   min-height: 420px;
   display: flex;
+  /* Contains the chart's absolutely positioned plot. */
+  position: relative;
+  overflow: hidden;
 }
 
 .chartPlaceholder {

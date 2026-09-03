@@ -213,6 +213,49 @@ section("Defaults exist only where they are safe");
   check("statements time out by default", db.statementTimeoutMs === 15_000);
 }
 
+section("CORS origins are parsed strictly");
+
+{
+  check("unset means no browser origin is allowed", apiEnv({}).allowedOrigins.length === 0);
+
+  check(
+    "a single origin parses",
+    apiEnv({ API_ALLOWED_ORIGINS: "https://sent.xyz" }).allowedOrigins[0] === "https://sent.xyz",
+  );
+
+  check(
+    "a list parses",
+    apiEnv({ API_ALLOWED_ORIGINS: "https://sent.xyz, http://localhost:3000" })
+      .allowedOrigins.length === 2,
+  );
+
+  check(
+    "a port is part of the origin",
+    apiEnv({ API_ALLOWED_ORIGINS: "http://localhost:3100" }).allowedOrigins[0] ===
+      "http://localhost:3100",
+  );
+
+  // A trailing slash never matches the Origin header a browser sends, and the
+  // resulting failure looks like missing configuration rather than a typo.
+  check(
+    "a trailing slash is refused",
+    refusal(() => apiEnv({ API_ALLOWED_ORIGINS: "https://sent.xyz/" })) !== null,
+  );
+
+  check(
+    "a path is refused",
+    refusal(() => apiEnv({ API_ALLOWED_ORIGINS: "https://sent.xyz/app" })) !== null,
+  );
+
+  check(
+    "a bare hostname is refused",
+    refusal(() => apiEnv({ API_ALLOWED_ORIGINS: "sent.xyz" })) !== null,
+  );
+
+  // A wildcard is not a valid URL, so it cannot be configured by accident.
+  check("a wildcard is refused", refusal(() => apiEnv({ API_ALLOWED_ORIGINS: "*" })) !== null);
+}
+
 section("Production readiness is still gated (§279)");
 
 {
