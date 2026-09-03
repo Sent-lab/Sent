@@ -53,7 +53,7 @@ import {
   type Db,
 } from "@sent/database";
 import { EPOCH_DURATION_SECONDS, type BalanceEvent } from "@sent/stockback";
-import { getProof } from "@sent/stockback/merkle";
+import { getAllProofs } from "@sent/stockback/merkle";
 import {
   computeDistribution,
   bucketByEpoch,
@@ -256,6 +256,8 @@ export class Finalizer {
   async persist(db: Db, output: FinalizationOutput): Promise<void> {
     const { result } = output;
 
+    const proofs = getAllProofs(result.tree);
+
     await recordDataset(db, {
       market: output.market,
       epochSequence: result.commitment.epochSequence,
@@ -266,13 +268,18 @@ export class Finalizer {
       totalFunded: output.totalFunded,
       computedThroughBlock: output.throughBlock,
       computedAt: output.throughTimestamp,
+      // Built once, here, against the root being stored alongside them. A proof
+      // recomputed later against a newer tree would not verify against this
+      // root, and this root is the one an attestor signed.
+      //
+      // In ONE pass. `getProof` rebuilds the tree from its leaves on every call,
+      // so calling it per holder is quadratic — 2,500 holders took 70 seconds,
+      // inside this transaction. `getAllProofs` produces byte-identical proofs
+      // and is compared against `getProof` in the Merkle fixtures.
       entitlements: result.tree.entries.map((entry) => ({
         account: entry.account,
         cumulative: entry.cumulative,
-        // Built once, here, against the root being stored alongside it. A proof
-        // recomputed later against a newer tree would not verify against this
-        // root, and this root is the one an attestor signed.
-        proof: getProof(result.tree, entry.account),
+        proof: proofs.get(entry.account.toLowerCase()) ?? [],
       })),
       allocations: result.epochAllocations.map((a) => ({
         epochId: a.epochId,

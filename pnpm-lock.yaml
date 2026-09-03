@@ -253,6 +253,18 @@ importers:
         specifier: ^8.18.0
         version: 8.21.3
 
+  tests/load:
+    dependencies:
+      '@sent/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@sent/stockback':
+        specifier: workspace:*
+        version: link:../../packages/stockback
+      '@sent/stockback-service':
+        specifier: workspace:*
+        version: link:../../services/stockback
+
 packages:
 
   '@adraffy/ens-normalize@1.11.1':

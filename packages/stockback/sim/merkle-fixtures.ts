@@ -17,7 +17,14 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { buildDistributionTree, getProof, verifyProof, type Entitlement } from "../src/merkle.ts";
+import {
+  buildDistributionTree,
+  getProof,
+  getAllProofs,
+  verifyProof,
+  encodeLeaf,
+  type Entitlement,
+} from "../src/merkle.ts";
 
 const OUT = "contracts/test/fixtures/merkle.json";
 
@@ -133,6 +140,49 @@ const shuffled = [...scenarios[5]!.entries].reverse();
 const a = buildDistributionTree(scenarios[5]!.entries).root;
 const b = buildDistributionTree(shuffled).root;
 if (a !== b) throw new Error("tree is not order-independent — attestors could never agree");
+
+/*
+ * The batch proof builder must agree with the single one, byte for byte.
+ *
+ * `getAllProofs` exists because `getProof` rebuilds the tree on every call, and
+ * calling it once per holder is quadratic. That makes it a SECOND implementation
+ * of a proof, and one of them is what the vault verifies against — so they are
+ * compared here at sizes where the tree shape actually varies, including odd
+ * counts where a node is promoted without a sibling.
+ */
+{
+  let compared = 0;
+
+  for (const size of [1, 2, 3, 5, 8, 9, 16, 17, 33, 100, 257]) {
+    const entries = Array.from({ length: size }, (_, i) => ({
+      account: `0x${(i + 1).toString(16).padStart(40, "0")}` as `0x${string}`,
+      cumulative: BigInt(1_000 + i * 37),
+    }));
+
+    const tree = buildDistributionTree(entries);
+    const batch = getAllProofs(tree);
+
+    for (const entry of tree.entries) {
+      const single = getProof(tree, entry.account);
+      const many = batch.get(entry.account.toLowerCase()) ?? [];
+
+      if (single.length !== many.length || single.some((h, i) => h !== many[i])) {
+        throw new Error(
+          `getAllProofs disagrees with getProof at size ${size} for ${entry.account}`,
+        );
+      }
+
+      // Both must actually verify, or agreeing on a wrong answer would pass.
+      if (!verifyProof(tree.root, encodeLeaf(entry.account, entry.cumulative), many)) {
+        throw new Error(`batch proof does not verify at size ${size}`);
+      }
+
+      compared += 1;
+    }
+  }
+
+  console.log(`  batch proofs match the single builder: ${compared} compared`);
+}
 
 mkdirSync(dirname(OUT), { recursive: true });
 writeFileSync(OUT, JSON.stringify({ scenarios: out }, null, 2));

@@ -157,6 +157,13 @@ jobs:
           DATABASE_URL: postgres://sent:sent@localhost:5432/sent
         run: node --experimental-strip-types tests/integration/live.ts
 
+      # Correctness at scale, not throughput. Nothing is asserted about timing —
+      # a performance threshold in CI is a flaky test wearing a useful disguise.
+      - name: Scale
+        env:
+          DATABASE_URL: postgres://sent:sent@localhost:5432/sent
+        run: node --experimental-strip-types tests/load/scale.ts
+
       # The largest seam in the system: real contracts, real chain, real indexer.
       # Foundry supplies anvil; the artifacts come from the contracts job's own
       # compiler, so this indexes the same bytecode the test suite ran against.

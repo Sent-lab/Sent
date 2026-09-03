@@ -144,6 +144,64 @@ function computeRoot(leaves: readonly Hex[]): Hex {
  * Returns the sibling hashes from leaf to root, which is exactly what
  * `MerkleProof.verify` consumes.
  */
+/**
+ * Every proof in the tree, in one pass.
+ *
+ * `getProof` rebuilds the whole tree from the leaves on each call, and also
+ * finds its index by scanning. Calling it once per holder — which is exactly
+ * what persisting a distribution does — is therefore quadratic: a market with
+ * 2,500 holders took 70 seconds, inside the transaction that writes the
+ * dataset.
+ *
+ * This builds the levels once and walks each leaf's position up through them,
+ * which is O(n log n) for the whole set. The proofs are byte-identical to
+ * `getProof`'s, and `sim/merkle-fixtures.ts` asserts that rather than assuming
+ * it — two implementations of a proof is precisely the shape that must not
+ * diverge, since one of them is what the vault verifies against.
+ *
+ * Keyed by lower-cased account, matching `getProof`'s own comparison.
+ */
+export function getAllProofs(tree: DistributionTree): Map<string, Hex[]> {
+  const levels: Hex[][] = [[...tree.leaves]];
+
+  while ((levels[levels.length - 1] as Hex[]).length > 1) {
+    const level = levels[levels.length - 1] as Hex[];
+    const next: Hex[] = [];
+
+    for (let i = 0; i < level.length; i += 2) {
+      const left = level[i] as Hex;
+      const right = level[i + 1];
+      next.push(right === undefined ? left : hashPair(left, right));
+    }
+
+    levels.push(next);
+  }
+
+  const proofs = new Map<string, Hex[]>();
+
+  tree.entries.forEach((entry, index) => {
+    const proof: Hex[] = [];
+    let position = index;
+
+    // The last level is the root, which is never part of a proof.
+    for (let depth = 0; depth < levels.length - 1; depth++) {
+      const level = levels[depth] as Hex[];
+      const siblingIndex = position % 2 === 1 ? position - 1 : position + 1;
+      const sibling = level[siblingIndex];
+
+      // A promoted odd node has no sibling and contributes nothing, exactly as
+      // in `getProof`.
+      if (sibling !== undefined) proof.push(sibling);
+
+      position = Math.floor(position / 2);
+    }
+
+    proofs.set(entry.account.toLowerCase(), proof);
+  });
+
+  return proofs;
+}
+
 export function getProof(tree: DistributionTree, account: `0x${string}`): Hex[] {
   const index = tree.entries.findIndex(
     (e) => e.account.toLowerCase() === account.toLowerCase(),

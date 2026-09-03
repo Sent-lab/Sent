@@ -40,7 +40,8 @@
     "sim:chart": "node --experimental-strip-types apps/web/sim/chart.ts",
     "sim:approve": "node --experimental-strip-types packages/sdk/sim/approve.ts",
     "sim:tx": "node --experimental-strip-types apps/web/sim/tx.ts",
-    "e2e": "node --experimental-strip-types tests/e2e/stack.ts"
+    "e2e": "node --experimental-strip-types tests/e2e/stack.ts",
+    "load": "node --experimental-strip-types tests/load/scale.ts"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",
