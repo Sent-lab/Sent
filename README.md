@@ -196,7 +196,7 @@ asserted:
 
 ## Where the bugs have actually been
 
-Thirty-two defects were found and fixed during the build, and none of them was
+Thirty-four defects were found and fixed during the build, and none of them was
 caught by a unit test. They fell into five shapes — a seam between two
 components that were each individually correct, a placeholder that outlived the
 reason it was written, code that was correct but quadratic, and a failed read
@@ -209,6 +209,11 @@ Stockback reward to the bonding curve instead of to holders.
 The most expensive single one was an argument nobody was checking: the launch
 price arrived as plain calldata, verified only against zero, and it fixes a
 market'''s starting price permanently.
+
+The most instructive is smaller. Four members of one TypeScript union were
+shipped with no implementation behind them, three of them money paths — and the
+last two were found only because somebody asked why something else had not been
+done.
 
 [`docs/REVIEW-NOTES.md`](docs/REVIEW-NOTES.md) lists every one of them and what
 the pattern implies for reviewing this codebase. It is the first thing worth

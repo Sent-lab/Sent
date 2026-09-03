@@ -3,7 +3,7 @@
 Where the defects in this codebase have actually been, written down so the next
 person reviewing it looks in the right places rather than the obvious ones.
 
-Thirty-two defects were found and fixed during the build. **None of them was
+Thirty-four defects were found and fixed during the build. **None of them was
 found by a unit test.** Every one came from running real components against each
 other — with one exception, which was found by being asked why something had not
 been done and checking instead of answering. That is not an argument against the unit tests — they are what makes the
@@ -51,7 +51,7 @@ ever handed it real output from the thing upstream".
 
 ## Shape 2 — the placeholder
 
-Ten defects, all the same:
+Twelve defects, all the same:
 
 ```
 priceAfter: 0n          // every trade priced at zero; a flat tape and a flat chart
@@ -64,7 +64,25 @@ CLAIM_CREATOR_FEES      // an IntentKind with no builder: earnings shown, no way
 StockbackMessage        // a realtime message type nothing ever published
 referenceMarketCapUsd   // declared in the realtime schema, produced by nobody
 VOLUME: trade_count     // a sort labelled "volume" that ranked by number of trades
+CLAIM_STOCKBACK         // an IntentKind with no builder — on a HOLDER's money path
+LAUNCH                  //   ↑ and the primary creator action, same union
 ```
+
+**`IntentKind` alone accounts for four of these.** `APPROVE_QUOTE`,
+`CLAIM_CREATOR_FEES`, `CLAIM_STOCKBACK` and `LAUNCH` were all shipped as union
+members with nothing behind them, and each read as implemented until somebody
+tried to use it. Three of the four were money paths.
+
+The last two are the worst instance, because of when they were found. The
+creator-fee builder was written *in the same session*, for exactly this defect,
+and nobody — including whoever wrote it — went back to ask whether the holder
+half had the same gap. It did. The API served a holder their claimable amount
+and the Merkle proof to spend it with, and the product had no way to spend
+either.
+
+**A union member is a claim that something exists.** The check that finds this
+takes one grep per member and was worth doing three commits earlier than it
+was.
 
 Each was defensible when written. Each typechecked forever. Each outlived the
 reason it existed, silently, and produced a value indistinguishable from a real
@@ -187,6 +205,41 @@ them, rather than asserting that a query succeeds.
 
 ---
 
+## The near-miss worth keeping: a guard that refused a real state
+
+Not a shipped defect — it was caught by the e2e on its first run — but it is
+the only failure in this document that came from being *too* careful, and that
+makes it worth writing down.
+
+The Stockback claim builder refused an empty Merkle proof:
+
+```ts
+if (proof.length === 0 && cumulative > 0n) {
+  throw new Error("no proof supplied");
+}
+```
+
+The reasoning was sound as far as it went. A caller who forgot to fetch a proof
+passes an empty array, and that is worth catching before a transaction is
+signed.
+
+What it missed is that **a single-leaf tree has no siblings**, so its proof is
+legitimately empty — and a market with one holder is not an edge case, it is
+every market on its first day. The guard cost the smallest markets their claims
+entirely, to avoid one confusing revert. The vault verifies the proof against
+the active root regardless, so the authority was never in doubt.
+
+**What to do about it.** Every validation refuses a set of states. The question
+worth asking is not "is this input suspicious" but "what legitimate state does
+this reject, and how common is it" — and here the answer was "every market that
+has just launched", which is most of them.
+
+It failed on the first real run against a single-holder market. Nothing in the
+unit tests would have caught it, because the fixtures all had several holders —
+which is the same reason `tests/e2e/stack.ts` exists.
+
+---
+
 ## Shape 5 — the argument nobody was checking
 
 One, and it is the most expensive defect in this document.
@@ -264,13 +317,17 @@ verification item blocking it:
 - The xStock allowlist, empty — V-02, V-03, V-05
 - Platform accounts, unset — C-08
 - `Logo.tsx` geometry, pending the official SVG export
-- Share-card generation (§95.25). Needs object storage, which §427 leaves as a
-  CHOOSE decision with no deployment target fixed (§434).
+- PNG rasterisation of the share card. The card itself is built and tested
+  (§117, §95.25) and served as SVG; most crawlers want PNG for `og:image`, and
+  rasterising needs a native dependency whose choice depends on a runtime §434
+  has not fixed. Everything carrying product knowledge is in `preview.ts`; what
+  is left is a mechanical transform behind a documented seam.
 
-  Token metadata is no longer here: it went on-chain (D-013), and the image is
-  an IPFS CID rather than a file this platform stores. That sidesteps §427
-  rather than answering it, which is the right outcome for a dependency nothing
-  actually needs.
+  Neither token metadata nor the share card needs object storage any more.
+  Metadata went on-chain (D-013) with the image as an IPFS CID, and the card
+  derives its mark from the token address rather than fetching anything — which
+  sidesteps §427 rather than answering it, and is the right outcome for a
+  dependency nothing actually needs.
 - `liveMarketCapUsd` (§403). Needs the live xStock/USD DISPLAY feed, V-12. The
   field is ABSENT from the response rather than zero: an absent field renders as
   nothing, a zero renders as a market worth nothing.

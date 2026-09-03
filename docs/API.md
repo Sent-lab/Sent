@@ -189,6 +189,31 @@ what.
 name (`UNSUPPORTED_INTERVAL`) rather than clamped to the nearest — a client bug
 should surface, not silently receive a different timeframe.
 
+### `GET /v1/markets/:token/preview.svg`
+
+The social preview (§117), 1200×630, as `image/svg+xml`. Point `og:image` at
+it.
+
+**The creator's image is deliberately not embedded.** Fetching a
+creator-supplied IPFS CID from a public, unauthenticated endpoint would be an
+outbound request from this service to a URL a stranger chose — request forgery
+with a public trigger — and would make render time depend on somebody else's
+gateway. The mark on the card is derived from the token address instead:
+deterministic, unique per market, always available. The real logo is served as
+`metadata.imageCid`, for a client to fetch in a browser where the request is the
+user's.
+
+Cached for five minutes with an hour of `stale-while-revalidate`. A preview that
+500s during a slow database renders as a bare URL, and a slightly old card beats
+no card by a wide margin.
+
+An unknown token returns a **JSON 404**, not an SVG saying "not found" — a
+crawler would cache and display the second.
+
+Most crawlers want PNG for `og:image`. Rasterising needs a native dependency
+whose choice depends on the deployment runtime (§434), so it sits behind a
+documented seam rather than being guessed at.
+
 ### `GET /v1/markets/:token/epochs`
 
 §333's public distribution dataset and §367's status.
