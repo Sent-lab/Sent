@@ -481,6 +481,98 @@ export function buildSellIntent(params: BuildSellParams): TransactionIntent {
  * it rendered, and the signing step re-hashes what it is about to send: any
  * divergence between review and submission is a mismatch, not a warning.
  */
+export interface BuildClaimCreatorFeesParams {
+  readonly chainId: number;
+  /** The fee vault, read from the factory rather than configured separately. */
+  readonly feeVault: `0x${string}`;
+  /** The asset being withdrawn — a market's quote xStock. */
+  readonly asset: `0x${string}`;
+  /** Where the fees go. The creator's own address; the vault pays msg.sender's balance. */
+  readonly to: `0x${string}`;
+  /** What the vault says is payable, for the review. Never an indexed total. */
+  readonly amount: bigint;
+  readonly decimals: number;
+  readonly symbol: string;
+}
+
+/**
+ * Build a creator fee claim.
+ *
+ * `CLAIM_CREATOR_FEES` sat in `IntentKind` with no builder behind it, exactly as
+ * `APPROVE_QUOTE` did — an enum member that reads as implemented. A creator
+ * could see what they had earned and had no way to withdraw it.
+ *
+ * THE AMOUNT IS NOT AN ARGUMENT
+ * -----------------------------
+ * `claimCreatorFees(asset, to)` pays the caller's entire balance for that asset;
+ * there is no amount to pass. So `amount` here is for the REVIEW only, and it
+ * must come from the vault rather than from indexed accruals — a review showing
+ * a lifetime total next to a call that pays the remaining balance would state a
+ * figure the transaction does not produce.
+ *
+ * The vault credits `msg.sender`'s balance, so a wallet other than the creator's
+ * cannot claim on their behalf and `to` only redirects where it lands.
+ */
+export function buildClaimCreatorFeesIntent(
+  params: BuildClaimCreatorFeesParams,
+): TransactionIntent {
+  const { chainId, feeVault, asset, to, amount, decimals, symbol } = params;
+
+  if (amount <= 0n) throw new Error("buildClaimCreatorFeesIntent: nothing to claim");
+
+  const data = encodeFunctionData({
+    abi: claimCreatorFeesAbi,
+    functionName: "claimCreatorFees",
+    args: [asset, to],
+  });
+
+  const plain = `${formatUnits(amount, decimals)} ${symbol}`;
+
+  return {
+    kind: "CLAIM_CREATOR_FEES",
+    chainId,
+    to: feeVault,
+    data,
+    value: 0n,
+    review: {
+      kind: "CLAIM_CREATOR_FEES",
+      summary: `Claim ${plain} in creator fees`,
+      rows: [
+        { label: "You receive", value: plain, primary: true },
+        { label: "Asset", value: `${symbol} (${asset})` },
+        { label: "Sent to", value: to },
+        {
+          // Stated because the call has no amount argument: whatever the vault
+          // owes at execution is what arrives, which may differ from this figure
+          // if a trade lands in between.
+          label: "Claims",
+          value: "Your full balance of this asset at execution",
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * The one FeeVault function this SDK encodes.
+ *
+ * Declared here rather than importing the vault's full ABI, for the same reason
+ * the approval builder declares its own: with `feeVaultAbi` in scope it becomes
+ * possible to encode `setTreasury` by typo.
+ */
+const claimCreatorFeesAbi = [
+  {
+    type: "function",
+    name: "claimCreatorFees",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "asset", type: "address" },
+      { name: "to", type: "address" },
+    ],
+    outputs: [{ name: "amount", type: "uint256" }],
+  },
+] as const;
+
 export function intentFingerprint(intent: TransactionIntent): string {
   return [
     intent.kind,
