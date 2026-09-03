@@ -47,3 +47,20 @@ test = "invariants"
 runs = 256
 depth = 64
 fail_on_revert = false
+
+# HyperEVM ships two block lanes: a default one capped at 3,000,000 gas and an
+# opt-in one capped at 30,000,000. A fork inherits the tip block's limit, which is
+# the small lane ~99% of the time, and the full graduation path costs 5.40M gas.
+#
+# Foundry's `isolate` mode - on by default here - models each top-level call as a
+# real transaction, and under it this suite capped at 3.19M no matter what
+# `block_gas_limit` said. That is not a Foundry defect. Isolate mode was
+# reproducing HyperEVM's actual small-lane ceiling, and it found the constraint
+# recorded as V-16: graduation cannot be included in a default-lane block.
+#
+# These two settings exist so the fork tests measure the CONTRACTS. The lane
+# constraint is a deployment fact, tested in its own right by V-16, not something
+# to rediscover as an unexplained OutOfGas in every unrelated mint assertion.
+[profile.fork]
+block_gas_limit = 30000000
+isolate = false
