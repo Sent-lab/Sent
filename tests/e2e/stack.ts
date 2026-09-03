@@ -772,9 +772,18 @@ try {
        * event — every graduation test so far has been inside Foundry, where the
        * indexer does not exist.
        *
-       * It also exercises §411's crossing order: a buy large enough to finish
-       * the curve executes on the curve and then continues into the pool, and
-       * the market accepts only the portion that reaches qG on the curve leg.
+       * TWO TRANSACTIONS, AND THE STATE BETWEEN THEM IS THE POINT (D-016)
+       * -----------------------------------------------------------------
+       * This block used to buy once and assert GRADUATED, with a comment saying
+       * a persisted 1 would mean the indexer captured a partial state. That was
+       * true of the design it was written for and is now exactly backwards: a
+       * full migration costs 5.4M gas and HyperEVM's default block lane caps at
+       * 3M, so the crossing buy closes the curve and a permissionless
+       * `finalizeGraduation()` mints the position afterwards.
+       *
+       * The resting state in between is the one worth exercising here, because
+       * it is the only state in the protocol where a holder can do nothing at
+       * all — and Foundry cannot exercise it against an indexer.
        */
       const beforeStatus = (await getMarketByToken(db, token))?.status;
       check("the market has not graduated yet", beforeStatus === 0);
@@ -782,7 +791,58 @@ try {
       // Far more than the curve can absorb, so the endpoint is certainly crossed.
       await send(quote, quoteAbi, "mint", [account.address, ONE_QUOTE * 1_000_000n]);
       await send(quote, quoteAbi, "approve", [market, ONE_QUOTE * 1_000_000n]);
+
+      const quoteBeforeCrossing = (await publicClient.readContract({
+        address: quote,
+        abi: quoteAbi,
+        functionName: "balanceOf",
+        args: [account.address],
+      })) as bigint;
+
       await send(market, marketAbi, "buy", [ONE_QUOTE * 500_000n, 0n, deadline]);
+
+      const crossedStatus = (await publicClient.readContract({
+        address: market,
+        abi: marketAbi,
+        functionName: "status",
+      })) as number;
+
+      check("the crossing buy closed the curve on its own", crossedStatus === 1);
+
+      /*
+       * §14's "no manual trigger" survives the split: the endpoint graduated
+       * this market, not a person. What is left is a migration already owed.
+       */
+      const quoteAfterCrossing = (await publicClient.readContract({
+        address: quote,
+        abi: quoteAbi,
+        functionName: "balanceOf",
+        args: [account.address],
+      })) as bigint;
+
+      const spent = quoteBeforeCrossing - quoteAfterCrossing;
+      check("and refunded what the curve had no supply left to sell", spent < ONE_QUOTE * 500_000n);
+
+      // The projection has to hold the resting state, or a UI keeps offering
+      // trades on a market whose curve is shut.
+      await indexer.start();
+
+      const pending = await waitFor(async () => {
+        const view = await getMarketByToken(db, token);
+        return view !== null && view.status === 1 ? view : null;
+      });
+
+      indexer.stop();
+
+      check("the projection rests in GRADUATING", pending !== null);
+
+      /*
+       * Finalised from an account with no relationship to this market beyond
+       * being able to pay for gas. §16 forbids the finaliser any privilege, and
+       * this is the strongest available form of that assertion: if anything in
+       * the migration depended on WHO called it, this is where it would show.
+       */
+      await send(market, marketAbi, "finalizeGraduation", []);
 
       const onChainStatus = (await publicClient.readContract({
         address: market,
@@ -804,9 +864,7 @@ try {
       check("the projection saw the graduation", graduated !== null);
 
       if (graduated !== null) {
-        // GRADUATING exists only inside a single transaction (§19). A persisted
-        // 1 would mean the indexer captured a partial state.
-        check("the status is GRADUATED, never GRADUATING", graduated.status === 2);
+        check("the status is GRADUATED", graduated.status === 2);
 
         const onChainPool = (await publicClient.readContract({
           address: market,
