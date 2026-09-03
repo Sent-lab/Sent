@@ -230,6 +230,60 @@ export async function insertMarket(db: Db, m: MarketRecord): Promise<void> {
   );
 }
 
+/**
+ * Register the addresses that must never earn Stockback (§323, §324).
+ *
+ * WHY THIS IS NOT COSMETIC
+ * ------------------------
+ * The market contract holds every token that has not been bought yet — the
+ * whole billion at launch, and 35% of it even at the graduation threshold. It
+ * receives `Transfer` events like any other address, so without this it enters
+ * the TWAB as a holder, with a weight no real holder can approach.
+ *
+ * At 1% distributed it would take 99% of every epoch's pool. §324 states the
+ * invariant as `DEX_POOL_WEIGHT = 0`, and the same reasoning covers the curve:
+ * protocol custody must not compete with holders for rewards.
+ *
+ * The set is DERIVED, not configured. §323 says the factory must "register or
+ * deterministically expose" exclusions, and deriving them from the launch event
+ * means a market cannot be created with the wrong ones — there is no second
+ * place for the list to be right or wrong.
+ *
+ * The HyperSwap pool is added at graduation instead, because it does not exist
+ * yet here.
+ */
+export async function registerExclusions(
+  db: Db,
+  market: string,
+  system: {
+    readonly factory: string;
+    readonly feeVault: string;
+    readonly rewardVault: string;
+    readonly router?: string;
+  },
+): Promise<void> {
+  const entries: [string, string][] = [
+    [ZERO_ADDRESS, "zero address"],
+    [DEAD_ADDRESS, "burn address"],
+    [market, "the curve holds undistributed supply, not an economic position"],
+    [system.factory, "protocol custody"],
+    [system.feeVault, "protocol custody"],
+    [system.rewardVault, "the reward vault must not earn from itself"],
+    ...(system.router === undefined ? [] : ([[system.router, "protocol custody"]] as [string, string][])),
+  ];
+
+  for (const [account, reason] of entries) {
+    await db.query(
+      `INSERT INTO stockback_exclusions (market, account, reason) VALUES ($1,$2,$3)
+       ON CONFLICT (market, account) DO NOTHING`,
+      [toBytes(market), toBytes(account), reason],
+    );
+  }
+}
+
+export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+export const DEAD_ADDRESS = "0x000000000000000000000000000000000000dEaD";
+
 const MARKET_COLUMNS = `
   m.token, m.market, m.creator, m.quote_asset, m.quote_decimals,
   m.name, m.symbol, m.p0, m.pg, m.qg, m.launched_at, m.launched_at_block,
@@ -504,6 +558,16 @@ export async function markGraduated(
      WHERE market = $1`,
     [toBytes(market), toBytes(pool), positionId.toString(), block.toString()],
   );
+
+  // §324, and the reason it is a named invariant: the pool holds the permanent
+  // liquidity, which after graduation is the single largest TOKEN balance in
+  // existence. Left eligible it would absorb most of every epoch's rewards, and
+  // the LP would be competing with the holders the rewards are for.
+  await db.query(
+    `INSERT INTO stockback_exclusions (market, account, reason) VALUES ($1,$2,$3)
+     ON CONFLICT (market, account) DO NOTHING`,
+    [toBytes(market), toBytes(pool), "permanent liquidity, not a holder (§324)"],
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -618,15 +682,140 @@ export async function recordStockbackFunding(
   );
 }
 
+/**
+ * Record a commitment the vault accepted (§332).
+ *
+ * The merkle root is the key, because it is how the CHAIN identifies a
+ * commitment. The epoch sequence and dataset hash are local annotations — this
+ * node only has them if it also computed the distribution, and §406 expects
+ * plenty of nodes that only index.
+ *
+ * They are backfilled from `stockback_datasets` when the root matches, in the
+ * same statement, so a finalizer's own indexer records them without a second
+ * pass and a bare indexer records NULL rather than guessing.
+ */
+export async function recordCommitmentSubmitted(
+  db: Db,
+  c: {
+    market: string;
+    merkleRoot: string;
+    totalCumulative: bigint;
+    submitter: string;
+    activeAt: number;
+    blockNumber: bigint;
+  },
+): Promise<void> {
+  await db.query(
+    `INSERT INTO stockback_commitments (
+       market, merkle_root, total_cumulative, submitter, active_at,
+       submitted_at_block, epoch_sequence, dataset_hash
+     )
+     SELECT $1,$2,$3,$4,$5,$6, d.epoch_sequence, d.dataset_hash
+     FROM (SELECT 1) AS one
+     LEFT JOIN stockback_datasets d ON d.market = $1 AND d.merkle_root = $2
+     ON CONFLICT (market, merkle_root) DO NOTHING`,
+    [
+      toBytes(c.market),
+      toBytes(c.merkleRoot),
+      c.totalCumulative.toString(),
+      toBytes(c.submitter),
+      c.activeAt,
+      c.blockNumber.toString(),
+    ],
+  );
+}
+
+/**
+ * Mark a commitment live.
+ *
+ * Nothing is payable before this. §334's activation delay is the window in
+ * which a bad root can still be cancelled, and a projection that treated a
+ * submitted root as claimable would be handing out proofs against a root the
+ * vault will not honour for another six hours.
+ */
+export async function markCommitmentActivated(
+  db: Db,
+  market: string,
+  merkleRoot: string,
+  block: bigint,
+): Promise<void> {
+  await db.query(
+    `UPDATE stockback_commitments
+     SET activated_at_block = $3
+     WHERE market = $1 AND merkle_root = $2 AND cancelled_at_block IS NULL`,
+    [toBytes(market), toBytes(merkleRoot), block.toString()],
+  );
+}
+
+/** A pending root withdrawn before it went live (§365). It never pays. */
+export async function markCommitmentCancelled(
+  db: Db,
+  market: string,
+  merkleRoot: string,
+  block: bigint,
+): Promise<void> {
+  await db.query(
+    `UPDATE stockback_commitments
+     SET cancelled_at_block = $3
+     WHERE market = $1 AND merkle_root = $2 AND activated_at_block IS NULL`,
+    [toBytes(market), toBytes(merkleRoot), block.toString()],
+  );
+}
+
+/**
+ * Record a claim the vault paid.
+ *
+ * `cumulative` is the running total the vault now has on record for this
+ * account, not the amount transferred — that is `amount`. Storing both is what
+ * lets `getClaimedTotal` answer "how much has already been paid" without
+ * re-deriving it from a sum that a reorg could leave half-applied.
+ */
+export async function recordClaim(
+  db: Db,
+  c: {
+    blockNumber: bigint;
+    logIndex: number;
+    market: string;
+    account: string;
+    amount: bigint;
+    cumulative: bigint;
+    timestamp: number;
+  },
+): Promise<void> {
+  await db.query(
+    `INSERT INTO stockback_claims (
+       block_number, log_index, market, account, amount, cumulative, timestamp
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+     ON CONFLICT (block_number, log_index) DO NOTHING`,
+    [
+      c.blockNumber.toString(),
+      c.logIndex,
+      toBytes(c.market),
+      toBytes(c.account),
+      c.amount.toString(),
+      c.cumulative.toString(),
+      c.timestamp,
+    ],
+  );
+}
+
 export async function getActiveCommitment(
   db: Db,
   market: string,
-): Promise<{ merkleRoot: `0x${string}`; totalCumulative: bigint; epochSequence: bigint } | null> {
+): Promise<{
+  merkleRoot: `0x${string}`;
+  totalCumulative: bigint;
+  epochSequence: bigint | null;
+  activatedAtBlock: bigint;
+} | null> {
+  // Ordered by CHAIN position, not by epoch sequence. The sequence is nullable
+  // on a node that never computed the dataset, and the vault's own monotonicity
+  // check already makes chain order and sequence order agree.
   const row = await db.queryOne<Record<string, unknown>>(
-    `SELECT merkle_root, total_cumulative, epoch_sequence
+    `SELECT merkle_root, total_cumulative, epoch_sequence, activated_at_block
      FROM stockback_commitments
      WHERE market = $1 AND activated_at_block IS NOT NULL AND cancelled_at_block IS NULL
-     ORDER BY epoch_sequence DESC LIMIT 1`,
+     ORDER BY submitted_at_block DESC LIMIT 1`,
     [toBytes(market)],
   );
   if (row === null) return null;
@@ -634,7 +823,10 @@ export async function getActiveCommitment(
   return {
     merkleRoot: hexBytes(row.merkle_root, "merkle_root"),
     totalCumulative: big(row.total_cumulative, "total_cumulative"),
-    epochSequence: big(row.epoch_sequence, "epoch_sequence"),
+    // Null on a node that only indexes. Callers that need a sequence for
+    // display fall back to the newest dataset; nothing financial depends on it.
+    epochSequence: bigOrNull(row.epoch_sequence),
+    activatedAtBlock: big(row.activated_at_block, "activated_at_block"),
   };
 }
 

@@ -47,6 +47,11 @@ import {
   markGraduated,
   insertBalanceEvent,
   insertFeeAccrual,
+  registerExclusions,
+  recordCommitmentSubmitted,
+  markCommitmentActivated,
+  markCommitmentCancelled,
+  recordClaim,
   refreshHolderCount,
   recordStockbackFunding,
   type Transaction,
@@ -122,6 +127,16 @@ export class Indexer {
    * projection, which is worse than indexing none.
    */
   private feeVault: `0x${string}` | null = null;
+
+  /**
+   * The graduation router, also from the factory.
+   *
+   * Excluded from Stockback because it holds tokens in transit during
+   * graduation (§323). Null until the factory has one set — a market can launch
+   * before the router is configured, and an exclusion that cannot be derived is
+   * better absent than guessed.
+   */
+  private router: `0x${string}` | null = null;
 
   private running = false;
   private connected = false;
@@ -316,6 +331,7 @@ export class Indexer {
      * launch another market — one extra pass is the normal case.
      */
     const feeVault = await this.resolveFeeVault();
+    await this.resolveRouter();
 
     let logs = await this.client.getLogs({
       address: [
@@ -657,6 +673,26 @@ export class Indexer {
       launchedAtBlock: this.positionOf(log).blockNumber,
     });
 
+    /*
+     * §323/§324. Registered here, in the same transaction as the market.
+     *
+     * Deferring this to a later job would leave a window in which a finalization
+     * could run against a market whose curve balance is still eligible — and the
+     * curve holds every token nobody has bought yet, which at launch is the
+     * whole supply. The distribution would be arithmetically correct and would
+     * pay the market contract instead of the holders.
+     *
+     * The vault addresses come from the factory rather than configuration, for
+     * the same reason the fee vault does: they must agree, and a second source
+     * is a second thing that can name another deployment's contracts.
+     */
+    await registerExclusions(tx, market, {
+      factory: this.config.factory,
+      feeVault: (await this.resolveFeeVault()) ?? this.config.factory,
+      rewardVault: this.config.rewardVault,
+      ...(this.router !== null ? { router: this.router } : {}),
+    });
+
     // Staged, NOT applied. This runs inside the advance transaction, and a
     // transaction that rolls back must not leave the in-memory map claiming a
     // market the database does not have — the next tick would then treat the
@@ -833,9 +869,7 @@ export class Indexer {
     // only happen for a market from another factory sharing the vault, which is
     // not a state this deployment has — but it is cheap to refuse rather than
     // throw inside the advance transaction.
-    if (!this.knownMarkets.has(market) && !this.pendingMarkets.some((m) => m.market === market)) {
-      return;
-    }
+    if (!this.isKnownMarket(market)) return;
 
     const { blockNumber, logIndex } = this.positionOf(log);
 
@@ -890,6 +924,26 @@ export class Indexer {
    * Never cached as a failure: an RPC blip on the first tick would otherwise
    * leave this indexer permanently blind to every fee until it restarts.
    */
+  /** The graduation router, from the factory. Zero means not yet set. */
+  private async resolveRouter(): Promise<`0x${string}` | null> {
+    if (this.router !== null) return this.router;
+
+    try {
+      const router = (await this.client.readContract({
+        address: this.config.factory,
+        abi: launchpadFactoryAbi,
+        functionName: "router",
+      })) as `0x${string}`;
+
+      if (/^0x0{40}$/i.test(router)) return null;
+
+      this.router = router;
+      return router;
+    } catch {
+      return null;
+    }
+  }
+
   private async resolveFeeVault(): Promise<`0x${string}` | null> {
     if (this.feeVault !== null) return this.feeVault;
 
@@ -907,22 +961,100 @@ export class Indexer {
     }
   }
 
+  /**
+   * The reward vault's whole event surface, not just funding.
+   *
+   * Only `Funded` was handled. `stockback_commitments` and `stockback_claims`
+   * were read by the API and written by nobody, which had two consequences that
+   * both look like a working system:
+   *
+   *   `getActiveCommitment` returned NULL forever, so every holder's claimable
+   *   figure was zero no matter what the vault would actually pay. A holder with
+   *   a live entitlement was shown nothing.
+   *
+   *   `getClaimedTotal` returned zero forever, so a holder who HAD claimed was
+   *   shown the full amount again — and the claim they were invited to make
+   *   reverts, because the vault pays `cumulative - claimed` and knows better.
+   *
+   * The two errors point in opposite directions, which is why neither shows up
+   * as an obviously broken page.
+   */
   private async handleRewardVaultLog(tx: Transaction, log: Log, timestamp: number): Promise<void> {
     const decoded = tryDecode(holderRewardVaultAbi, log);
-    if (decoded?.eventName !== "Funded") return;
+    if (decoded === null) return;
 
     const a = decoded.args as Record<string, unknown>;
-
     const { blockNumber, logIndex } = this.positionOf(log);
 
-    await recordStockbackFunding(tx, {
-      blockNumber,
-      logIndex,
-      market: String(a.market).toLowerCase(),
-      amount: a.amount as bigint,
-      totalFunded: a.totalFunded as bigint,
-      timestamp,
-    });
+    const market = a.market === undefined ? null : String(a.market).toLowerCase();
+
+    // Every row here references `markets`. A vault shared with another
+    // deployment would violate the foreign key inside the advance transaction
+    // and stop ingestion, so an unknown market is skipped rather than thrown.
+    if (market !== null && !this.isKnownMarket(market)) return;
+
+    switch (decoded.eventName) {
+      case "Funded":
+        return recordStockbackFunding(tx, {
+          blockNumber,
+          logIndex,
+          market: market as string,
+          amount: a.amount as bigint,
+          totalFunded: a.totalFunded as bigint,
+          timestamp,
+        });
+
+      case "CommitmentSubmitted":
+        return recordCommitmentSubmitted(tx, {
+          market: market as string,
+          merkleRoot: String(a.merkleRoot),
+          totalCumulative: a.totalCumulative as bigint,
+          submitter: String(a.submitter).toLowerCase(),
+          activeAt: Number(a.activeAt as bigint),
+          blockNumber,
+        });
+
+      case "CommitmentActivated":
+        return markCommitmentActivated(
+          tx,
+          market as string,
+          String(a.merkleRoot),
+          blockNumber,
+        );
+
+      case "PendingCommitmentCancelled":
+        return markCommitmentCancelled(
+          tx,
+          market as string,
+          String(a.merkleRoot),
+          blockNumber,
+        );
+
+      case "Claimed":
+        return recordClaim(tx, {
+          blockNumber,
+          logIndex,
+          market: market as string,
+          account: String(a.account).toLowerCase(),
+          amount: a.amount as bigint,
+          cumulative: a.cumulative as bigint,
+          timestamp,
+        });
+
+      default:
+        // Attestor and governance changes are the vault's administration, not
+        // its accounting. They are deliberately not projected: nothing in the
+        // product reads them, and a table nobody reads is a table nobody
+        // notices going wrong.
+        return;
+    }
+  }
+
+  /** Committed, or staged earlier in this same transaction. */
+  private isKnownMarket(market: string): boolean {
+    return (
+      this.knownMarkets.has(market) || this.pendingMarkets.some((m) => m.market === market)
+    );
   }
 
   // -------------------------------------------------------------------------
