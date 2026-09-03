@@ -208,6 +208,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/database
 
+  tests/e2e:
+    dependencies:
+      '@sent/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@sent/indexer':
+        specifier: workspace:*
+        version: link:../../services/indexer
+      viem:
+        specifier: ^2.56.3
+        version: 2.56.3(typescript@5.9.3)
+
   tests/integration:
     dependencies:
       '@sent/database':

@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Reorg-safe HyperEVM event ingestion. Produces the projection per Masterplan 138.",
+  "exports": {
+    ".": "./src/ingest.ts"
+  },
   "dependencies": {
     "viem": "^2.56.3",
     "@sent/database": "workspace:*",

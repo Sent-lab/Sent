@@ -51,7 +51,13 @@ import {
   type Transaction,
 } from "@sent/database";
 import { scheduleForRange } from "@sent/worker";
-import { launchpadFactoryAbi, launchMarketAbi, launchTokenAbi, holderRewardVaultAbi } from "@sent/contracts";
+import {
+  launchpadFactoryAbi,
+  launchMarketAbi,
+  launchTokenAbi,
+  holderRewardVaultAbi,
+  xStockRegistryAbi,
+} from "@sent/contracts";
 
 import { ChainTracker, type BlockRef } from "./reorg.ts";
 
@@ -148,6 +154,9 @@ export class Indexer {
         await this.tick();
         this.connected = true;
       } catch (error) {
+        // Anything staged during the failed transaction is discarded with it.
+        this.pendingMarkets = [];
+
         // A failed tick is not fatal: the cursor has not moved, so the next tick
         // retries the same range. Marking the connection down is what makes the
         // API report DELAYED rather than serving stale data as live (§211).
@@ -210,11 +219,88 @@ export class Indexer {
       throw new Error(`[indexer] unexpected gap ${decision.from}..${decision.to}`);
     }
 
-    const logs = await this.client.getLogs({
+    /*
+     * A market launched in this range has trades in this range.
+     *
+     * `getLogs` filters by address, and a market's address is only known once
+     * its launch log has been read — so the first query for a range that
+     * contains a launch cannot ask for that market's own events. Everything the
+     * market emitted in the same range was silently absent.
+     *
+     * On a real chain with a 500-block batch that is the first several minutes
+     * of every market's life, which is exactly when most of its activity
+     * happens, and nothing would ever have reported it: the projection would
+     * simply be missing trades that the chain has.
+     *
+     * So the range is re-queried for addresses that became known while reading
+     * it, until nothing new appears. The loop is bounded because a market cannot
+     * launch another market — one extra pass is the normal case.
+     */
+    let logs = await this.client.getLogs({
       address: [this.config.factory, this.config.rewardVault, ...this.marketAddresses()],
       fromBlock: from,
       toBlock: to,
     });
+
+    const seen = new Set(this.marketAddresses().map((a) => a.toLowerCase()));
+
+    for (let pass = 0; pass < 4; pass++) {
+      const launched = this.launchedAddressesIn(logs).filter((a) => !seen.has(a.toLowerCase()));
+      if (launched.length === 0) break;
+
+      for (const address of launched) seen.add(address.toLowerCase());
+
+      const extra = await this.client.getLogs({
+        address: launched as `0x${string}`[],
+        fromBlock: from,
+        toBlock: to,
+      });
+
+      logs = [...logs, ...extra];
+    }
+
+    const ordered = [...logs].sort((a, b) => {
+      const blockDelta = (a.blockNumber ?? 0n) - (b.blockNumber ?? 0n);
+      if (blockDelta !== 0n) return blockDelta < 0n ? -1 : 1;
+      return (a.logIndex ?? 0) - (b.logIndex ?? 0);
+    });
+
+    /*
+     * Fetch a header for every block that produced a log.
+     *
+     * Two things depend on this and both were wrong when only the range's first
+     * block was recorded.
+     *
+     * The schema: every derived row carries `block_number REFERENCES blocks`,
+     * because that foreign key is what makes a reorg rollback a DELETE rather
+     * than a hand-written cascade. With a 500-block range and one block
+     * recorded, 499 blocks' worth of inserts violated it and the tick failed —
+     * so the cursor never advanced and indexing stopped at the first range
+     * containing an event outside its own first block.
+     *
+     * The data: an event's timestamp is its OWN block's. Stamping every log in a
+     * range with the range-start timestamp puts trades in the wrong candle and,
+     * far worse, in the wrong TWAB epoch — Stockback integrates holder balances
+     * over time, so a shifted timestamp is a shifted entitlement.
+     *
+     * Fetched outside the transaction: a network round trip inside one holds it
+     * open for the duration.
+     */
+    const blockNumbers = [
+      ...new Set(ordered.map((log) => log.blockNumber).filter((n): n is bigint => n !== null)),
+    ];
+
+    const headers = new Map<bigint, { hash: string; parentHash: string; timestamp: bigint }>();
+
+    for (const number of blockNumbers) {
+      if (number === first.number) continue;
+      const block = await this.client.getBlock({ blockNumber: number });
+      headers.set(number, {
+        hash: block.hash ?? "0x00",
+        parentHash: block.parentHash,
+        timestamp: block.timestamp,
+      });
+    }
 
     // Everything in this range lands together with the cursor. §138's rebuildable
     // projection is only true if a crash cannot leave them disagreeing.
@@ -226,18 +312,47 @@ export class Indexer {
         timestamp: first.timestamp,
       });
 
-      const ordered = [...logs].sort((a, b) => {
-        const blockDelta = (a.blockNumber ?? 0n) - (b.blockNumber ?? 0n);
-        if (blockDelta !== 0n) return blockDelta < 0n ? -1 : 1;
-        return (a.logIndex ?? 0) - (b.logIndex ?? 0);
-      });
+      // Recorded before any row that references them.
+      for (const [number, header] of headers) {
+        await recordBlock(tx, { number, ...header });
+      }
 
       // Markets whose state changed in this range, collected as the logs are
       // handled so the follow-up work can be scheduled without a second pass.
       const touched = new Set<string>();
 
-      for (const log of ordered) {
-        await this.handleLog(tx, log, Number(first.timestamp), touched);
+      /*
+       * Launches first, then everything else.
+       *
+       * A token's genesis transfers — mint to the factory, forward to the market
+       * — are emitted BEFORE `TokenLaunched` in the same transaction, because the
+       * token is constructed before the factory can announce it. Processing in
+       * strict log order therefore reaches those transfers while the market does
+       * not exist yet, and they were silently dropped: the market's opening
+       * balance of the entire supply was never recorded, and the first buy drove
+       * it negative against the schema's own check constraint.
+       *
+       * Splitting the pass fixes the dependency without reordering anything that
+       * matters. Both halves keep chain order internally, and a launch cannot
+       * depend on a trade — a market has to exist before it can emit.
+       */
+      const factory = this.config.factory.toLowerCase();
+      const launches = ordered.filter((log) => log.address.toLowerCase() === factory);
+      const rest = ordered.filter((log) => log.address.toLowerCase() !== factory);
+
+      const timestampFor = (log: Log): number =>
+        Number(
+          log.blockNumber === first.number || log.blockNumber === null
+            ? first.timestamp
+            : (headers.get(log.blockNumber)?.timestamp ?? first.timestamp),
+        );
+
+      for (const log of launches) {
+        await this.handleLog(tx, log, timestampFor(log), touched);
+      }
+
+      for (const log of rest) {
+        await this.handleLog(tx, log, timestampFor(log), touched);
       }
 
       // Derived work — candles, holder reconciliation — is enqueued in the SAME
@@ -267,6 +382,16 @@ export class Indexer {
       const settled = this.tracker.finalizedBelow(this.config.confirmations);
       if (settled !== undefined) await markFinalized(tx, settled);
     });
+
+    // The transaction committed, so the in-memory view may now match it.
+    for (const entry of this.pendingMarkets) {
+      this.knownMarkets.set(entry.market, {
+        token: entry.token,
+        quoteDecimals: entry.quoteDecimals,
+      });
+      this.tokenToMarket.set(entry.token, entry.market);
+    }
+    this.pendingMarkets = [];
 
     this.tracker.commit(ref);
     this.indexedBlock = to;
@@ -324,17 +449,27 @@ export class Indexer {
     if (address === this.config.rewardVault.toLowerCase()) {
       return this.handleRewardVaultLog(tx, log, blockTimestamp);
     }
-    if (this.knownMarkets.has(address)) {
+    // Both committed markets and ones staged earlier in THIS transaction. A
+    // market launched and traded in the same range emits its first trades before
+    // the commit that registers it, and routing on committed state alone would
+    // fetch those logs and then drop them.
+    if (this.knownMarkets.has(address) || this.pendingMarkets.some((m) => m.market === address)) {
       touched.add(address);
       return this.handleMarketLog(tx, log, blockTimestamp);
     }
-    if (this.tokenToMarket.has(address)) {
+
+    const market = this.marketForToken(address);
+    if (market !== undefined) {
       // A token transfer changes balances, so the market it belongs to needs
       // reconciling even though the market contract emitted nothing.
-      const market = this.tokenToMarket.get(address);
-      if (market !== undefined) touched.add(market);
+      touched.add(market);
       return this.handleTokenLog(tx, log, blockTimestamp);
     }
+  }
+
+  /** The market a token belongs to, committed or staged in this transaction. */
+  private marketForToken(token: string): string | undefined {
+    return this.tokenToMarket.get(token) ?? this.pendingMarkets.find((m) => m.token === token)?.market;
   }
 
   private async handleFactoryLog(tx: Transaction, log: Log, timestamp: number): Promise<void> {
@@ -345,7 +480,14 @@ export class Indexer {
 
     const token = String(a.token).toLowerCase() as `0x${string}`;
     const market = String(a.market).toLowerCase() as `0x${string}`;
+    const quoteAsset = String(a.quoteAsset).toLowerCase() as `0x${string}`;
     const p0 = a.p0 as bigint;
+
+    // From the REGISTRY, never assumed and never read from the token itself
+    // (§699). This was hardcoded to eighteen, which silently scaled every price
+    // and notional in the projection by 10^12 for a six-decimal xStock — and
+    // xStocks are not eighteen-decimal assets.
+    const quoteDecimals = await this.quoteDecimalsOf(quoteAsset);
 
     // qG is a pure fraction of supply and identical for every pair, so it is
     // derived rather than read — one less value that can disagree with the chain.
@@ -355,8 +497,8 @@ export class Indexer {
       token,
       market,
       creator: String(a.creator).toLowerCase() as `0x${string}`,
-      quoteAsset: String(a.quoteAsset).toLowerCase() as `0x${string}`,
-      quoteDecimals: 18,
+      quoteAsset,
+      quoteDecimals,
       name: String(a.name),
       symbol: String(a.symbol),
       p0,
@@ -366,8 +508,12 @@ export class Indexer {
       launchedAtBlock: log.blockNumber ?? 0n,
     });
 
-    this.knownMarkets.set(market, { token, quoteDecimals: 18 });
-    this.tokenToMarket.set(token, market);
+    // Staged, NOT applied. This runs inside the advance transaction, and a
+    // transaction that rolls back must not leave the in-memory map claiming a
+    // market the database does not have — the next tick would then treat the
+    // token's transfers as belonging to a known market, and every insert would
+    // fail the foreign key, forever. Applied by `advance` once the commit lands.
+    this.pendingMarkets.push({ market, token, quoteDecimals });
   }
 
   private async handleMarketLog(tx: Transaction, log: Log, timestamp: number): Promise<void> {
@@ -466,7 +612,7 @@ export class Indexer {
     if (decoded?.eventName !== "Transfer") return;
 
     const a = decoded.args as Record<string, unknown>;
-    const market = this.tokenToMarket.get(log.address.toLowerCase());
+    const market = this.marketForToken(log.address.toLowerCase());
     if (market === undefined) return;
 
     const from = String(a.from).toLowerCase();
@@ -518,6 +664,66 @@ export class Indexer {
   }
 
   // -------------------------------------------------------------------------
+
+  /**
+   * Market and token addresses announced by launch logs in a batch.
+   *
+   * Decoded rather than pattern-matched: a `TokenLaunched` topic is the only
+   * thing that makes an address a market, and reading it from the event is what
+   * keeps §4's "authenticity comes from the factory" true inside the indexer as
+   * well as inside the UI.
+   */
+  /**
+   * Decimals for a quote asset, from the registry.
+   *
+   * Cached: the value is immutable once an asset is registered, and a launch is
+   * rare enough that one call per new asset costs nothing.
+   *
+   * A registry that cannot answer is fatal rather than defaulted. Guessing
+   * eighteen is what produced the bug this replaces, and a wrong scale is
+   * indistinguishable from a real number once it is in the database.
+   */
+  private async quoteDecimalsOf(asset: `0x${string}`): Promise<number> {
+    const cached = this.quoteDecimalsCache.get(asset);
+    if (cached !== undefined) return cached;
+
+    const registry = (await this.client.readContract({
+      address: this.config.factory,
+      abi: launchpadFactoryAbi,
+      functionName: "REGISTRY",
+    })) as `0x${string}`;
+
+    const record = (await this.client.readContract({
+      address: registry,
+      abi: xStockRegistryAbi,
+      functionName: "getAsset",
+      args: [asset],
+    })) as { decimals: number };
+
+    this.quoteDecimalsCache.set(asset, record.decimals);
+    return record.decimals;
+  }
+
+  private readonly quoteDecimalsCache = new Map<string, number>();
+
+  /** Markets discovered in the current transaction, applied only on commit. */
+  private pendingMarkets: { market: string; token: string; quoteDecimals: number }[] = [];
+
+  private launchedAddressesIn(logs: readonly Log[]): string[] {
+    const found: string[] = [];
+
+    for (const log of logs) {
+      if (log.address.toLowerCase() !== this.config.factory.toLowerCase()) continue;
+
+      const decoded = tryDecode(launchpadFactoryAbi, log);
+      if (decoded?.eventName !== "TokenLaunched") continue;
+
+      const args = decoded.args as Record<string, unknown>;
+      found.push(String(args.market).toLowerCase(), String(args.token).toLowerCase());
+    }
+
+    return found;
+  }
 
   private marketAddresses(): `0x${string}`[] {
     return [...this.knownMarkets.keys(), ...this.tokenToMarket.keys()] as `0x${string}`[];

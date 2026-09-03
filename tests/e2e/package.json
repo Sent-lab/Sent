@@ -1,0 +1,15 @@
+{
+  "name": "@sent/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Full stack against a real chain: contracts, indexer, projection.",
+  "dependencies": {
+    "@sent/database": "workspace:*",
+    "@sent/indexer": "workspace:*",
+    "viem": "^2.56.3"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types stack.ts"
+  }
+}
