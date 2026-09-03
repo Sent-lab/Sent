@@ -22,6 +22,10 @@
 
 import Fastify, { type FastifyInstance } from "fastify";
 
+import { createLogger } from "@sent/observability/logger";
+
+import { randomUUID } from "node:crypto";
+
 import { Database } from "@sent/database";
 
 import {
@@ -41,11 +45,20 @@ import {
   type ExploreOptions,
 } from "./handlers.ts";
 import { PostgresPort, type PortConfig } from "./port.ts";
+import {
+  createApiRegistry,
+  routeLabel,
+  statusClass,
+  REQUEST_SECONDS,
+  REQUESTS_TOTAL,
+} from "./observability.ts";
 
 export interface ServerConfig extends PortConfig {
   readonly port: number;
   readonly host: string;
   readonly chainId: number;
+  /** Structured log threshold (§437). Defaults to info. */
+  readonly logLevel?: "debug" | "info" | "warn" | "error";
   /** How often the freshness snapshot is refreshed, in ms. */
   readonly refreshIntervalMs: number;
   /**
@@ -77,6 +90,75 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
   await port.refresh();
 
   const app = Fastify({ logger: false });
+
+  /*
+   * §437: structured logs and metrics.
+   *
+   * Fastify's own logger is off because its output is Pino's shape rather than
+   * this project's, and two log formats from one process is one format too
+   * many for anything downstream to parse.
+   */
+  const log = createLogger({ service: "api", level: config.logLevel ?? "info" });
+
+  const metrics = createApiRegistry({
+    lagBlocks: () => {
+      const head = port.headBlock();
+      const indexed = port.indexedBlock();
+      // Null rather than zero when the head is unknown: a lag gauge reading
+      // zero during an RPC outage is the reassuring answer, and it is wrong.
+      if (head === 0n) return null;
+      return Number(head > indexed ? head - indexed : 0n);
+    },
+    chainConnected: () => port.chainConnected(),
+    serving: () => handleHealth(port).data.serving,
+  });
+
+  /*
+   * One request id, generated here and carried everywhere.
+   *
+   * §437 lists requestId first among the correlation fields. It is echoed in
+   * the response header so a user reporting a problem can quote the identifier
+   * that finds their exact request in the logs — which is the entire point of
+   * having one.
+   */
+  app.addHook("onRequest", async (request, reply) => {
+    const id = request.headers["x-request-id"];
+    const requestId =
+      typeof id === "string" && id.length > 0 && id.length <= 128 ? id : randomUUID();
+
+    (request as { sentRequestId?: string; sentStartedAt?: bigint }).sentRequestId = requestId;
+    (request as { sentStartedAt?: bigint }).sentStartedAt = process.hrtime.bigint();
+
+    reply.header("x-request-id", requestId);
+  });
+
+  app.addHook("onResponse", async (request, reply) => {
+    const started = (request as { sentStartedAt?: bigint }).sentStartedAt;
+    const route = routeLabel(request.url);
+    const status = reply.statusCode;
+
+    if (started !== undefined) {
+      metrics.observe(REQUEST_SECONDS, Number(process.hrtime.bigint() - started) / 1e9, {
+        route,
+        status: statusClass(status),
+      });
+    }
+
+    metrics.increment(REQUESTS_TOTAL, { route, status: statusClass(status) });
+
+    // Only failures are logged per request. A line per successful read at this
+    // volume is noise that buries the lines that matter, and the histogram
+    // already carries what a healthy request contributes.
+    if (status >= 500) {
+      log.error("request failed", {
+        requestId: (request as { sentRequestId?: string }).sentRequestId,
+        chainId: config.chainId,
+        route,
+        status,
+        method: request.method,
+      });
+    }
+  });
 
   // Fastify's default JSON serialiser cannot handle BigInt, so it is replaced
   // once here rather than every route remembering to convert.
@@ -382,6 +464,21 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
 
   await app.register(routes, { prefix: "/v1" });
   await app.register(routes);
+
+  /*
+   * Scrape endpoint, deliberately outside the versioned API.
+   *
+   * /metrics is an operational surface, not a product one: it has no freshness
+   * envelope, no JSON shape and no compatibility promise to clients. Versioning
+   * it would imply all three. It also stays off the /v1 prefix so a scrape
+   * config never has to be updated when the API version moves.
+   */
+  app.get("/metrics", async (_request, reply) => {
+    return reply
+      .code(200)
+      .header("content-type", "text/plain; version=0.0.4; charset=utf-8")
+      .send(metrics.render());
+  });
 
   return app;
 }

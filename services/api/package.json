@@ -21,6 +21,7 @@
     "@sent/economics": "workspace:*",
     "@sent/database": "workspace:*",
     "@sent/contracts": "workspace:*",
-    "@sent/config": "workspace:*"
+    "@sent/config": "workspace:*",
+    "@sent/observability": "workspace:*"
   }
 }

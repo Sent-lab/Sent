@@ -1610,6 +1610,40 @@ try {
     // what remains is dust and unattested funding — never negative.
     check("outstanding is never negative", BigInt(String(status?.outstanding)) >= 0n);
 
+    /*
+     * §437's scrape surface.
+     *
+     * Deliberately outside /v1: /metrics is operational, not a product API. It
+     * has no freshness envelope, no JSON shape and no compatibility promise,
+     * and versioning it would imply all three.
+     */
+    const metrics = await app.inject({ method: "GET", url: "/metrics" });
+    check("the API exposes metrics", metrics.statusCode === 200);
+    check(
+      "in the Prometheus text format",
+      metrics.headers["content-type"]?.toString().startsWith("text/plain") === true,
+    );
+    check("with request latency", metrics.body.includes("sent_api_request_seconds"));
+    check("and indexer lag", metrics.body.includes("sent_api_indexer_lag_blocks"));
+
+    /*
+     * Routes are collapsed to their shape before becoming a label.
+     *
+     * Without it every token address is its own time series, and a metrics
+     * store with one series per market falls over on the day the product
+     * succeeds. It also puts user-supplied strings into label values, which is
+     * a cardinality bomb with a search box attached.
+     */
+    check(
+      "routes are collapsed, not one series per market",
+      metrics.body.includes("/markets/:address") && !metrics.body.includes(token.toLowerCase()),
+    );
+
+    // §437 lists requestId first among the correlation fields, and it is echoed
+    // so a user reporting a problem can quote the one that finds their request.
+    const echoed = await app.inject({ method: "GET", url: "/health" });
+    check("every response carries a request id", typeof echoed.headers["x-request-id"] === "string");
+
     const health = await get("/health");
     check("health answers", health.status === 200 || health.status === 503);
     check("with a freshness envelope", health.body.freshness !== undefined);
