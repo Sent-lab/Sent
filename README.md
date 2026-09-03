@@ -194,10 +194,10 @@ asserted:
 
 ## Where the bugs have actually been
 
-Fifteen defects were found and fixed during the build, and none of them was
-caught by a unit test. They fell into two shapes — a seam between two components
-that were each individually correct, and a placeholder that outlived the reason
-it was written.
+Sixteen defects were found and fixed during the build, and none of them was
+caught by a unit test. They fell into three shapes — a seam between two
+components that were each individually correct, a placeholder that outlived the
+reason it was written, and code that was correct but quadratic.
 
 [`docs/REVIEW-NOTES.md`](docs/REVIEW-NOTES.md) lists every one of them and what
 the pattern implies for reviewing this codebase. It is the first thing worth

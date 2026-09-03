@@ -3,7 +3,7 @@
 Where the defects in this codebase have actually been, written down so the next
 person reviewing it looks in the right places rather than the obvious ones.
 
-Fifteen defects were found and fixed during the build. **None of them was found
+Sixteen defects were found and fixed during the build. **None of them was found
 by a unit test.** Every one came from running real components against each
 other. That is not an argument against the unit tests — they are what makes the
 pure cores trustworthy, and several of them caught real errors during
@@ -13,7 +13,7 @@ development. It is an argument about where the *remaining* risk sits.
 
 ## Shape 1 — the seam
 
-Thirteen of the fifteen lived between two components that were each correct, and
+Thirteen of the sixteen lived between two components that were each correct, and
 each individually tested.
 
 | Where | What it did |
@@ -71,6 +71,35 @@ comment said the Stockback service did not exist yet. It did by then.
 
 ---
 
+## Shape 3 — correct, but not at scale
+
+One so far, and it is the reason `tests/load/scale.ts` exists.
+
+`getProof` rebuilds the entire Merkle tree from its leaves on every call and
+finds the leaf by scanning. That is fine for the handful of holders every test
+had ever given it. `Finalizer.persist` called it once per holder, inside the
+transaction that writes the dataset — so at 2,500 holders it took 69.7 seconds
+and held a write transaction open the whole time. Nothing was wrong with the
+answer. It would simply have looked like a hung service in production.
+
+`getAllProofs` builds the levels once: 30ms for the same set, and the surrounding
+`recordDataset` went from 69,716ms to 339ms.
+
+**What to do about it.** The question to ask of anything that loops over holders,
+trades, epochs or blocks is not "is it correct" but "what is it doing per item,
+and does that item count grow". Three places in this system have a natural
+unbounded dimension:
+
+- holders per market — Merkle proofs, entitlement inserts, TWAB weights
+- epochs since launch — the finalizer folds ALL of them on every run, by design
+- blocks per range — the indexer's catch-up path after any downtime
+
+`tests/load/scale.ts` covers the first two. The third is covered by the reorg
+and catch-up paths in the e2e, though not at a size that would expose a
+quadratic.
+
+---
+
 ## What is deliberately not implemented
 
 These are not placeholders. They are recorded refusals, and each names the
@@ -92,5 +121,7 @@ and `assertProductionConfigReady` enforces that at startup on chain 999.
 Stated so it is not mistaken for covered:
 
 - the connected-wallet path against a real browser extension
-- load and performance characteristics under concurrency
+- concurrency: nothing here has been run with several indexers, workers or API
+  replicas at once. The job queue claims with `FOR UPDATE SKIP LOCKED` and the
+  finalizer is idempotent by construction, but neither has been contended.
 - anything requiring the external facts above
