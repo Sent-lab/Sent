@@ -49,8 +49,19 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { Database, migrate, loadMigrations, getMarketByToken, listTrades } from "@sent/database";
+import {
+  Database,
+  migrate,
+  loadMigrations,
+  getMarketByToken,
+  listTrades,
+  finalizedHead,
+  getLatestDataset,
+  getEntitlementForRoot,
+} from "@sent/database";
 import { Indexer, DEFAULT_CONFIG } from "@sent/indexer";
+import { Finalizer } from "@sent/finalizer";
+import { encodeLeaf, verifyProof } from "@sent/stockback/merkle";
 
 const RPC_URL = process.env.RPC_URL;
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -305,7 +316,17 @@ try {
   await send(quote, quoteAbi, "mint", [account.address, ONE_QUOTE * 10_000n]);
   await send(quote, quoteAbi, "approve", [market, ONE_QUOTE * 10_000n]);
 
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 3_600);
+  /*
+   * From the CHAIN's clock, not this machine's.
+   *
+   * A deadline is enforced against `block.timestamp`, and a test that warps time
+   * forward leaves the node's clock ahead of the local one — so a deadline
+   * derived from `Date.now()` is already expired before the first trade. Reading
+   * it from the chain is both robust and what the contract actually compares
+   * against.
+   */
+  const now = (await publicClient.getBlock({ blockTag: "latest" })).timestamp;
+  const deadline = now + 86_400n;
 
   await send(market, marketAbi, "buy", [ONE_QUOTE * 100n, 0n, deadline]);
   await send(market, marketAbi, "buy", [ONE_QUOTE * 50n, 0n, deadline]);
@@ -591,6 +612,118 @@ try {
           "matching the chain exactly",
           BigInt(graduated.graduatedAt ?? 0) === gradBlock.timestamp,
         );
+
+        // --- Stockback ---------------------------------------------------
+
+        section("Distributing Stockback from real funding");
+
+        /*
+         * The last seam, and the one that decides who gets paid.
+         *
+         * Every trade above funded the reward vault, and those `Funded` events
+         * are already in the projection. What has never been exercised is the
+         * step after: the finalizer reading real indexed funding and real
+         * balance history, and producing a commitment whose proofs actually
+         * verify against its own root.
+         *
+         * Time is moved forward two days because an epoch has to CLOSE before it
+         * can be distributed (§334). Warping the chain rather than adjusting the
+         * finalizer's thresholds keeps the test honest: the boundary logic under
+         * test is the real one.
+         */
+        const funding = await db.query<{ c: string; total: string }>(
+          "SELECT COUNT(*)::TEXT AS c, COALESCE(SUM(amount), 0)::TEXT AS total FROM stockback_funding",
+        );
+
+        check("trades funded the reward vault", Number(funding[0]?.c ?? "0") > 0);
+        check("with a non-zero total", BigInt(funding[0]?.total ?? "0") > 0n);
+
+        await publicClient.request({
+          method: "evm_increaseTime" as never,
+          params: [2 * 86_400] as never,
+        });
+        await publicClient.request({ method: "evm_mine" as never, params: [] as never });
+
+        const warped = await publicClient.getBlock({ blockTag: "latest" });
+        check(
+          "the chain clock really moved past an epoch boundary",
+          warped.timestamp > gradBlock.timestamp + 86_400n,
+        );
+
+        // Index the warped block so the settled head carries the later timestamp.
+        await indexer.start();
+
+        const settled = await waitFor(async () => {
+          const head = await finalizedHead(db);
+          return head !== null && BigInt(head.timestamp) >= warped.timestamp ? head : null;
+        });
+
+        indexer.stop();
+
+        // Asserted rather than assumed. Proceeding with a stale head would make
+        // the finalizer report "no closed epoch" and look like a finalizer bug.
+        check("the settled head advanced with the chain", settled !== null);
+
+        const finalizer = new Finalizer(db, {
+          settlementMarginSeconds: 60,
+          runIntervalMs: 1_000,
+        });
+
+        const written = await finalizer.runOnce();
+        check("the finalizer produced a dataset", written > 0);
+
+        const dataset = await getLatestDataset(db, market);
+        check("and stored it", dataset !== null);
+
+        if (dataset !== null) {
+          // §364. The vault would reject a commitment above its funding, and a
+          // rejected commitment is an outage that looks like theft.
+          check(
+            "the commitment stays within what was funded",
+            dataset.totalCumulative <= BigInt(funding[0]?.total ?? "0"),
+          );
+
+          check("something was actually distributed", dataset.totalCumulative > 0n);
+
+          const entitlement = await getEntitlementForRoot(
+            db,
+            market,
+            account.address,
+            dataset.merkleRoot,
+          );
+
+          check("the trader earned an entitlement", entitlement !== null);
+
+          if (entitlement !== null) {
+            /*
+             * The assertion this whole phase exists for.
+             *
+             * A proof that does not verify against its own root is calldata that
+             * reverts at the vault — the holder sees a balance they cannot
+             * claim, and nothing upstream would have noticed. Checked with the
+             * canonical verifier, the same one the contract mirrors.
+             */
+            const leaf = encodeLeaf(account.address, entitlement.cumulative);
+
+            check(
+              "the stored proof verifies against the stored root",
+              verifyProof(dataset.merkleRoot, leaf, entitlement.proof),
+            );
+
+            // A proof must not verify for a different amount. Without this the
+            // check above would pass for a tree that ignored its leaves.
+            check(
+              "and does not verify for a different amount",
+              !verifyProof(
+                dataset.merkleRoot,
+                encodeLeaf(account.address, entitlement.cumulative + 1n),
+                entitlement.proof,
+              ),
+            );
+
+            check("the entitlement is positive", entitlement.cumulative > 0n);
+          }
+        }
 
         // A graduated market must refuse further curve trades. If the projection
         // says GRADUATED while the market still fills on the curve, one of them

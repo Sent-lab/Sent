@@ -437,11 +437,22 @@ export class Indexer {
       // Inside the same transaction as the cursor: a block marked settled while
       // the cursor stayed behind would let the finalizer act on a range this
       // indexer has not committed to.
-      // `undefined` while the chain is shallower than the confirmation depth —
-      // early on a fresh chain, or right after a full reindex. Nothing is settled
-      // yet, and marking anything would be a claim the tracker has not made.
-      const settled = this.tracker.finalizedBelow(this.config.confirmations);
-      if (settled !== undefined) await markFinalized(tx, settled);
+      /*
+       * Settlement follows the CURSOR, not the tracker's window.
+       *
+       * This range is being committed, so everything at or below
+       * `to - confirmations` is now buried by at least that many blocks. Reading
+       * the boundary from the tracker instead was wrong by exactly one range:
+       * the tracker is only advanced after this transaction commits, so it still
+       * described the previous range and the newest block was never marked
+       * settled until another one arrived behind it.
+       *
+       * With a non-zero confirmation depth that lag is invisible. At zero it
+       * means the tip is never settled at all, and anything waiting on settled
+       * state — Stockback finalization above all — simply never runs.
+       */
+      const settled = to - BigInt(this.config.confirmations);
+      if (settled > 0n) await markFinalized(tx, settled);
     });
 
     /*
@@ -713,12 +724,26 @@ export class Indexer {
     const blockNumber = log.blockNumber ?? 0n;
     const logIndex = log.logIndex ?? 0;
 
-    // Both sides are recorded. A transfer moves exposure rather than creating it,
-    // and the integral needs both boundaries or the seam leaks weight.
+    /*
+     * Both sides are recorded. A transfer moves exposure rather than creating it,
+     * and the integral needs both boundaries or the seam leaks weight.
+     *
+     * The stored index is `logIndex * 2` for the debit and `+ 1` for the credit,
+     * which keeps the pair distinct AND keeps the whole block in chronological
+     * order.
+     *
+     * The previous scheme offset the credit by a million to avoid a primary key
+     * collision, and that silently reordered every block with more than one
+     * transfer: log 0's credit sorted after log 3's debit. A token's genesis is
+     * exactly that shape — mint to the factory, then forward to the market — so
+     * the factory appeared to spend a billion tokens before receiving them, the
+     * running balance went negative, and the TWAB engine refused the stream as
+     * corrupt. Correctly: Stockback simply stopped for that market.
+     */
     if (from !== ZERO) {
       await insertBalanceEvent(tx, {
         blockNumber,
-        logIndex,
+        logIndex: logIndex * 2,
         market,
         account: from,
         delta: -value,
@@ -728,7 +753,7 @@ export class Indexer {
     if (to !== ZERO) {
       await insertBalanceEvent(tx, {
         blockNumber,
-        logIndex: logIndex + 1_000_000, // keep the pair distinct under the PK
+        logIndex: logIndex * 2 + 1,
         market,
         account: to,
         delta: value,

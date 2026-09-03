@@ -7,7 +7,9 @@
   "dependencies": {
     "@sent/database": "workspace:*",
     "@sent/indexer": "workspace:*",
-    "viem": "^2.56.3"
+    "viem": "^2.56.3",
+    "@sent/finalizer": "workspace:*",
+    "@sent/stockback": "workspace:*"
   },
   "scripts": {
     "test": "node --experimental-strip-types stack.ts"

@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Computes Stockback distributions from settled chain state. Proposes, never signs (Masterplan 594/597).",
+  "exports": {
+    ".": "./src/finalizer.ts"
+  },
   "dependencies": {
     "@sent/database": "workspace:*",
     "@sent/stockback": "workspace:*",
