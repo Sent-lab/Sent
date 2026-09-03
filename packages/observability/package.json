@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./logger": "./src/logger.ts",
-    "./metrics": "./src/metrics.ts"
+    "./metrics": "./src/metrics.ts",
+    "./server": "./src/server.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

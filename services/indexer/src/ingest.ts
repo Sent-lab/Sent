@@ -71,6 +71,20 @@ import {
 } from "@sent/contracts";
 
 import { toNormalized } from "@sent/sdk";
+import { createLogger, type Logger } from "@sent/observability/logger";
+import type { Registry } from "@sent/observability/metrics";
+
+import {
+  createIndexerRegistry,
+  TICKS_TOTAL,
+  TICK_SECONDS,
+  RANGE_SECONDS,
+  LOGS_TOTAL,
+  EVENTS_TOTAL,
+  REORGS_TOTAL,
+  REINDEXES_TOTAL,
+  RPC_FAILURES,
+} from "./observability.ts";
 
 import { ChainTracker, type BlockRef } from "./reorg.ts";
 
@@ -151,10 +165,32 @@ export class Indexer {
   private reorgsHandled = 0;
   private reindexesRequired = 0;
 
+  /**
+   * The chain timestamp of the newest block written.
+   *
+   * Kept in memory because it answers §146's "event delay", which is a
+   * different question from lag: on a chain that has stopped producing blocks
+   * lag is zero and stays zero — the indexer is caught up with a chain that is
+   * not moving — and only this number grows.
+   */
+  private newestBlockTimestamp: number | null = null;
+
+  private readonly log: Logger;
+  readonly metrics: Registry;
+
   constructor(db: Database, config: IndexerConfig) {
     this.db = db;
     this.config = config;
     this.tracker = new ChainTracker(config.reorgDepth);
+
+    this.log = createLogger({ service: "indexer" }).child({ chainId: config.chainId });
+
+    this.metrics = createIndexerRegistry({
+      headBlock: () => this.headBlock,
+      indexedBlock: () => this.indexedBlock,
+      connected: () => this.connected,
+      newestBlockTimestamp: () => this.newestBlockTimestamp,
+    });
 
     this.client = createPublicClient({
       transport: config.wsUrl !== undefined ? webSocket(config.wsUrl) : http(config.rpcUrl),
@@ -195,9 +231,14 @@ export class Indexer {
 
   private async loop(): Promise<void> {
     while (this.running) {
+      const started = process.hrtime.bigint();
+
       try {
         await this.tick();
         this.connected = true;
+
+        this.metrics.increment(TICKS_TOTAL, { outcome: "ok" });
+        this.metrics.observe(TICK_SECONDS, seconds(started), { outcome: "ok" });
       } catch (error) {
         // Anything staged during the failed transaction is discarded with it.
         this.pendingMarkets = [];
@@ -206,7 +247,18 @@ export class Indexer {
         // retries the same range. Marking the connection down is what makes the
         // API report DELAYED rather than serving stale data as live (§211).
         this.connected = false;
-        console.error("[indexer] tick failed:", error instanceof Error ? error.message : error);
+
+        this.metrics.increment(TICKS_TOTAL, { outcome: "error" });
+        this.metrics.increment(RPC_FAILURES);
+        // Timed even when it fails: a tick that errors immediately and one that
+        // hangs for a minute are different incidents, and dropping the second
+        // from the histogram hides it entirely.
+        this.metrics.observe(TICK_SECONDS, seconds(started), { outcome: "error" });
+
+        this.log.error("tick failed", {
+          blockNumber: this.indexedBlock,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
 
       await sleep(this.config.pollIntervalMs);
@@ -255,7 +307,11 @@ export class Indexer {
 
       if (decision.action === "reindex_required") {
         this.reindexesRequired += 1;
-        console.error(`[indexer] ${decision.reason}`);
+        this.metrics.increment(REINDEXES_TOTAL);
+        this.log.error("full reindex required", {
+          blockNumber: this.indexedBlock,
+          reason: decision.reason,
+        });
         await this.fullReindex();
         return;
       }
@@ -263,9 +319,10 @@ export class Indexer {
       // A head below the cursor with a matching hash still means rows above it
       // describe blocks that are gone.
       if (this.headBlock < this.indexedBlock) {
-        console.warn(
-          `[indexer] chain head ${this.headBlock} is below the cursor ${this.indexedBlock}; rolling back`,
-        );
+        this.log.warn("chain head is below the cursor; rolling back", {
+          blockNumber: this.indexedBlock,
+          headBlock: this.headBlock,
+        });
         await this.handleReorg(this.headBlock);
       }
 
@@ -308,7 +365,11 @@ export class Indexer {
 
     if (decision.action === "reindex_required") {
       this.reindexesRequired += 1;
-      console.error(`[indexer] ${decision.reason}`);
+      this.metrics.increment(REINDEXES_TOTAL);
+      this.log.error("full reindex required", {
+        blockNumber: this.indexedBlock,
+        reason: decision.reason,
+      });
       await this.fullReindex();
       return false;
     }
@@ -339,6 +400,8 @@ export class Indexer {
     const feeVault = await this.resolveFeeVault();
     const registry = await this.resolveRegistry();
     await this.resolveRouter();
+
+    const rangeStarted = process.hrtime.bigint();
 
     let logs = await this.client.getLogs({
       address: [
@@ -565,12 +628,47 @@ export class Indexer {
     this.pendingMarkets = [];
 
     this.indexedBlock = to;
+
+    /*
+     * §146's event delay, recorded from the block's OWN timestamp.
+     *
+     * Not from the wall clock at write time, which would measure how recently
+     * this process ran rather than how old the data is. On a chain that has
+     * stopped producing blocks the two diverge completely: lag stays at zero
+     * because the indexer is caught up with a chain that is not moving, and
+     * only this number grows.
+     */
+    let newest = first.timestamp;
+    for (const header of headers.values()) {
+      if (header.timestamp > newest) newest = header.timestamp;
+    }
+
+    // Across every header this range recorded, including the range-start block.
+    // `headers` holds only blocks that carried logs, so a quiet range would
+    // otherwise leave this value stale — and a stale event-delay reading is
+    // indistinguishable from a chain that stopped.
+    this.newestBlockTimestamp = Number(newest);
+
+    this.metrics.observe(RANGE_SECONDS, seconds(rangeStarted));
+    this.metrics.increment(LOGS_TOTAL, {}, logs.length);
+
     return true;
   }
 
   private async handleReorg(rollbackPoint: bigint): Promise<void> {
     this.reorgsHandled += 1;
-    console.warn(`[indexer] reorg detected, rolling back to ${rollbackPoint}`);
+
+    // §146's missed-block recovery, as a rate. A "recovering" boolean would be
+    // true for milliseconds and missed by every scrape; the rate is what
+    // distinguishes normal reorg depth from a chain in trouble.
+    this.metrics.increment(REORGS_TOTAL, {
+      depth: bucketDepth(this.indexedBlock - rollbackPoint),
+    });
+
+    this.log.warn("reorg detected, rolling back", {
+      blockNumber: this.indexedBlock,
+      rollbackTo: rollbackPoint,
+    });
 
     await this.db.transaction(async (tx) => {
       await rollbackTo(tx, rollbackPoint);
@@ -588,7 +686,7 @@ export class Indexer {
    * that true. It is correct and cheap; a wrong projection is neither.
    */
   private async fullReindex(): Promise<void> {
-    console.warn("[indexer] full reindex starting");
+    this.log.warn("full reindex starting", { blockNumber: this.config.startBlock });
 
     await this.db.transaction(async (tx) => {
       await rollbackTo(tx, 0n);
@@ -612,6 +710,11 @@ export class Indexer {
     touched: Set<string>,
   ): Promise<void> {
     const address = log.address.toLowerCase();
+
+    // Counted here, at the one point every log passes through, rather than in
+    // each handler. A per-handler increment is one that gets forgotten when a
+    // handler is added, and the metric would under-report without failing.
+    this.metrics.increment(EVENTS_TOTAL, { source: this.sourceOf(address) });
 
     if (address === this.config.factory.toLowerCase()) {
       return this.handleFactoryLog(tx, log, blockTimestamp);
@@ -1214,6 +1317,22 @@ export class Indexer {
     }
   }
 
+  /**
+   * Which contract a log came from, as a low-cardinality label.
+   *
+   * Five values, never an address: one time series per market is how a metrics
+   * store falls over on the day the product succeeds.
+   */
+  private sourceOf(address: string): string {
+    if (address === this.config.factory.toLowerCase()) return "factory";
+    if (address === this.config.rewardVault.toLowerCase()) return "reward_vault";
+    if (this.feeVault !== null && address === this.feeVault.toLowerCase()) return "fee_vault";
+    if (this.registry !== null && address === this.registry.toLowerCase()) return "registry";
+    if (this.isKnownMarket(address)) return "market";
+    if (this.marketForToken(address) !== undefined) return "token";
+    return "unknown";
+  }
+
   /** Committed, or staged earlier in this same transaction. */
   private isKnownMarket(market: string): boolean {
     return (
@@ -1375,6 +1494,23 @@ const ZERO = "0x0000000000000000000000000000000000000000";
 function ceilBps(amount: bigint, bps: bigint): bigint {
   const result = (amount * bps + 9_999n) / 10_000n;
   return result > amount ? amount : result;
+}
+
+function seconds(startedAt: bigint): number {
+  return Number(process.hrtime.bigint() - startedAt) / 1e9;
+}
+
+/**
+ * Reorg depth as a bucket, not as a number.
+ *
+ * The label is what a dashboard groups by, and an exact depth would create a
+ * new time series for every distinct rollback distance. Three buckets say the
+ * thing an operator needs: routine, deep, or something is badly wrong.
+ */
+function bucketDepth(depth: bigint): string {
+  if (depth <= 2n) return "1-2";
+  if (depth <= 12n) return "3-12";
+  return "13+";
 }
 
 function min(a: bigint, b: bigint): bigint {
