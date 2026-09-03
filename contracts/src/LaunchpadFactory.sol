@@ -13,6 +13,7 @@ import {FeeVault} from "./FeeVault.sol";
 import {HolderRewardVault} from "./HolderRewardVault.sol";
 import {Curve} from "./lib/Curve.sol";
 import {IReferencePriceAdapter} from "./interfaces/IReferencePriceAdapter.sol";
+import {Metadata} from "./lib/Metadata.sol";
 
 /// @title SENT LaunchpadFactory
 /// @notice Deploys markets and is the single source of token authenticity (§138).
@@ -118,10 +119,32 @@ contract LaunchpadFactory is ReentrancyGuard {
         string name,
         string symbol,
         uint256 p0,
-        bytes32 effectiveSalt
+        bytes32 effectiveSalt,
+        /// @dev The commitment the address was derived from (§412).
+        ///
+        ///      `effectiveSalt` is a hash OF this, so the intent hash cannot be
+        ///      recovered from it. Without this field the metadata published
+        ///      alongside the launch could be read but never checked against
+        ///      what the creator actually committed to — which is the only
+        ///      thing that makes publishing it worth anything.
+        bytes32 launchIntentHash
     );
     event RouterUpdated(address indexed from, address indexed to);
     event ReferencePriceUpdated(address indexed from, address indexed to);
+
+    /// @notice A token's metadata at launch (§95.20).
+    /// @dev `revision` is zero here and increments on every revision, so an
+    ///      indexer orders them without needing block numbers — and a consumer
+    ///      that sees revision 3 knows it has missed 1 and 2 rather than
+    ///      assuming it has the latest.
+    event LaunchMetadata(
+        address indexed token,
+        address indexed creator,
+        uint256 indexed revision,
+        string description,
+        string imageCid,
+        Metadata.Link[] links
+    );
     event LaunchFeeUpdated(uint256 from, uint256 to);
     event TreasuryUpdated(address indexed from, address indexed to);
     event GovernanceTransferred(address indexed from, address indexed to);
@@ -134,6 +157,8 @@ contract LaunchpadFactory is ReentrancyGuard {
     error InsufficientLaunchFee(uint256 sent, uint256 required);
     error InvalidReferencePrice();
     error ReferencePriceNotSet();
+    error NotTheCreator(address token, address caller);
+    error UnknownToken(address token);
     error ReferencePriceDeviated(uint256 reviewed, uint256 actual, uint256 toleranceBps);
     error RouterNotSet();
     error LaunchFeeTransferFailed();
@@ -185,6 +210,14 @@ contract LaunchpadFactory is ReentrancyGuard {
         uint256 xStockUsdWad;
         /// @dev The address the creator was shown in the preview. Enforced.
         address expectedToken;
+        /// @dev Description, image CID and links (§95.20).
+        ///
+        ///      Emitted, never stored — nothing on-chain reads it, and a log is
+        ///      roughly eight gas a byte against twenty thousand per word of
+        ///      storage. `launchIntentHash` above already commits to this
+        ///      content through the token's own address; publishing it is what
+        ///      makes that commitment checkable by anyone.
+        Metadata.Content metadata;
     }
 
     /// @notice Launch a token and its market.
@@ -200,6 +233,11 @@ contract LaunchpadFactory is ReentrancyGuard {
         if (msg.value < launchFee) revert InsufficientLaunchFee(msg.value, launchFee);
         if (router == address(0)) revert RouterNotSet();
         if (referencePrice == address(0)) revert ReferencePriceNotSet();
+
+        // Before anything is deployed. A launch that fails on a description
+        // length after minting a token and a market would leave both stranded
+        // at an address the creator can never reuse — the salt is spent.
+        Metadata.validate(params.metadata);
 
         // §420: only a fully verified official xStock may back a market. An empty
         // or unverified registry means no launch is possible at all — which is the
@@ -309,7 +347,74 @@ contract LaunchpadFactory is ReentrancyGuard {
         }
 
         emit TokenLaunched(
-            token, market, msg.sender, params.quoteAsset, params.name, params.symbol, p0, effectiveSalt
+            token,
+            market,
+            msg.sender,
+            params.quoteAsset,
+            params.name,
+            params.symbol,
+            p0,
+            effectiveSalt,
+            params.launchIntentHash
+        );
+
+        // After `TokenLaunched`, deliberately. An indexer that sees metadata for
+        // a token it has never heard of has nothing to attach it to, and the two
+        // events are in one transaction so the order is the only thing that
+        // decides which arrives first.
+        emit LaunchMetadata(
+            token,
+            msg.sender,
+            0,
+            params.metadata.description,
+            params.metadata.imageCid,
+            params.metadata.links
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Metadata revisions (§95.20)
+    // -----------------------------------------------------------------------
+
+    /// @dev How many times each token's metadata has been revised.
+    ///
+    ///      The one thing about metadata that IS stored, because it is the one
+    ///      thing a contract has to read: without it two revisions in the same
+    ///      block are indistinguishable, and an indexer would have no ordering
+    ///      to apply beyond log index — which is not a promise the chain makes
+    ///      across a reorg.
+    mapping(address token => uint256) public metadataRevision;
+
+    /// @notice Revise a token's metadata. Creator only.
+    ///
+    /// @dev WHY THIS IS NOT IMMUTABLE
+    ///      A typo in a description is permanent otherwise, and permanence is
+    ///      not a virtue here — it is the reason a creator would host the real
+    ///      description somewhere else, which is exactly the outcome putting it
+    ///      on-chain was meant to avoid.
+    ///
+    /// @dev WHAT A REVISION CANNOT DO
+    ///      `launchIntentHash` is bound into the token's address (§412) and is
+    ///      unreachable from here. So a revision never rewrites history: the
+    ///      launch-time content stays published in its own event, hashes to the
+    ///      commitment in the address, and every revision after it is visibly a
+    ///      revision — with an author, a block, and a number.
+    ///
+    ///      §27's boundary holds: governance has no path to this function. The
+    ///      creator is the only party who can change what their token says, and
+    ///      the platform cannot.
+    function reviseMetadata(address token, Metadata.Content calldata content) external {
+        Launch memory record = _launches[token];
+        if (!record.exists) revert UnknownToken(token);
+        if (record.creator != msg.sender) revert NotTheCreator(token, msg.sender);
+
+        Metadata.validate(content);
+
+        uint256 revision = metadataRevision[token] + 1;
+        metadataRevision[token] = revision;
+
+        emit LaunchMetadata(
+            token, msg.sender, revision, content.description, content.imageCid, content.links
         );
     }
 

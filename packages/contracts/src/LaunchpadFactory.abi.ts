@@ -273,6 +273,40 @@ export const launchpadFactoryAbi = [
             "name": "expectedToken",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "metadata",
+            "type": "tuple",
+            "internalType": "struct Metadata.Content",
+            "components": [
+              {
+                "name": "description",
+                "type": "string",
+                "internalType": "string"
+              },
+              {
+                "name": "imageCid",
+                "type": "string",
+                "internalType": "string"
+              },
+              {
+                "name": "links",
+                "type": "tuple[]",
+                "internalType": "struct Metadata.Link[]",
+                "components": [
+                  {
+                    "name": "label",
+                    "type": "string",
+                    "internalType": "string"
+                  },
+                  {
+                    "name": "url",
+                    "type": "string",
+                    "internalType": "string"
+                  }
+                ]
+              }
+            ]
           }
         ]
       }
@@ -319,6 +353,25 @@ export const launchpadFactoryAbi = [
         "name": "",
         "type": "address[]",
         "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "metadataRevision",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -442,6 +495,53 @@ export const launchpadFactoryAbi = [
       }
     ],
     "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "reviseMetadata",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "content",
+        "type": "tuple",
+        "internalType": "struct Metadata.Content",
+        "components": [
+          {
+            "name": "description",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "imageCid",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "links",
+            "type": "tuple[]",
+            "internalType": "struct Metadata.Link[]",
+            "components": [
+              {
+                "name": "label",
+                "type": "string",
+                "internalType": "string"
+              },
+              {
+                "name": "url",
+                "type": "string",
+                "internalType": "string"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -625,6 +725,61 @@ export const launchpadFactoryAbi = [
   },
   {
     "type": "event",
+    "name": "LaunchMetadata",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "creator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "revision",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "description",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "imageCid",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "links",
+        "type": "tuple[]",
+        "indexed": false,
+        "internalType": "struct Metadata.Link[]",
+        "components": [
+          {
+            "name": "label",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "url",
+            "type": "string",
+            "internalType": "string"
+          }
+        ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ReferencePriceUpdated",
     "inputs": [
       {
@@ -712,6 +867,12 @@ export const launchpadFactoryAbi = [
         "type": "bytes32",
         "indexed": false,
         "internalType": "bytes32"
+      },
+      {
+        "name": "launchIntentHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -734,6 +895,22 @@ export const launchpadFactoryAbi = [
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "CidTooLong",
+    "inputs": [
+      {
+        "name": "length",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -764,6 +941,27 @@ export const launchpadFactoryAbi = [
   },
   {
     "type": "error",
+    "name": "DescriptionTooLong",
+    "inputs": [
+      {
+        "name": "length",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EmptyLink",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InsufficientLaunchFee",
     "inputs": [
       {
@@ -790,8 +988,56 @@ export const launchpadFactoryAbi = [
   },
   {
     "type": "error",
+    "name": "LinkLabelTooLong",
+    "inputs": [
+      {
+        "name": "length",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LinkUrlTooLong",
+    "inputs": [
+      {
+        "name": "length",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NotGovernance",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotTheCreator",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -875,6 +1121,33 @@ export const launchpadFactoryAbi = [
         "name": "effectiveSalt",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TooManyLinks",
+    "inputs": [
+      {
+        "name": "count",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnknownToken",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

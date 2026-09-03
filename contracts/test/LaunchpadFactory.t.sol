@@ -13,6 +13,7 @@ import {FeeVault} from "../src/FeeVault.sol";
 import {HolderRewardVault} from "../src/HolderRewardVault.sol";
 import {IGraduationRouter} from "../src/interfaces/IGraduationRouter.sol";
 import {Curve} from "../src/lib/Curve.sol";
+import {Metadata} from "../src/lib/Metadata.sol";
 import {ReferencePriceAdapter} from "../src/ReferencePriceAdapter.sol";
 import {MockAggregator} from "./mocks/MockAggregator.sol";
 
@@ -108,6 +109,16 @@ contract LaunchpadFactoryTest is Test {
         vm.deal(frontRunner, 10 ether);
     }
 
+    /// @dev Minimal valid metadata. Bounds and revisions are covered in
+    ///      `Metadata.t.sol`; these tests are about everything else.
+    function _metadata() internal pure returns (Metadata.Content memory) {
+        return Metadata.Content({
+            description: "a market",
+            imageCid: "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            links: new Metadata.Link[](0)
+        });
+    }
+
     function _params(bytes32 userSalt) internal view returns (LaunchpadFactory.LaunchParams memory) {
         return LaunchpadFactory.LaunchParams({
             name: "Sent Test",
@@ -116,7 +127,8 @@ contract LaunchpadFactoryTest is Test {
             userSalt: userSalt,
             launchIntentHash: keccak256("intent"),
             xStockUsdWad: XSTOCK_USD,
-            expectedToken: address(0)
+            expectedToken: address(0),
+            metadata: _metadata()
         });
     }
 

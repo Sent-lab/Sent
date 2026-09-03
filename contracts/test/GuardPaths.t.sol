@@ -12,6 +12,7 @@ import {HolderRewardVault} from "../src/HolderRewardVault.sol";
 import {XStockRegistry} from "../src/XStockRegistry.sol";
 import {IGraduationRouter} from "../src/interfaces/IGraduationRouter.sol";
 import {Curve} from "../src/lib/Curve.sol";
+import {Metadata} from "../src/lib/Metadata.sol";
 import {ReferencePriceAdapter} from "../src/ReferencePriceAdapter.sol";
 import {MockAggregator} from "./mocks/MockAggregator.sol";
 
@@ -116,6 +117,16 @@ contract GuardPathsTest is Test {
         return XStockRegistry.Gates(true, true, true, true, true, true, true, true);
     }
 
+    /// @dev Minimal valid metadata. Bounds and revisions are covered in
+    ///      `Metadata.t.sol`; these tests are about everything else.
+    function _metadata() internal pure returns (Metadata.Content memory) {
+        return Metadata.Content({
+            description: "a market",
+            imageCid: "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            links: new Metadata.Link[](0)
+        });
+    }
+
     function _params(bytes32 salt) internal view returns (LaunchpadFactory.LaunchParams memory) {
         return LaunchpadFactory.LaunchParams({
             name: "Sent Guard",
@@ -124,7 +135,8 @@ contract GuardPathsTest is Test {
             userSalt: salt,
             launchIntentHash: keccak256("intent"),
             xStockUsdWad: XSTOCK_USD,
-            expectedToken: address(0)
+            expectedToken: address(0),
+            metadata: _metadata()
         });
     }
 
