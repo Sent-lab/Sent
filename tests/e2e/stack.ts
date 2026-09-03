@@ -62,6 +62,7 @@ import {
   getClaimedTotal,
   getExclusions,
   listXStockAssets,
+  EventListener,
 } from "@sent/database";
 import { Indexer, DEFAULT_CONFIG } from "@sent/indexer";
 import { Finalizer } from "@sent/finalizer";
@@ -377,6 +378,28 @@ try {
    */
   let dataset: Awaited<ReturnType<typeof getLatestDataset>> = null;
   let entitlement: Awaited<ReturnType<typeof getEntitlementForRoot>> = null;
+
+  /*
+   * The realtime stream, captured off the actual NOTIFY channel for the whole run.
+   *
+   * `StockbackMessage` existed in the schema and nothing ever published one, so
+   * a client could subscribe to a market and never hear about funding, a
+   * finalization or a claim. The relay forwards whatever is published, so
+   * listening here proves the part that was missing: that anything is published
+   * at all, and inside the transaction that writes the row.
+   *
+   * Started BEFORE the first tick. Funding is emitted per trade, so a listener
+   * attached after the trading phase would see none of it and the absence would
+   * look like a defect in the publisher.
+   */
+  const streamed: { type: string; market?: string; account?: string }[] = [];
+
+  const stream = new EventListener(DATABASE_URL, (payload) => {
+    const event = payload as { type?: string; market?: string; account?: string };
+    if (typeof event.type === "string") streamed.push(event as { type: string });
+  });
+
+  await stream.start();
 
   await indexer.start();
 
@@ -1065,7 +1088,52 @@ try {
 
   indexer.stop();
 
+  // NOTIFY is delivered on commit and the listener is asynchronous, so the last
+  // event may still be in flight when the projection query returns.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await stream.stop();
+
   check("the claim reached the projection", projectedClaim !== null);
+
+  {
+    const types = new Set(streamed.map((e) => e.type));
+
+    // The trade tape and the graduation moment travel the same channel. Both
+    // were already published; asserting them here is what makes the Stockback
+    // additions a change to a proven path rather than a new one.
+    check("trades were streamed", types.has("trade"));
+    check("so was graduation", types.has("graduation"));
+
+    check("and Stockback funding", types.has("stockback_funded"));
+
+    // The one stream event that is not a chain log. An epoch closing is the
+    // passage of time — nothing fires on chain at midnight — so this is the
+    // moment it becomes observable: the window is settled and the numbers exist
+    // for the first time (§303).
+    check("the epoch close was streamed by the finalizer", types.has("stockback_epoch_closed"));
+
+    // Separate types, for the reason §334's delay exists: between them the root
+    // is on-chain and pays nothing. One message with a status field would make
+    // every consumer re-derive which of the two states it is in.
+    check("so was the pending commitment", types.has("stockback_finalizing"));
+    check("and the activation, separately", types.has("stockback_finalized"));
+    check("and the claim", types.has("stockback_claimed"));
+
+    const claimed = streamed.find((e) => e.type === "stockback_claimed");
+
+    // The field that routes it to a wallet's own channel as well as the
+    // market's. The `account` channel existed and nothing ever broadcast to it,
+    // so a client could subscribe and wait forever.
+    check(
+      "the claim event names the account it belongs to",
+      claimed?.account === account.address.toLowerCase(),
+    );
+    check("and the market", claimed?.market === market.toLowerCase());
+
+    // A cancelled root never paid anything, so there is no client state to
+    // correct — announcing it would raise an alarm about money never at risk.
+    check("nothing was streamed for a cancellation that never happened", !types.has("stockback_cancelled"));
+  }
 
   {
     const active = await getActiveCommitment(db, market);

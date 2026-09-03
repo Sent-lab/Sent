@@ -47,23 +47,49 @@ async function main(): Promise<void> {
    * replays from its buffer or refuses and marks the session degraded.
    */
   const listener = new EventListener(dbConfig.connectionString, (payload) => {
-    const event = payload as { type?: string; market?: string; blockNumber?: string };
+    const event = payload as {
+      type?: string;
+      market?: string;
+      account?: string;
+      blockNumber?: string;
+    };
 
     if (typeof event.type !== "string" || typeof event.market !== "string") {
       console.warn("[realtime] ignoring an event with no type or market");
       return;
     }
 
+    // The block travels with the message so a reconnecting client can ask to
+    // resume from exactly where it stopped.
+    const blockNumber = BigInt(event.blockNumber ?? "0");
+
     server.broadcast({
       // The gateway keys retention on the channel string, so it is built with
       // the shared helper rather than formatted here — two spellings of the same
       // channel would silently deliver to nobody.
       channel: channelKey({ kind: "market", market: event.market.toLowerCase() }),
-      // The block travels with the message so a reconnecting client can ask to
-      // resume from exactly where it stopped.
-      blockNumber: BigInt(event.blockNumber ?? "0"),
+      blockNumber,
       message: payload as ServerMessage,
     });
+
+    /*
+     * Account-scoped delivery (§512).
+     *
+     * The `account` channel existed in the Channel union and nothing ever
+     * broadcast to it — a client could subscribe and wait forever. A claim is
+     * the case that matters: it changes what ONE wallet can withdraw, and that
+     * wallet is usually not watching the market page at the time.
+     *
+     * Sent as a second delivery rather than instead: the market page shows
+     * claims as they happen, and the two audiences are different.
+     */
+    if (typeof event.account === "string") {
+      server.broadcast({
+        channel: channelKey({ kind: "account", account: event.account.toLowerCase() }),
+        blockNumber,
+        message: payload as ServerMessage,
+      });
+    }
   });
 
   await listener.start();

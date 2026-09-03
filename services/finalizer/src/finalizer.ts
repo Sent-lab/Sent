@@ -50,6 +50,7 @@ import {
   listFundedMarkets,
   finalizedHead,
   recordDataset,
+  publish,
   type Db,
 } from "@sent/database";
 import { EPOCH_DURATION_SECONDS, type BalanceEvent } from "@sent/stockback";
@@ -290,6 +291,34 @@ export class Finalizer {
         totalWeight: a.totalWeight,
       })),
     });
+
+    /*
+     * §303's finalization moment, and the one §368 stream event that is not a
+     * chain log.
+     *
+     * An epoch closing is the passage of time, not a transaction — nothing on
+     * chain fires when midnight arrives. This is the moment it becomes
+     * OBSERVABLE: the window is settled, the distribution is computed, and the
+     * numbers exist for the first time.
+     *
+     * Published inside the same transaction as the dataset, so a client is never
+     * told about a computation that rolled back. It carries no root: nothing has
+     * been attested yet, and sending one here would invite a client to treat a
+     * local computation as money (§293).
+     */
+    const closing = result.epochAllocations.at(-1);
+
+    if (closing !== undefined) {
+      await publish(db, {
+        type: "stockback_epoch_closed",
+        market: output.market,
+        epochSequence: result.commitment.epochSequence,
+        allocated: closing.allocated,
+        carryForward: closing.carryForward,
+        eligibleHolders: closing.eligibleHolders,
+        timestamp: output.throughTimestamp,
+      });
+    }
   }
 
   /** One pass over every funded market. Returns how many datasets were written. */

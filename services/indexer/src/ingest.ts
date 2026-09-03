@@ -1029,9 +1029,17 @@ export class Indexer {
     // and stop ingestion, so an unknown market is skipped rather than thrown.
     if (market !== null && !this.isKnownMarket(market)) return;
 
+    /*
+     * Each case writes, then publishes INSIDE the same transaction.
+     *
+     * NOTIFY is delivered on commit, so a subscriber can never be told about a
+     * row that rolled back, and a process that dies before committing has
+     * announced nothing. §369 wants these live; §138 requires that live never
+     * mean "ahead of the projection".
+     */
     switch (decoded.eventName) {
-      case "Funded":
-        return recordStockbackFunding(tx, {
+      case "Funded": {
+        await recordStockbackFunding(tx, {
           blockNumber,
           logIndex,
           market: market as string,
@@ -1040,8 +1048,18 @@ export class Indexer {
           timestamp,
         });
 
-      case "CommitmentSubmitted":
-        return recordCommitmentSubmitted(tx, {
+        return publish(tx, {
+          type: "stockback_funded",
+          market,
+          amount: a.amount as bigint,
+          totalFunded: a.totalFunded as bigint,
+          blockNumber,
+          timestamp,
+        });
+      }
+
+      case "CommitmentSubmitted": {
+        await recordCommitmentSubmitted(tx, {
           market: market as string,
           merkleRoot: String(a.merkleRoot),
           totalCumulative: a.totalCumulative as bigint,
@@ -1050,15 +1068,40 @@ export class Indexer {
           blockNumber,
         });
 
-      case "CommitmentActivated":
-        return markCommitmentActivated(
-          tx,
-          market as string,
-          String(a.merkleRoot),
+        // FINALIZING, not finalized. Between this and activation the root is
+        // on-chain and pays nothing — §334's delay is the window in which a bad
+        // root can still be cancelled, and a client that treated submission as
+        // finality would offer a claim six hours early.
+        return publish(tx, {
+          type: "stockback_finalizing",
+          market,
+          merkleRoot: String(a.merkleRoot),
+          totalCumulative: a.totalCumulative as bigint,
+          activeAt: Number(a.activeAt as bigint),
+          submitter: String(a.submitter).toLowerCase(),
           blockNumber,
-        );
+          timestamp,
+        });
+      }
+
+      case "CommitmentActivated": {
+        await markCommitmentActivated(tx, market as string, String(a.merkleRoot), blockNumber);
+
+        return publish(tx, {
+          type: "stockback_finalized",
+          market,
+          merkleRoot: String(a.merkleRoot),
+          totalCumulative: a.totalCumulative as bigint,
+          blockNumber,
+          timestamp,
+        });
+      }
 
       case "PendingCommitmentCancelled":
+        // Deliberately not published. A cancelled root never paid anything, so
+        // there is no client state to correct — and announcing a withdrawal of
+        // something never offered would only raise an alarm about money that
+        // was never at risk.
         return markCommitmentCancelled(
           tx,
           market as string,
@@ -1066,8 +1109,8 @@ export class Indexer {
           blockNumber,
         );
 
-      case "Claimed":
-        return recordClaim(tx, {
+      case "Claimed": {
+        await recordClaim(tx, {
           blockNumber,
           logIndex,
           market: market as string,
@@ -1076,6 +1119,19 @@ export class Indexer {
           cumulative: a.cumulative as bigint,
           timestamp,
         });
+
+        // Carries `account`, which is what routes it to that wallet's own
+        // channel as well as the market's (§512).
+        return publish(tx, {
+          type: "stockback_claimed",
+          market,
+          account: String(a.account).toLowerCase(),
+          amount: a.amount as bigint,
+          cumulative: a.cumulative as bigint,
+          blockNumber,
+          timestamp,
+        });
+      }
 
       default:
         // Attestor and governance changes are the vault's administration, not

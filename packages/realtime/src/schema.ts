@@ -105,6 +105,11 @@ export type ServerMessage =
   | MarketStateMessage
   | GraduationMessage
   | StockbackMessage
+  | StockbackFundedMessage
+  | StockbackEpochClosedMessage
+  | StockbackFinalizingMessage
+  | StockbackFinalizedMessage
+  | StockbackClaimedMessage
   | FreshnessMessage
   | ErrorMessage;
 
@@ -183,6 +188,84 @@ export interface StockbackMessage {
   readonly claimable?: Sourced;
   readonly epochSequence: string;
   readonly epochEndsAt: number;
+}
+
+/*
+ * The §368 Stockback stream.
+ *
+ *   stockback_funded        a trade contributed to the pool
+ *   stockback_epoch_closed  an epoch's window ended and was computed
+ *   stockback_finalizing    a commitment is on-chain, waiting out §334's delay
+ *   stockback_finalized     the root activated; entitlements are now payable
+ *   stockback_claimed       the vault paid somebody
+ *
+ * FIVE TYPES, NOT ONE WITH A STATUS FIELD
+ * ---------------------------------------
+ * They carry genuinely different payloads and a client reacts to each
+ * differently — funding moves a running total, finalizing starts a countdown,
+ * finalized turns a button on, claimed removes an amount from the same button.
+ * A single message with a `status` discriminant would make every consumer
+ * re-derive which fields are populated, and the compiler could not help.
+ *
+ * `stockback_finalizing` and `stockback_finalized` are separate for the reason
+ * §334's delay exists: between them a root is on-chain and pays nothing. A UI
+ * that treated submission as finality would show a claim button six hours
+ * before the vault honours it.
+ */
+
+export interface StockbackFundedMessage {
+  readonly type: "stockback_funded";
+  readonly market: string;
+  /** Contributed by this trade, in the reward asset's normalized units. */
+  readonly amount: string;
+  readonly totalFunded: string;
+  readonly blockNumber: string;
+  readonly timestamp: number;
+}
+
+export interface StockbackEpochClosedMessage {
+  readonly type: "stockback_epoch_closed";
+  readonly market: string;
+  readonly epochSequence: string;
+  /** What the epoch generated, before any attestor has seen it. */
+  readonly allocated: string;
+  /** Rounding dust rolled into the next epoch (§327). */
+  readonly carryForward: string;
+  readonly eligibleHolders: number;
+  readonly timestamp: number;
+}
+
+export interface StockbackFinalizingMessage {
+  readonly type: "stockback_finalizing";
+  readonly market: string;
+  readonly merkleRoot: string;
+  readonly totalCumulative: string;
+  /** Unix seconds after which activation is permitted (§334). */
+  readonly activeAt: number;
+  readonly submitter: string;
+  readonly blockNumber: string;
+  readonly timestamp: number;
+}
+
+export interface StockbackFinalizedMessage {
+  readonly type: "stockback_finalized";
+  readonly market: string;
+  readonly merkleRoot: string;
+  readonly totalCumulative: string;
+  readonly blockNumber: string;
+  readonly timestamp: number;
+}
+
+export interface StockbackClaimedMessage {
+  readonly type: "stockback_claimed";
+  readonly market: string;
+  readonly account: string;
+  /** Transferred by this claim. */
+  readonly amount: string;
+  /** The account's running total at the vault after it (§336). */
+  readonly cumulative: string;
+  readonly blockNumber: string;
+  readonly timestamp: number;
 }
 
 export interface FreshnessMessage {
