@@ -276,3 +276,50 @@
     gap: var(--s-1) var(--s-4);
   }
 }
+
+/* --- Controls (§57) -------------------------------------------------------- */
+
+.tools {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.tool,
+.toolActive {
+  height: 26px;
+  padding-inline: var(--s-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.tool {
+  color: var(--text-dim);
+}
+
+.tool:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+/* Pressed state is carried by aria-pressed in the markup as well as by
+   colour — §84 does not allow colour to be the only signal. */
+.tool[aria-pressed="true"] {
+  color: var(--volt);
+  border-color: color-mix(in srgb, var(--volt) 40%, transparent);
+}
+
+/* "Latest" appears only when the view has left the live edge, so it is styled
+   as an action rather than as a toggle. */
+.toolActive {
+  color: #06070a;
+  background: var(--volt);
+  border-color: var(--volt);
+  font-weight: 600;
+}

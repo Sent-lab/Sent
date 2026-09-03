@@ -228,6 +228,9 @@ importers:
       '@sent/stockback':
         specifier: workspace:*
         version: link:../../packages/stockback
+      '@sent/worker':
+        specifier: workspace:*
+        version: link:../../services/worker
       viem:
         specifier: ^2.56.3
         version: 2.56.3(typescript@5.9.3)

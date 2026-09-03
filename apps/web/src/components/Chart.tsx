@@ -37,6 +37,13 @@ import { formatFixed, formatCompact, placesFor } from "../lib/format.ts";
 import {
   buildScale,
   TIMEFRAMES,
+  clampWindow,
+  zoomWindow,
+  panWindow,
+  isAtLiveEdge,
+  inMode,
+  type PriceMode,
+  type Viewport,
   type Candle,
   VIEW_W,
   VIEW_H,
@@ -82,8 +89,48 @@ export function Chart({
 }: ChartProps): JSX.Element {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<number | null>(null);
+  const [mode, setMode] = useState<PriceMode>("PRICE");
+  const [showVolume, setShowVolume] = useState(true);
+  const [viewport, setViewport] = useState<Viewport>({ offset: 0, count: 0 });
+  const dragFrom = useRef<{ x: number; offset: number } | null>(null);
 
-  const scale = useMemo(() => buildScale(candles, quoteDecimals), [candles, quoteDecimals]);
+  /*
+   * The visible slice.
+   *
+   * A zero count means "not yet chosen", which is the state on first render and
+   * after a timeframe change — both should show the whole series anchored at the
+   * newest bar rather than a stale window from the previous view.
+   */
+  const view = useMemo(() => {
+    if (viewport.count === 0) return { offset: 0, count: candles.length };
+    return clampWindow(viewport, candles.length);
+  }, [viewport, candles.length]);
+
+  const visible: readonly Candle[] = useMemo(
+    () => candles.slice(view.offset, view.offset + view.count),
+    [candles, view],
+  );
+
+  /*
+   * Converted BEFORE the scale is built, so the axis, the bars and the labels
+   * all describe the same quantity. Converting only the labels would draw price
+   * candles under a market-cap axis, which is a chart that lies quietly.
+   */
+  const shown: readonly Candle[] = useMemo(
+    () =>
+      mode === "PRICE"
+        ? visible
+        : visible.map((c) => ({
+            ...c,
+            o: inMode(BigInt(c.o), mode).toString(),
+            h: inMode(BigInt(c.h), mode).toString(),
+            l: inMode(BigInt(c.l), mode).toString(),
+            c: inMode(BigInt(c.c), mode).toString(),
+          })),
+    [visible, mode],
+  );
+
+  const scale = useMemo(() => buildScale(shown, quoteDecimals), [shown, quoteDecimals]);
 
   /**
    * Map a pointer position to a bar index.
@@ -98,17 +145,62 @@ export function Chart({
       if (svg === null || scale === null) return;
 
       const box = svg.getBoundingClientRect();
+
+      // Dragging pans. Measured in BARS rather than pixels, so the series moves
+      // with the pointer at any zoom level instead of accelerating as bars widen.
+      const drag = dragFrom.current;
+      if (drag !== null) {
+        const barsPerPixel = view.count / box.width;
+        const moved = (drag.x - event.clientX) * barsPerPixel;
+        setViewport(panWindow({ offset: drag.offset, count: view.count }, candles.length, moved));
+        return;
+      }
+
       const x = ((event.clientX - box.left) / box.width) * VIEW_W;
       const plotW = VIEW_W - PAD_L - PAD_R;
-      const index = Math.floor(((x - PAD_L) / plotW) * candles.length);
+      const index = Math.floor(((x - PAD_L) / plotW) * shown.length);
 
-      setHover(index >= 0 && index < candles.length ? index : null);
+      // Bounded by the VISIBLE slice, not the whole series: the index addresses
+      // `shown`, and a hover past its end reads an undefined bar.
+      setHover(index >= 0 && index < shown.length ? index : null);
     },
-    [candles.length, scale],
+    [shown.length, scale, view.count, view.offset, candles.length],
   );
 
-  const active = hover !== null ? candles[hover] : undefined;
-  const last = candles[candles.length - 1];
+  /**
+   * Wheel to zoom, about the bar under the pointer.
+   *
+   * Not passive: the page must not scroll while the pointer is over the chart,
+   * or a zoom gesture takes the chart off screen with it.
+   */
+  const onWheel = useCallback(
+    (event: React.WheelEvent<SVGSVGElement>) => {
+      if (candles.length === 0) return;
+      event.preventDefault();
+
+      const focus = view.offset + (hover ?? Math.floor(view.count / 2));
+      const factor = event.deltaY > 0 ? 1.25 : 0.8;
+
+      setViewport(zoomWindow(view, candles.length, factor, focus));
+    },
+    [view, hover, candles.length],
+  );
+
+  const onPointerDown = useCallback(
+    (event: React.PointerEvent<SVGSVGElement>) => {
+      dragFrom.current = { x: event.clientX, offset: view.offset };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [view.offset],
+  );
+
+  const onPointerUp = useCallback((event: React.PointerEvent<SVGSVGElement>) => {
+    dragFrom.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
+
+  const active = hover !== null ? shown[hover] : undefined;
+  const last = shown[shown.length - 1];
 
   return (
     <div className={styles.root}>
@@ -127,12 +219,54 @@ export function Chart({
           ))}
         </div>
 
-        {/*
-          §57's current venue indicator. Which venue a price came from is not a
-          detail: before graduation it is the curve, after it is the pool, and a
-          chart that does not say so implies one continuous book.
-        */}
-        <span className={styles.venue}>{venue}</span>
+        <div className={styles.tools}>
+          {/*
+            §57 lists a Price / MC toggle under progressive disclosure. Market
+            cap is derived from the curve's own definition of p0 rather than a
+            second idea of what a market is worth.
+          */}
+          <button
+            type="button"
+            className={styles.tool}
+            aria-pressed={mode === "MCAP"}
+            onClick={() => setMode((current) => (current === "PRICE" ? "MCAP" : "PRICE"))}
+            title="Switch between price and market capitalisation"
+          >
+            {mode === "PRICE" ? "Price" : "MC"}
+          </button>
+
+          <button
+            type="button"
+            className={styles.tool}
+            aria-pressed={showVolume}
+            onClick={() => setShowVolume((current) => !current)}
+            title="Show or hide volume"
+          >
+            Vol
+          </button>
+
+          {/*
+            Only offered when it would do something. A control that is always
+            present and usually inert teaches people to ignore it.
+          */}
+          {!isAtLiveEdge(view, candles.length) && (
+            <button
+              type="button"
+              className={styles.toolActive}
+              onClick={() => setViewport({ offset: 0, count: 0 })}
+              title="Return to the newest bar"
+            >
+              Latest
+            </button>
+          )}
+
+          {/*
+            §57's current venue indicator. Which venue a price came from is not a
+            detail: before graduation it is the curve, after it is the pool, and a
+            chart that does not say so implies one continuous book.
+          */}
+          <span className={styles.venue}>{venue}</span>
+        </div>
       </header>
 
       <div className={styles.plot}>
@@ -149,9 +283,15 @@ export function Chart({
             viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
             preserveAspectRatio="none"
             role="img"
-            aria-label={`Price chart, ${candles.length} bars`}
+            aria-label={`${mode === "PRICE" ? "Price" : "Market cap"} chart, ${shown.length} of ${candles.length} bars`}
             onPointerMove={onMove}
-            onPointerLeave={() => setHover(null)}
+            onPointerLeave={() => {
+              setHover(null);
+              dragFrom.current = null;
+            }}
+            onWheel={onWheel}
+            onPointerDown={onPointerDown}
+            onPointerUp={onPointerUp}
           >
             {/* Horizontal guides at the axis ticks, so the eye can carry a level
                 across without a crosshair. */}
@@ -172,8 +312,8 @@ export function Chart({
 
             {/* Volume, in the band below the price. Same x positions as the
                 candles, so a bar and its volume always line up. */}
-            {candles.map((candle, index) => {
-              const geo = scale.barAt(index, candles.length);
+            {showVolume && shown.map((candle, index) => {
+              const geo = scale.barAt(index, shown.length);
               const vol = scale.volumeHeight(BigInt(candle.v));
               const rising = BigInt(candle.c) >= BigInt(candle.o);
 
@@ -191,8 +331,8 @@ export function Chart({
 
             {/* Candles. Wick then body, so a doji's body still shows over its
                 own wick. */}
-            {candles.map((candle, index) => {
-              const geo = scale.barAt(index, candles.length);
+            {shown.map((candle, index) => {
+              const geo = scale.barAt(index, shown.length);
               const o = scale.y(BigInt(candle.o));
               const c = scale.y(BigInt(candle.c));
               const h = scale.y(BigInt(candle.h));
@@ -225,9 +365,9 @@ export function Chart({
                 // An EXACT bucket match. `>=` would fall through to the next
                 // bar whenever the graduating bucket is absent from the series,
                 // which draws the marker beside the event rather than on it.
-                const index = candles.findIndex((candle) => candle.t === graduatedAtBucket);
+                const index = shown.findIndex((candle) => candle.t === graduatedAtBucket);
                 if (index < 0) return null;
-                const geo = scale.barAt(index, candles.length);
+                const geo = scale.barAt(index, shown.length);
 
                 return (
                   <g>
@@ -250,8 +390,8 @@ export function Chart({
             {hover !== null && active !== undefined && (
               <line
                 className={styles.crosshair}
-                x1={scale.barAt(hover, candles.length).x + scale.barAt(hover, candles.length).w / 2}
-                x2={scale.barAt(hover, candles.length).x + scale.barAt(hover, candles.length).w / 2}
+                x1={scale.barAt(hover, shown.length).x + scale.barAt(hover, shown.length).w / 2}
+                x2={scale.barAt(hover, shown.length).x + scale.barAt(hover, shown.length).w / 2}
                 y1={PAD_T}
                 y2={VIEW_H - PAD_B}
               />
@@ -291,7 +431,7 @@ export function Chart({
           <div className={styles.tooltip} role="status">
             <span className={styles.tooltipTime}>{formatBucket(active.t, intervalSeconds)}</span>
             <dl className={styles.tooltipRows}>
-              <Row label="O" value={price(active.o, quoteDecimals)} />
+              <Row label={mode === "PRICE" ? "O" : "MC O"} value={price(active.o, quoteDecimals)} />
               <Row label="H" value={price(active.h, quoteDecimals)} />
               <Row label="L" value={price(active.l, quoteDecimals)} />
               <Row label="C" value={price(active.c, quoteDecimals)} />

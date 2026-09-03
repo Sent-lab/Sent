@@ -10,7 +10,8 @@
     "viem": "^2.56.3",
     "@sent/finalizer": "workspace:*",
     "@sent/stockback": "workspace:*",
-    "@sent/api": "workspace:*"
+    "@sent/api": "workspace:*",
+    "@sent/worker": "workspace:*"
   },
   "scripts": {
     "test": "node --experimental-strip-types stack.ts"

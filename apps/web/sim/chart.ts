@@ -22,6 +22,14 @@ import {
   VOL_H,
   MAX_SLOT,
   TIMEFRAMES,
+  TOTAL_SUPPLY,
+  marketCapOf,
+  inMode,
+  clampWindow,
+  zoomWindow,
+  panWindow,
+  isAtLiveEdge,
+  MIN_VISIBLE,
   type Candle,
 } from "../src/lib/chart-scale.ts";
 
@@ -222,9 +230,138 @@ section("Axis labels come from the integers, not the pixels");
     // Every label must have the same decimal count, or the axis will not align.
     const decimals = scale.ticks.map((t) => t.label.split(".")[1]?.length ?? 0);
     check("every label has the same precision", new Set(decimals).size === 1);
+  }
+}
+
+{
+  // A market-cap axis runs to fifteen digits. `378684037160000` is not a number
+  // anyone parses off an axis (§41).
+  const big = 378_684_037_160_000n * 10n ** 6n;
+  const scale = buildScale([bar(0, big, big * 2n, big, big * 2n)], 6);
+
+  if (scale !== null) {
+    const label = scale.ticks[scale.ticks.length - 1]?.label ?? "";
+    check("a large axis value is compact", /[KMBT]$/.test(label));
+    check("and short enough to read", label.length <= 10);
+
+    // Small values keep their exact figure, which is more useful when it fits.
+    const small = buildScale([bar(0, 1_000_000n, 2_000_000n, 1_000_000n, 2_000_000n)], 6);
+    const smallLabel = small?.ticks[small.ticks.length - 1]?.label ?? "";
+    check("a small axis value stays exact", !/[KMBT]$/.test(smallLabel));
 
     check("no label is empty", scale.ticks.every((t) => t.label.length > 0));
   }
+}
+
+section("Market cap is the curve's own definition, inverted");
+
+{
+  // p = quoteMc * WAD / supply, so quoteMc = p * supply / WAD. A price of one
+  // whole quote unit per token across a billion tokens is a billion.
+  const oneUnit = 10n ** 18n;
+  check("one unit of price is a billion of market cap", marketCapOf(oneUnit) === 1_000_000_000n * oneUnit);
+
+  check("zero price is zero market cap", marketCapOf(0n) === 0n);
+
+  // Monotonic: a higher price is always a higher market cap on fixed supply.
+  check(
+    "market cap rises with price",
+    marketCapOf(oneUnit * 2n) > marketCapOf(oneUnit),
+  );
+
+  // Past floating point. A market cap is money on screen.
+  const huge = 10n ** 30n;
+  check(
+    "a price beyond 2^53 converts exactly",
+    marketCapOf(huge) === (huge * TOTAL_SUPPLY) / 10n ** 18n,
+  );
+
+  check("PRICE mode leaves the value alone", inMode(12_345n, "PRICE") === 12_345n);
+  check("MCAP mode converts it", inMode(oneUnit, "MCAP") === marketCapOf(oneUnit));
+}
+
+section("The zoom window can never reach an impossible state");
+
+{
+  // Every one of these renders as an empty chart, which is indistinguishable
+  // from a market with no history.
+  check("an empty series yields an empty window", clampWindow({ offset: 5, count: 20 }, 0).count === 0);
+
+  check(
+    "a negative offset is clamped to the start",
+    clampWindow({ offset: -50, count: 20 }, 100).offset === 0,
+  );
+
+  check(
+    "a count larger than the series is clamped to it",
+    clampWindow({ offset: 0, count: 500 }, 100).count === 100,
+  );
+
+  check(
+    "a window past the end is pulled back",
+    clampWindow({ offset: 95, count: 20 }, 100).offset === 80,
+  );
+
+  check(
+    "it never zooms below the minimum",
+    clampWindow({ offset: 0, count: 1 }, 100).count === MIN_VISIBLE,
+  );
+
+  // A series that shrank under a window — a reorg removing bars — must not
+  // leave the window pointing past the end.
+  check("a shrunk series pulls the window back", clampWindow({ offset: 90, count: 20 }, 30).offset === 10);
+
+  const clamped = clampWindow({ offset: 10, count: 20 }, 100);
+  check("a valid window is unchanged", clamped.offset === 10 && clamped.count === 20);
+}
+
+section("Zoom keeps the focal bar under the pointer");
+
+{
+  const total = 200;
+  const start = { offset: 50, count: 100 };
+
+  // Zooming in about bar 100 must keep bar 100 at the same relative position, so
+  // the bar under the pointer does not slide away and need a corrective pan.
+  const zoomed = zoomWindow(start, total, 0.5, 100);
+
+  const before = (100 - start.offset) / start.count;
+  const after = (100 - zoomed.offset) / zoomed.count;
+
+  check("zooming in halves the span", zoomed.count === 50);
+  check("and the focal bar holds its position", Math.abs(before - after) < 0.05);
+  check("the window stays inside the series", zoomed.offset >= 0 && zoomed.offset + zoomed.count <= total);
+
+  const out = zoomWindow(zoomed, total, 2, 100);
+  check("zooming back out restores the span", out.count === 100);
+
+  // Zooming out past the whole series must stop at the series.
+  const way = zoomWindow(start, total, 100, 100);
+  check("zooming out is bounded by the data", way.count === total && way.offset === 0);
+
+  // Zooming in past the floor stops at the floor rather than inverting.
+  const tight = zoomWindow(start, total, 0.0001, 100);
+  check("zooming in is bounded by the minimum", tight.count === MIN_VISIBLE);
+}
+
+section("Panning and the live edge");
+
+{
+  const total = 200;
+
+  check("panning right moves forward", panWindow({ offset: 50, count: 50 }, total, 10).offset === 60);
+  check("panning left moves back", panWindow({ offset: 50, count: 50 }, total, -10).offset === 40);
+  check("panning past the start stops", panWindow({ offset: 5, count: 50 }, total, -100).offset === 0);
+  check(
+    "panning past the end stops at the newest bar",
+    panWindow({ offset: 100, count: 50 }, total, 500).offset === 150,
+  );
+
+  // The live edge is what a chart must hold as new bars arrive, or it drifts
+  // away from the price while the market moves.
+  check("a window at the end is at the live edge", isAtLiveEdge({ offset: 150, count: 50 }, total));
+  check("a window in the middle is not", !isAtLiveEdge({ offset: 50, count: 50 }, total));
+  check("a full-series window is at the live edge", isAtLiveEdge({ offset: 0, count: total }, total));
 }
 
 section("Timeframes match what the API serves");
