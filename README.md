@@ -24,10 +24,18 @@ Creator allocation is 0%. Platform allocation is 0%. Nobody deposits liquidity.
 | | |
 |---|---|
 | Contracts | Core protocol complete except the graduation router |
-| Backend | Indexer, projection, API, realtime gateway, Stockback pipeline |
-| Frontend | Not started |
+| Backend | Indexer, projection, API, realtime gateway, Stockback pipeline, workers |
+| Frontend | Discovery, trading terminal, chart, live tape, create and account |
+| Wallet signing | Wired; unverified against a browser extension |
 | External audit | Not started |
 | Deployment | None |
+
+The whole stack is exercised end to end against a local chain: contracts
+deployed, a market launched and traded, a real reorg performed and reconciled,
+graduation, and a Stockback distribution whose Merkle proofs verify against
+their own root. That suite found twelve defects that unit tests could not,
+every one of them in a seam between two components that were each correct on
+their own.
 
 **Not yet resolvable** — these depend on external facts that have not been
 confirmed, and the project deliberately refuses to guess them:
@@ -82,11 +90,19 @@ packages/
   contracts/      Generated ABIs
   realtime/       Shared event schema and the freshness contract
   database/       PostgreSQL schema
+  config/         Verified chain constants and validated environment loading
 services/
   indexer/        Reorg-safe ingestion and the state projection
   api/            HTTP handlers
   realtime/       WebSocket gateway
   stockback/      TWAB to Merkle commitment pipeline
+  finalizer/      Computes distributions from settled state. Never signs.
+  worker/         Candles, reconciliation, health sweeps
+apps/web/         Next.js application
+infra/            Container image, local stack, migrations, alerting
+tests/
+  integration/    The projection SQL against a real PostgreSQL
+  e2e/            The whole stack against a real chain
 docs/             Comprehension pass, verify ledger, decision log, conventions
 ```
 
@@ -130,6 +146,22 @@ them and fails on any diff, so the two halves cannot drift silently:
 pnpm fixtures:all
 ```
 
+The integration and end-to-end suites need a database and a chain. Both skip
+rather than fail when those are absent, because failing on a laptop is how a
+test result stops being read:
+
+```bash
+docker run --rm -e POSTGRES_PASSWORD=sent -e POSTGRES_USER=sent   -e POSTGRES_DB=sent -p 5432:5432 postgres:16-alpine
+anvil
+
+export DATABASE_URL=postgres://sent:sent@localhost:5432/sent
+export RPC_URL=http://127.0.0.1:8545
+
+node --experimental-strip-types tests/integration/projection.ts
+node --experimental-strip-types tests/integration/live.ts
+pnpm e2e
+```
+
 ---
 
 ## What is actually verified
@@ -149,6 +181,14 @@ asserted:
 - the off-chain projection reproduces on-chain state from real logs
 - collateral is a liability, never a balance: donating either asset changes
   nothing about what the curve owes or what graduation migrates
+- what a user reviews is byte-for-byte what their wallet signs, from the SDK
+  builder through the API to the transaction handed to the wallet
+- the projection converges back onto the chain after a real reorg: the orphaned
+  trade is gone, the replacement is present, and no block above the new head
+  survives
+- a Stockback commitment computed from real indexed funding stays inside its
+  funding ceiling, and its proofs verify against its own root while failing for
+  an amount one wei different
 
 ---
 
