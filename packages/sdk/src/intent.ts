@@ -144,12 +144,43 @@ export interface BuildSellParams {
 
 const WAD = 10n ** 18n;
 
-/** Format a raw amount for display at its own decimals. */
+/**
+ * Format a raw amount for display at its own decimals.
+ *
+ * A NON-ZERO AMOUNT NEVER RENDERS AS ZERO
+ * ---------------------------------------
+ * Truncating to a fixed six places shows any amount below 0.000001 as
+ * "0.000000". In a review sheet that is a transaction the user reads as doing
+ * nothing — which is the one impression a review must never give. When the
+ * fixed precision would erase the value entirely, it is extended until four
+ * significant digits appear.
+ *
+ * Values large enough to survive six places are formatted exactly as before, so
+ * this changes nothing for a realistic trade.
+ */
 export function formatUnits(amount: bigint, decimals: number, precision = 6): string {
+  const negative = amount < 0n;
+  const magnitude = negative ? -amount : amount;
+  const sign = negative ? "-" : "";
+
   const scale = 10n ** BigInt(decimals);
-  const whole = amount / scale;
-  const frac = (amount % scale).toString().padStart(decimals, "0").slice(0, precision);
-  return precision > 0 ? `${whole.toLocaleString("en-US")}.${frac}` : whole.toLocaleString("en-US");
+  const whole = magnitude / scale;
+
+  if (decimals === 0 || precision <= 0) {
+    return `${sign}${whole.toLocaleString("en-US")}`;
+  }
+
+  const fraction = (magnitude % scale).toString().padStart(decimals, "0");
+
+  let shown = precision;
+
+  if (whole === 0n && magnitude > 0n) {
+    let leadingZeros = 0;
+    while (leadingZeros < fraction.length && fraction[leadingZeros] === "0") leadingZeros += 1;
+    shown = Math.min(Math.max(precision, leadingZeros + 4), decimals);
+  }
+
+  return `${sign}${whole.toLocaleString("en-US")}.${fraction.slice(0, shown)}`;
 }
 
 /** Raw asset units -> normalized 18-decimal, mirroring XStockAssetAdapter. */
@@ -173,6 +204,99 @@ export function toRawForPayout(normalized: bigint, decimals: number): bigint {
  * contract uses, then rendered back in raw units so the user sees amounts in the
  * asset they actually hold.
  */
+export interface BuildApproveParams {
+  readonly chainId: number;
+  /** The ERC-20 being approved. */
+  readonly token: `0x${string}`;
+  /** Who may spend it — always a market, never an EOA. */
+  readonly spender: `0x${string}`;
+  /** Exact amount, in the asset's own raw units. */
+  readonly amount: bigint;
+  readonly decimals: number;
+  readonly symbol: string;
+  /** Distinguishes approving the quote asset from approving the token (§694). */
+  readonly kind: "APPROVE_QUOTE" | "APPROVE_TOKEN";
+}
+
+/**
+ * Build an ERC-20 approval.
+ *
+ * The `APPROVE_QUOTE` and `APPROVE_TOKEN` kinds existed in this enum with no
+ * builder behind them, which meant a buy could be quoted and never executed:
+ * the market cannot pull the quote asset without an allowance.
+ *
+ * EXACT AMOUNT, NEVER UNLIMITED
+ * -----------------------------
+ * The convention is to approve `type(uint256).max` so the user approves once.
+ * It is also the reason a single bug in an approved contract drains every wallet
+ * that ever traded with it, forever, including people who stopped using it years
+ * earlier. These contracts are unaudited (see the README), so an unlimited
+ * approval here would ask users to take a risk this project has not earned.
+ *
+ * The cost is one extra transaction per trade. That is a real cost and it is the
+ * right side to be wrong on.
+ *
+ * The review says the amount in plain units, so "unlimited" can never appear in
+ * a review as a number nobody reads.
+ */
+export function buildApproveIntent(params: BuildApproveParams): TransactionIntent {
+  const { chainId, token, spender, amount, decimals, symbol, kind } = params;
+
+  if (amount <= 0n) throw new Error("buildApproveIntent: amount must be positive");
+
+  const data = encodeFunctionData({
+    abi: erc20ApproveAbi,
+    functionName: "approve",
+    args: [spender, amount],
+  });
+
+  return {
+    kind,
+    chainId,
+    to: token,
+    data,
+    value: 0n,
+    review: {
+      kind,
+      summary: `Allow this market to spend ${formatUnits(amount, decimals)} ${symbol}`,
+      rows: [
+        {
+          label: "Amount",
+          value: `${formatUnits(amount, decimals)} ${symbol}`,
+          primary: true,
+        },
+        { label: "Spender", value: spender },
+        {
+          label: "Approval type",
+          // Stated, because the alternative is the one users have been trained
+          // to expect and would otherwise assume.
+          value: "Exact amount, not unlimited",
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * The one ERC-20 function this SDK encodes.
+ *
+ * Declared here rather than imported from a token ABI: an approval must encode
+ * `approve(address,uint256)` and nothing else, and a full ERC-20 ABI in scope
+ * would make it possible to encode a transfer by typo.
+ */
+const erc20ApproveAbi = [
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+] as const;
+
 export function buildBuyIntent(params: BuildBuyParams): TransactionIntent {
   const {
     chainId,

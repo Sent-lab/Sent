@@ -1,9 +1,12 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": { "types": ["node"], "noEmit": true },
+  // apps/web is typechecked by `next build`, which supplies the DOM lib. Only its
+  // simulations are listed here — they pull in the pure modules those tests
+  // cover, and adding the whole app would mean adding DOM to this config, which
+  // would let a Node service reference `document` and still pass.
   "include": [
     "packages/*/src/**/*.ts",
-    "apps/web/src/lib/**/*.ts",
     "apps/web/sim/**/*.ts",
     "packages/*/sim/**/*.ts",
     "packages/*/scripts/**/*.ts",

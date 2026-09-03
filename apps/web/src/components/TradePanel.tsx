@@ -18,18 +18,27 @@
  * So there is no fee maths here, no slippage maths, no price maths. If a value
  * is not in the intent, it is not shown.
  *
- * WHAT IS DELIBERATELY MISSING
- * ----------------------------
- * The signing step. §694's guarantee only holds if the bytes handed to the
- * wallet are `intent.data` unmodified, and the wallet layer is not wired in this
- * build. The button says so plainly rather than existing and failing — a submit
- * control that silently does nothing is worse than one that explains itself.
+ * SIGNING SENDS THE INTENT, NOT A RECONSTRUCTION
+ * ----------------------------------------------
+ * `wallet.send(intent)` passes `to`, `data` and `value` to the wallet exactly as
+ * the API produced them. Nothing between the review the user reads and the
+ * calldata they sign can differ, because there is nothing between them.
+ *
+ * APPROVAL IS A SEPARATE, EXACT-AMOUNT STEP
+ * -----------------------------------------
+ * A market cannot pull the quote asset without an allowance. That approval is
+ * built for the EXACT trade amount rather than for `type(uint256).max` — see
+ * `buildApproveIntent`. It costs an extra transaction per trade, which is the
+ * right side to be wrong on for contracts that have not been audited.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { buildApproveIntent } from "@sent/sdk";
+
 import { quote, isOk, type WireIntent } from "../lib/api.ts";
 import { parseAmount, formatFixed } from "../lib/format.ts";
+import { useWallet } from "../lib/wallet.ts";
 import { FreshnessNotice } from "./Freshness.tsx";
 import type { MarketStatus } from "./GraduationProgress.tsx";
 import type { FreshnessEnvelope } from "@sent/realtime";
@@ -44,6 +53,9 @@ const SLIPPAGE_PRESETS = [50n, 100n, 300n] as const;
 
 export interface TradePanelProps {
   readonly token: string;
+  /** The market contract — the spender an approval names. */
+  readonly market: string;
+  readonly quoteAsset: string;
   readonly symbol: string;
   readonly quoteSymbol: string;
   readonly quoteDecimals: number;
@@ -53,18 +65,23 @@ export interface TradePanelProps {
 
 export function TradePanel({
   token,
+  market,
+  quoteAsset,
   symbol,
   quoteSymbol,
   quoteDecimals,
   status,
   freshness,
 }: TradePanelProps): JSX.Element {
+  const wallet = useWallet();
   const [side, setSide] = useState<Side>("BUY");
   const [input, setInput] = useState("");
   const [slippageBps, setSlippageBps] = useState<bigint>(100n);
   const [intent, setIntent] = useState<WireIntent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [sent, setSent] = useState<string | null>(null);
 
   // A BUY spends the quote asset; a SELL spends the token. The decimals differ,
   // and parsing with the wrong one would misread the amount by a factor of 10^12
@@ -135,6 +152,62 @@ export function TradePanel({
   }, [fetchQuote]);
 
   const graduated = status === "GRADUATED";
+
+  /**
+   * Approve, then trade.
+   *
+   * Two transactions, in order, each reviewed. The approval names the market as
+   * spender and the exact amount being spent — never unlimited.
+   *
+   * A SELL spends the launched token, a BUY spends the quote asset; approving
+   * the wrong one would leave the trade reverting with an allowance error that
+   * points at the other asset.
+   */
+  const submit = useCallback(async () => {
+    if (intent === null || amount === null) return;
+
+    setSubmitting(true);
+    setError(null);
+    setSent(null);
+
+    try {
+      const approval = buildApproveIntent({
+        chainId: intent.chainId,
+        token: (side === "BUY" ? quoteAsset : token) as `0x${string}`,
+        spender: market as `0x${string}`,
+        amount,
+        decimals: inputDecimals,
+        symbol: inputSymbol,
+        kind: side === "BUY" ? "APPROVE_QUOTE" : "APPROVE_TOKEN",
+      });
+
+      // The SDK builds with bigints; the wallet sends the wire shape. Only the
+      // representation changes — no value is recomputed.
+      await wallet.send({
+        kind: approval.kind,
+        chainId: approval.chainId,
+        to: approval.to,
+        data: approval.data,
+        value: approval.value.toString(),
+        review: {
+          kind: approval.review.kind,
+          summary: approval.review.summary,
+          rows: approval.review.rows,
+        },
+      });
+
+      const hash = await wallet.send(intent);
+      setSent(hash);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The transaction could not be sent. Nothing was signed.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }, [intent, amount, side, quoteAsset, token, market, inputDecimals, inputSymbol, wallet]);
 
   return (
     <div className={styles.panel}>
@@ -234,14 +307,59 @@ export function TradePanel({
         )}
       </div>
 
-      <button type="button" className={styles.submit} disabled title="Wallet signing is not enabled in this build">
-        {graduated ? "Trade on the pool" : `${side === "BUY" ? "Buy" : "Sell"} ${symbol}`}
-      </button>
+      {/*
+        One button, four states. Each says what will happen next rather than
+        failing after the fact — a submit that is enabled and then rejects is
+        the shape §42 is written against.
+      */}
+      {!wallet.available ? (
+        <button type="button" className={styles.submit} disabled>
+          No wallet found
+        </button>
+      ) : wallet.address === null ? (
+        <button
+          type="button"
+          className={styles.submit}
+          onClick={() => void wallet.connect()}
+          disabled={wallet.connecting}
+        >
+          {wallet.connecting ? "Check your wallet" : "Connect wallet"}
+        </button>
+      ) : wallet.wrongChain ? (
+        <button type="button" className={styles.submit} onClick={() => void wallet.switchChain()}>
+          Switch network
+        </button>
+      ) : (
+        <button
+          type="button"
+          className={styles.submit}
+          onClick={() => void submit()}
+          disabled={graduated || intent === null || submitting}
+        >
+          {submitting
+            ? "Confirm in your wallet"
+            : graduated
+              ? "Trade on the pool"
+              : `${side === "BUY" ? "Buy" : "Sell"} ${symbol}`}
+        </button>
+      )}
 
-      <p className={styles.submitNote}>
-        Wallet signing is not enabled in this build. The review above is the exact
-        transaction that would be signed.
-      </p>
+      {sent !== null ? (
+        <p className={styles.submitNote}>
+          Submitted. The tape updates as soon as the trade is indexed.
+        </p>
+      ) : wallet.address !== null && !graduated ? (
+        <p className={styles.submitNote}>
+          Two transactions: an approval for exactly this amount, then the trade. The
+          approval is never unlimited.
+        </p>
+      ) : (
+        <p className={styles.submitNote}>
+          The review above is the exact transaction that gets signed.
+        </p>
+      )}
+
+      {wallet.error !== null && <p className={styles.error}>{wallet.error}</p>}
     </div>
   );
 }

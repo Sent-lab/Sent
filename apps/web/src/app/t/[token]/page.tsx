@@ -176,6 +176,8 @@ export default async function TerminalPage({
         <aside className={styles.trade} aria-label="Trade">
           <TradePanel
             token={market.token}
+            market={market.market}
+            quoteAsset={market.quoteAsset}
             symbol={market.symbol}
             quoteSymbol={market.quoteSymbol}
             quoteDecimals={decimals}
