@@ -39,6 +39,7 @@ import {
   setCursor,
   recordBlock,
   markFinalized,
+  publish,
   rollbackTo,
   insertMarket,
   insertTrade,
@@ -411,6 +412,31 @@ export class Indexer {
         curveCollateral: a.newCollateral as bigint,
         lastBlock: blockNumber,
       });
+
+      // Published INSIDE the transaction. NOTIFY is delivered on commit, so a
+      // subscriber can never see a trade whose rows were rolled back — and if
+      // the process dies before committing, nothing was announced.
+      //
+      // §316: the fee split travels in full. The tape is where most users form
+      // their impression of who earns what, and aggregating it here would be the
+      // one place that impression is formed from a single number.
+      await publish(tx, {
+        type: "trade",
+        market,
+        side: isBuy ? "BUY" : "SELL",
+        trader: String(isBuy ? a.buyer : a.seller).toLowerCase(),
+        txHash: log.transactionHash ?? "0x",
+        blockNumber,
+        notional: (isBuy ? a.grossQuoteIn : a.grossQuoteOut) as bigint,
+        tokens: (isBuy ? a.tokensOut : a.tokensIn) as bigint,
+        coreFee: a.coreFee as bigint,
+        creatorFee: ceilBps(a.coreFee as bigint, 6_500n),
+        platformFee: (a.coreFee as bigint) - ceilBps(a.coreFee as bigint, 6_500n),
+        stockback: a.stockback as bigint,
+        priceAfter: 0n,
+        distributedAfter: a.newDistributed as bigint,
+        timestamp,
+      });
       return;
     }
 
@@ -422,6 +448,15 @@ export class Indexer {
         a.positionId as bigint,
         blockNumber,
       );
+
+      await publish(tx, {
+        type: "graduation",
+        market,
+        pool: String(a.pool).toLowerCase(),
+        positionId: a.positionId as bigint,
+        blockNumber,
+        timestamp,
+      });
     }
   }
 

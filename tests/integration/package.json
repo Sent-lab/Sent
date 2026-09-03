@@ -6,9 +6,12 @@
   "description": "Runs the projection SQL against a real PostgreSQL.",
   "dependencies": {
     "@sent/database": "workspace:*",
-    "@sent/worker": "workspace:*"
+    "@sent/worker": "workspace:*",
+    "@sent/realtime": "workspace:*",
+    "@sent/realtime-service": "workspace:*",
+    "ws": "^8.18.0"
   },
   "scripts": {
-    "test": "node --experimental-strip-types projection.ts"
+    "test": "node --experimental-strip-types projection.ts && node --experimental-strip-types live.ts"
   }
 }

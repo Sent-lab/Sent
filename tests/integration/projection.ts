@@ -796,6 +796,15 @@ section("Stockback funding and datasets");
   section("Reconciliation findings");
 
   {
+    // Counted as a DELTA, not against an absolute. The worker section above runs
+    // first and records findings of its own; asserting a total here made this
+    // pass in isolation and fail in sequence, which is the least useful kind of
+    // test there is.
+    const before = (await listFindings(db, 500)).length;
+
+    // Ordering is asserted BETWEEN these two rather than against position zero:
+    // the reconciliation handler above stamps its findings with the wall clock,
+    // so no fixed timestamp here is reliably the newest.
     await recordFinding(db, {
       kind: "holder_balance",
       market: MARKET,
@@ -803,24 +812,32 @@ section("Stockback funding and datasets");
       expected: "70",
       observed: "999",
       repaired: true,
-      foundAt: 1_000,
+      foundAt: 9_000_000,
     });
 
     await recordFinding(db, {
       kind: "block_gap",
+      // A finding with no market is legal: a block gap belongs to the chain,
+      // not to any one market.
       market: null,
       subject: "33",
       expected: "indexed",
       observed: "missing",
       repaired: false,
-      foundAt: 1_001,
+      foundAt: 9_000_001,
     });
 
-    const findings = await listFindings(db, 10);
-    check("findings are recorded", findings.length === 2);
-    check("newest first", findings[0]?.kind === "block_gap");
-    // A finding with no market is legal: a block gap belongs to the chain, not
-    // to any one market.
+    const findings = await listFindings(db, 500);
+    check("both findings are recorded", findings.length === before + 2);
+
+    const gapIndex = findings.findIndex((f) => f.kind === "block_gap" && f.subject === "33");
+    const balanceIndex = findings.findIndex((f) => f.observed === "999");
+
+    check("a finding with no market is stored", gapIndex >= 0);
+    check("and one with a market is too", balanceIndex >= 0);
+    // The later of the two comes first: newest first, whatever else is in the
+    // table.
+    check("newest first", gapIndex >= 0 && balanceIndex >= 0 && gapIndex < balanceIndex);
     check("a repaired finding is still kept", findings.some((f) => f.repaired));
   }
 

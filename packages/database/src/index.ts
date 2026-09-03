@@ -15,6 +15,7 @@ import { join } from "node:path";
 export * from "./client.ts";
 export * from "./repository.ts";
 export * from "./jobs.ts";
+export * from "./notify.ts";
 
 /** Lifecycle status as stored in `market_state.status` (§19). */
 export const MARKET_STATUS = {

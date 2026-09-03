@@ -213,9 +213,18 @@ importers:
       '@sent/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@sent/realtime':
+        specifier: workspace:*
+        version: link:../../packages/realtime
+      '@sent/realtime-service':
+        specifier: workspace:*
+        version: link:../../services/realtime
       '@sent/worker':
         specifier: workspace:*
         version: link:../../services/worker
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.3
 
 packages:
 

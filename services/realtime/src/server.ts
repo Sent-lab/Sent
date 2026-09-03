@@ -21,6 +21,7 @@ import {
   ReplayBuffer,
   buildFreshness,
   type RetainedMessage,
+  type Session,
 } from "./gateway.ts";
 import type { ClientMessage, ServerMessage } from "@sent/realtime";
 
@@ -46,6 +47,15 @@ export const DEFAULT_REALTIME_CONFIG: RealtimeConfig = {
 interface Connection {
   readonly socket: WebSocket;
   readonly id: string;
+  /**
+   * The session, held here rather than looked up per flush.
+   *
+   * `Gateway.open()` CONSTRUCTS a session; it is not a getter. Calling it again
+   * for an existing connection silently replaces that connection's session with
+   * an empty one and discards every subscription it had. This field is what
+   * stops that from happening on every flush tick.
+   */
+  readonly session: Session;
   alive: boolean;
 }
 
@@ -124,8 +134,9 @@ export class RealtimeServer {
 
   private onConnection(socket: WebSocket): void {
     const id = `s${this.nextId++}`;
+    // Opened exactly once, at connect, and kept.
     const session = this.gateway.open(id);
-    this.connections.set(id, { socket, id, alive: true });
+    this.connections.set(id, { socket, id, session, alive: true });
 
     socket.on("pong", () => {
       const connection = this.connections.get(id);
@@ -188,7 +199,7 @@ export class RealtimeServer {
     for (const connection of this.connections.values()) {
       if (connection.socket.readyState !== WebSocket.OPEN) continue;
 
-      const session = this.gateway.open(connection.id);
+      const { session } = connection;
       const notice = session.degradedNotice();
 
       if (notice !== null) {
