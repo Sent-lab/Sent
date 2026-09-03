@@ -158,3 +158,99 @@ history it cannot reconcile.
 
 Duration scales with `batchSize` and the RPC's `getLogs` limit, neither of which
 has been measured against HyperEVM (V-15). **That is why the backups exist.**
+
+---
+
+## A market stuck between its two graduation transactions
+
+**Symptom:** `sent_keeper_worst_wait_blocks` above
+`sent_keeper_stall_threshold_blocks`, or `GET /graduations/pending` returning
+`stalled: true`.
+
+**What the user sees:** nothing works. The market's curve is permanently closed
+and its HyperSwap pool does not exist yet, so buys and sells both revert and
+there is no other venue to send them to. This is the only state in the protocol
+where a holder can do nothing at all, which is why it pages.
+
+**Why it exists.** A full graduation costs 5,388,986 gas against the real
+HyperSwap deployment. HyperEVM's default block lane caps at 3,000,000 and runs
+at 99.8% of that in ordinary blocks, so the migration cannot ride along in the
+buy that crosses the endpoint. D-016 split it; V-20 has the measurements.
+
+**Nothing is lost while it waits.** The escrow is frozen: `distributed`,
+`curveCollateral` and `graduationDust` were fixed when the curve closed, and
+every function that could move them is `onlyPreGrad`. There is no deadline, no
+decay, and no way for the numbers to drift. The migration is late, not at risk.
+
+### First: anyone can fix this, including you, from a wallet
+
+`finalizeGraduation()` is permissionless (§16). It takes no arguments, reads no
+`msg.sender`, and pays its caller nothing. So before diagnosing the keeper:
+
+```bash
+cast send <MARKET_ADDRESS> "finalizeGraduation()" --gas-limit 8000000 --rpc-url "$RPC_URL"
+```
+
+The sending account must be opted into the **large block lane** — see below.
+This is also what the UI's finalise button does, through
+`buildFinalizeGraduationIntent`, so a user looking at their own stalled market
+can resolve it without an operator.
+
+### Then: why did the keeper not do it
+
+Read `GET /graduations/pending` and the keeper's `/metrics` together.
+
+| Reading | Meaning | Action |
+|---|---|---|
+| `sent_keeper_can_send == 0`, log says `watch-only` | no `KEEPER_PRIVATE_KEY` | set it, restart |
+| `can_send == 0`, log names a balance | account is empty | fund it with HYPE |
+| `can_send == 0`, log says the balance could not be read | RPC is down | fix the RPC; the keeper is refusing to send blind on purpose |
+| `can_send == 1`, `last_sweep_failures > 0` | the finalise itself reverts | read the reason in the logs, then the table below |
+| `absent(sent_keeper_pending_graduations)` | the keeper cannot see the database | it is not a keeper problem |
+| `sent_keeper_seconds_since_sweep` climbing | the sweep loop died | restart; the loop is meant to survive errors, so this is a bug worth keeping the logs for |
+
+### The large block lane
+
+**This is the failure mode most likely to look like something else.** A finalise
+needs ~5.4M gas. An account that has not opted into HyperEVM's large lane cannot
+have such a transaction included at all.
+
+`FINALISE_GAS_LIMIT` is set to 8,000,000 — deliberately above the 3,000,000
+default-lane ceiling — so an un-opted account is **rejected at send time** with a
+clear error rather than posting transactions that sit unmined forever. If the
+keeper's logs show sends failing outright rather than reverting, check this
+first.
+
+Opting in is a **Hyperliquid L1 action, not an EVM call**. Nothing in this
+repository can perform it, and V-20 records explicitly that the mechanism has
+**not been verified first-hand** — confirm it against current Hyperliquid
+documentation before relying on any specific procedure here.
+
+### If the finalise itself reverts
+
+| Revert | Meaning | Action |
+|---|---|---|
+| `NotGraduating()` | already finalised by someone else | none — this is the permissionless path working |
+| `RouterNotSet()` | the factory never wired a router to this market | governance calls `setRouter`; the market cannot graduate until it does |
+| `PoolPriceDiverged(expected, actual)` | a pool already exists for this pair at a different price | **escalate, do not retry.** See below. |
+| `GraduationIncomplete()` | the router returned no pool | HyperSwap-side failure; retry, and if it persists escalate |
+
+`PoolPriceDiverged` is the one that needs a person. Anyone can create a
+HyperSwap pool for any pair at any price, and every graduating market is a known
+target well in advance. D-015's price check exists so that the migration reverts
+rather than minting a market's entire liquidity into a pool a stranger priced —
+so this revert is the guard doing its job, and retrying it will fail identically
+forever. The market stays safely escrowed while the response is decided; §15
+makes spot-price continuity a hard invariant, so there is no correct way to
+finalise into a mispriced pool.
+
+### What NOT to do
+
+- **Do not add a way to skip the price check.** It is the only thing standing
+  between a graduating market and a pool an attacker priced.
+- **Do not "unstick" a market by reopening its curve.** There is no such path and
+  there must not be: §19 makes the closure permanent, and a market that could
+  reopen would let the endpoint be crossed twice.
+- **Do not wait for the keeper if a market is genuinely stalled.** The call is
+  permissionless so that nobody has to wait for one particular process, and that
+  includes you.

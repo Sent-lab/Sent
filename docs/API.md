@@ -76,7 +76,7 @@ The explore listing, as a page.
 | Query | Default | Notes |
 |---|---|---|
 | `sort` | `NEWEST` | `NEWEST`, `PROGRESS`, `VOLUME`, `HOLDERS`, `TRENDING`, `GAINERS`, `RECENTLY_GRADUATED` |
-| `status` | — | `PRE_GRAD` or `GRADUATED` |
+| `status` | — | `PRE_GRAD`, `GRADUATING`, or `GRADUATED` |
 | `quoteAsset` | — | filter to one xStock |
 | `q` | — | name, ticker, or an exact address |
 | `limit` | 25 | capped |
@@ -253,6 +253,49 @@ dataset this node computed, which nobody has signed and the vault will not
 honour.
 
 ---
+
+### `GET /v1/graduations/pending`
+
+Markets whose curve has closed and whose HyperSwap position is not minted yet.
+
+```jsonc
+{
+  "pending": [
+    {
+      "market": "0x…",
+      "token": "0x…",
+      "symbol": "NVDA1",
+      "graduatingAtBlock": "44941720",
+      "waitingBlocks": "12"
+    }
+  ],
+  "stalled": false
+}
+```
+
+**Why this is public.** Graduation is two transactions (D-016): a full migration
+costs 5,388,986 gas and HyperEVM's default block lane caps at 3,000,000, so the
+buy that crosses the endpoint closes the curve and a permissionless
+`finalizeGraduation()` mints the position afterwards.
+
+§16 requires that call to be permissionless so that no single party can freeze a
+graduated market by doing nothing — and a permissionless call that only one
+party's tooling can *find* is permissionless on paper. So the list is served to
+everyone. A keeper polls it, an operator alerts on `stalled`, and a UI can offer
+the finalise to whoever is looking at a stalled market.
+
+`waitingBlocks` is what a threshold compares against. A market passes through
+this state once and briefly, so a large value means nobody has finalised it —
+not that the market is busy. `stalled` is true when any market has waited past
+600 blocks.
+
+**Always 200, never 404, and an empty array is the healthy answer.** A caller
+that treated 404 as "nothing to do" would read a routing mistake and a quiet
+protocol identically.
+
+A market in this state has **no venue**: its curve is permanently closed and its
+pool does not exist. Quotes against it are refused with
+`MARKET_AWAITING_FINALISATION`.
 
 ## Accounts and creators
 
@@ -475,6 +518,8 @@ superset of the last.
 | `UNSUPPORTED_SORT` | 400 | not a sort this API offers |
 | `UNSUPPORTED_INTERVAL` | 400 | not a candle interval this API offers |
 | `QUOTE_UNAVAILABLE` | 503 | the chain would not answer; retryable |
+| `MARKET_AWAITING_FINALISATION` | 400 | curve closed, pool not minted yet; retryable |
+| `MARKET_GRADUATED` | 400 | trade on the HyperSwap pool instead |
 | `RATE_LIMITED` | 429 | with `Retry-After`; retryable |
 | `STATS_UNAVAILABLE` | 503 | aggregates could not be read |
 | `PULSE_UNAVAILABLE` | 503 | activity could not be read |
@@ -482,3 +527,11 @@ superset of the last.
 `retryable` is on the body. It says whether the same request unchanged could
 succeed later — which is a different question from whether the status code
 happens to be a 5xx.
+
+`MARKET_AWAITING_FINALISATION` and `MARKET_GRADUATED` are separate codes for one
+reason: they need different advice. The second sends the caller to a HyperSwap
+pool. The first must not, because at that moment there is no pool — a refusal
+that names a venue which is not there is worse than one that says nothing,
+because the caller goes looking for it. It is also the only refusal in this
+table that is a `400` and retryable, and both are correct: the request is
+well-formed and will succeed unchanged as soon as anyone finalises the market.

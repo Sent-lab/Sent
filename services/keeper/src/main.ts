@@ -81,7 +81,7 @@ async function main(): Promise<void> {
   });
 
   const operations = await serveOperations({
-    port: Number(process.env.KEEPER_METRICS_PORT ?? 9104),
+    port: Number(process.env.KEEPER_METRICS_PORT ?? 9105),
     registry,
     logger: log,
     /*

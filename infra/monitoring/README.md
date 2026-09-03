@@ -71,6 +71,7 @@ the API also exposes `/healthz` for an orchestrator's liveness probe.
 | Finalizer | `:9102/metrics` | `:9102/healthz` |
 | Worker | `:9103/metrics` | `:9103/healthz` |
 | Realtime | `:9104/metrics` | `:9104/healthz` |
+| Keeper | `:9105/metrics` | `:9105/healthz` |
 
 **Liveness is not freshness, anywhere.** `/healthz` answers "is this process
 doing its job", which is what an orchestrator restarts on. None of them report
@@ -92,6 +93,11 @@ disappears from the scrape instead of reading zero:
 - `sent_indexer_event_delay_seconds` — before the first block is written
 - `sent_finalizer_publication_age_seconds` — before the first dataset
 - `sent_worker_jobs_pending` — when the queue depth read failed
+- `sent_keeper_pending_graduations`, `sent_keeper_worst_wait_blocks` — before
+  the first sweep, and again after one fails. Zero here would mean "no market is
+  stuck", which is the reassuring reading of a keeper that cannot see the
+  database at all.
+- `sent_keeper_balance_wei` — when watch-only, or when the balance read failed
 
 **Alert on `absent()` for these, not only on their value.** A lag gauge reading
 zero during an RPC outage is the reassuring answer and it is wrong; a missing
@@ -113,6 +119,39 @@ series is honest and is the one worth catching.
 | `increase(sent_realtime_dropped_total[15m]) > 0` | warning |
 | `sent_realtime_connections > 0 and rate(sent_realtime_delivered_total[10m]) == 0` | page |
 | `rate(sent_api_rate_limited_total{route="/quote"}[15m]) > 1` | warning |
+| `sent_keeper_worst_wait_blocks > sent_keeper_stall_threshold_blocks` for 5m | **page** |
+| `absent(sent_keeper_pending_graduations)` for 10m | page |
+| `sent_keeper_can_send == 0 and sent_keeper_pending_graduations > 0` for 10m | page |
+| `sent_keeper_seconds_since_sweep > 300` | page |
+| `sent_keeper_last_sweep_failures > 0` for 15m | warning |
+
+### The keeper alerts, and why the first one is a page
+
+`sent_keeper_worst_wait_blocks` is not a queue-depth statistic. D-016 split
+graduation into two transactions because a full migration costs 5,388,986 gas
+and HyperEVM's default block lane caps at 3,000,000. Between those two
+transactions a market has **no venue at all** — the curve is permanently closed
+and the HyperSwap pool does not exist yet — so its holders cannot buy, cannot
+sell, and cannot do anything but wait.
+
+That gauge is therefore the duration of an outage for one market's users, and it
+is the only metric in this document that measures a state where a user is stuck.
+It is compared against `sent_keeper_stall_threshold_blocks`, which the keeper
+exports rather than the rule hardcoding, so changing the threshold in one place
+changes both.
+
+`can_send == 0 and pending > 0` is the specific shape of the worst failure here:
+a keeper that is running, scraping cleanly, reporting healthily, and cannot
+actually finalise anything — because it has no key, or its account is empty, or
+its account was never opted into the large block lane. Without the second half
+of that expression it would fire on every watch-only deployment; without the
+first it would never fire at all.
+
+**A lost race is deliberately not alerted on.** `finalizeGraduation` is
+permissionless by §16, so another keeper, a holder, or someone clicking a button
+in the UI getting there first is the system working exactly as designed. Those
+are recorded as `ALREADY_DONE` and never reach
+`sent_keeper_last_sweep_failures`.
 
 The realtime one is worth reading twice. Connections open and delivery flat is
 a gateway that is accepting sockets and sending nothing — which looks identical
