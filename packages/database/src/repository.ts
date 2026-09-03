@@ -361,25 +361,197 @@ export async function getMarketByToken(db: Db, token: string): Promise<MarketVie
   return row === null ? null : toMarketView(row);
 }
 
-export type ExploreSort = "NEWEST" | "PROGRESS" | "VOLUME" | "HOLDERS";
+export type ExploreSort =
+  | "NEWEST"
+  | "PROGRESS"
+  | "VOLUME"
+  | "HOLDERS"
+  | "TRENDING"
+  | "GAINERS"
+  | "RECENTLY_GRADUATED";
+
+/** The window every rate-based sort and stat is measured over (§50, §166). */
+export const WINDOW_SECONDS = 86_400;
 
 /**
- * Explore listing (§50).
+ * The 24h window, joined once and reused by every rate-based sort.
+ *
+ * `s.trade_count` is a lifetime COUNT. It was standing in for "volume", which
+ * meant a market with a hundred dust trades outranked one with a single large
+ * one — a ranking that says the opposite of what its label promises. Volume is
+ * notional, and §50's sorts are windowed rather than lifetime, or a market that
+ * was busy last month outranks one that is busy now, forever.
+ */
+const WINDOW_JOIN = `
+  LEFT JOIN LATERAL (
+    SELECT COALESCE(SUM(t.notional), 0) AS volume,
+           COUNT(*)                     AS trades,
+           (ARRAY_AGG(t.price_after ORDER BY t.block_number, t.log_index))[1] AS first_price,
+           (ARRAY_AGG(t.price_after ORDER BY t.block_number DESC, t.log_index DESC))[1] AS last_price
+    FROM trades t
+    WHERE t.market = m.market AND t.timestamp >= $WINDOW_START::BIGINT
+  ) w ON TRUE
+`;
+
+export interface ExploreOptions {
+  readonly sort: ExploreSort;
+  readonly status?: number;
+  readonly quoteAsset?: string;
+  readonly limit: number;
+  /**
+   * Free text: a name fragment, a ticker, or an address (§95.21).
+   *
+   * Addresses match EXACTLY and text matches fuzzily, because a near-miss on
+   * twenty bytes is a different market — offering it is how someone lands on the
+   * wrong token page with the right-looking name.
+   */
+  readonly query?: string;
+  /** Rows to skip. Deliberately an offset rather than a cursor — see below. */
+  readonly offset?: number;
+  /** Seconds. Defaults to 24h; passed explicitly so the window is never implied. */
+  readonly windowSeconds?: number;
+  readonly now?: number;
+}
+
+/**
+ * Explore listing (§50, §95.21).
  *
  * Ordering is chosen from a fixed set rather than interpolated, so no caller can
- * push arbitrary SQL into an ORDER BY.
+ * push arbitrary SQL into an ORDER BY. Everything variable is a bound parameter.
+ *
+ * TRENDING IS DEFINED, NOT VIBES
+ * ------------------------------
+ * §95.21 requires the trending formula to be documented so it does not become a
+ * black-box ranking with no stated reason. It is:
+ *
+ *   trending = 24h volume × log2(2 + 24h trade count) / (2 + age in days)
+ *
+ * Volume is the base, because it is the part that cannot be faked for free. The
+ * trade-count term is logarithmic so many small trades add confidence without
+ * letting a wash-trading loop outrank a market with real size. The age divisor
+ * is what makes this TRENDING rather than "biggest": a market that did the same
+ * volume on its first day outranks one that did it on its thirtieth.
+ *
+ * OFFSET, NOT A CURSOR
+ * --------------------
+ * A cursor is the right answer for a stable, append-only feed. These orderings
+ * are neither: volume, holders and trending all reorder between requests, so a
+ * cursor encoding "after this row's sort key" would silently skip or repeat rows
+ * as the data moved — and it would look correct while doing it. An offset is
+ * honestly approximate, and the freshness envelope already says the projection
+ * is moving.
  */
-export async function listMarkets(
-  db: Db,
-  options: { sort: ExploreSort; status?: number; quoteAsset?: string; limit: number },
-): Promise<MarketView[]> {
+export async function listMarkets(db: Db, options: ExploreOptions): Promise<MarketView[]> {
   const order: Record<ExploreSort, string> = {
     NEWEST: "m.launched_at DESC",
     PROGRESS: "(s.distributed::NUMERIC / NULLIF(m.qg, 0)) DESC",
-    VOLUME: "s.trade_count DESC",
+    VOLUME: "w.volume DESC",
     HOLDERS: "s.holder_count DESC",
+    TRENDING: `
+      (w.volume * LOG(2, 2 + w.trades))
+      / (2 + GREATEST(($NOW - m.launched_at)::NUMERIC / 86400, 0))
+      DESC`,
+    // Measured against the window's OPENING price, so this is the change over
+    // the window rather than distance from the launch price. A market with no
+    // trade in the window sorts last rather than as a zero gain, because "no
+    // data" and "did not move" are different answers.
+    GAINERS: `
+      CASE WHEN w.first_price > 0
+           THEN (w.last_price::NUMERIC / w.first_price)
+           ELSE NULL END DESC NULLS LAST,
+      w.volume DESC`,
+    RECENTLY_GRADUATED: "s.graduated_at_block DESC NULLS LAST",
   };
 
+  const now = options.now ?? Math.floor(Date.now() / 1000);
+  const windowStart = now - (options.windowSeconds ?? WINDOW_SECONDS);
+
+  /*
+   * Only bound when the chosen ordering actually uses it.
+   *
+   * PostgreSQL infers a parameter's type from where it appears, so a parameter
+   * that appears NOWHERE is a hard error — `could not determine data type of
+   * parameter $2` — and it fires on every sort except the one that reads it.
+   * The cast makes the type explicit rather than leaving it to inference across
+   * a division.
+   */
+  const params: unknown[] = [windowStart];
+  let nowParam = "";
+
+  if (options.sort === "TRENDING") {
+    params.push(now);
+    nowParam = `$${params.length}::BIGINT`;
+  }
+
+  const where: string[] = [];
+
+  if (options.status !== undefined) {
+    params.push(options.status);
+    where.push(`s.status = $${params.length}`);
+  }
+  if (options.quoteAsset !== undefined) {
+    params.push(toBytes(options.quoteAsset));
+    where.push(`m.quote_asset = $${params.length}`);
+  }
+  if (options.sort === "RECENTLY_GRADUATED") {
+    where.push("s.graduated_at_block IS NOT NULL");
+  }
+
+  const search = buildSearchClause(options.query, params);
+  if (search !== null) where.push(search);
+
+  params.push(options.limit);
+  const limitParam = `$${params.length}`;
+
+  params.push(options.offset ?? 0);
+  const offsetParam = `$${params.length}`;
+
+  const rows = await db.query<MarketRow>(
+    `SELECT ${MARKET_COLUMNS}
+     FROM markets m
+       JOIN market_state s ON s.market = m.market
+       LEFT JOIN blocks gb ON gb.number = s.graduated_at_block
+       ${WINDOW_JOIN.replace("$WINDOW_START", "$1")}
+     ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+     ORDER BY ${order[options.sort].replace("$NOW", nowParam)}, m.token
+     LIMIT ${limitParam} OFFSET ${offsetParam}`,
+    params,
+  );
+
+  return rows.map(toMarketView);
+}
+
+/**
+ * Search across the four identities §95.21 names, plus the quote asset.
+ *
+ * An address matches exactly on whichever column it could be. Anything else is
+ * a trigram match on name and ticker, which is what a partial ticker actually
+ * is — a full-text parser would stem it and then drop it as a stop word.
+ *
+ * Appends its own bound parameters, so the caller's numbering stays correct.
+ */
+function buildSearchClause(query: string | undefined, params: unknown[]): string | null {
+  const q = query?.trim();
+  if (q === undefined || q === "") return null;
+
+  if (/^0x[0-9a-fA-F]{40}$/.test(q)) {
+    params.push(toBytes(q));
+    const p = `$${params.length}`;
+    return `(m.token = ${p} OR m.market = ${p} OR m.creator = ${p} OR m.quote_asset = ${p})`;
+  }
+
+  // Bounded before it reaches the index. A trigram scan over a megabyte of
+  // input is a denial of service wearing a search box.
+  params.push(`%${q.slice(0, 64)}%`);
+  const p = `$${params.length}`;
+  return `(m.name ILIKE ${p} OR m.symbol ILIKE ${p})`;
+}
+
+/** How many markets a listing would return without its limit (§50 pagination). */
+export async function countMarkets(
+  db: Db,
+  options: Pick<ExploreOptions, "status" | "quoteAsset" | "query" | "sort">,
+): Promise<number> {
   const params: unknown[] = [];
   const where: string[] = [];
 
@@ -391,21 +563,21 @@ export async function listMarkets(
     params.push(toBytes(options.quoteAsset));
     where.push(`m.quote_asset = $${params.length}`);
   }
+  if (options.sort === "RECENTLY_GRADUATED") {
+    where.push("s.graduated_at_block IS NOT NULL");
+  }
 
-  params.push(options.limit);
+  const search = buildSearchClause(options.query, params);
+  if (search !== null) where.push(search);
 
-  const rows = await db.query<MarketRow>(
-    `SELECT ${MARKET_COLUMNS}
-     FROM markets m
-       JOIN market_state s ON s.market = m.market
-       LEFT JOIN blocks gb ON gb.number = s.graduated_at_block
-     ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
-     ORDER BY ${order[options.sort]}
-     LIMIT $${params.length}`,
+  const row = await db.queryOne<{ c: string }>(
+    `SELECT COUNT(*)::TEXT AS c
+     FROM markets m JOIN market_state s ON s.market = m.market
+     ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}`,
     params,
   );
 
-  return rows.map(toMarketView);
+  return Number(row?.c ?? "0");
 }
 
 // ---------------------------------------------------------------------------
@@ -1002,6 +1174,304 @@ export async function creatorAccruals(
     accrued: big(r.accrued, "accrued"),
     markets: Number(big(r.markets, "markets")),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Accounts (§64, §347)
+// ---------------------------------------------------------------------------
+
+export interface HoldingView {
+  readonly token: `0x${string}`;
+  readonly market: `0x${string}`;
+  readonly name: string;
+  readonly symbol: string;
+  readonly quoteAsset: `0x${string}`;
+  readonly quoteDecimals: number;
+  readonly status: number;
+  readonly balance: bigint;
+  /** Curve price at the market's current distribution, in normalized quote. */
+  readonly price: bigint;
+  /** balance × price, in normalized quote. The mark, not a cost basis. */
+  readonly value: bigint;
+  readonly lastBlock: bigint;
+}
+
+/**
+ * Every position one wallet holds (§64).
+ *
+ * The value is a MARK at the curve's current price, not a portfolio valuation:
+ * selling the whole position walks down the curve and returns less. §64 asks for
+ * portfolio value and this is the honest version of it — the same number the
+ * token page shows, multiplied out — with the difference left to the sell quote,
+ * which is the only thing that can answer it correctly.
+ *
+ * Zero balances are excluded. A wallet that fully exited holds nothing, and a
+ * row saying "0 TOKEN" in a holdings list is noise that grows forever.
+ */
+export async function listHoldings(
+  db: Db,
+  account: string,
+  limit = 100,
+): Promise<HoldingView[]> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT m.token, m.market, m.name, m.symbol, m.quote_asset, m.quote_decimals,
+            m.p0, m.pg, m.qg, s.status, s.distributed, b.balance, b.last_block
+     FROM balances b
+       JOIN markets m ON m.market = b.market
+       JOIN market_state s ON s.market = b.market
+     WHERE b.account = $1 AND b.balance > 0
+     ORDER BY b.balance DESC
+     LIMIT $2`,
+    [toBytes(account), Math.max(1, Math.min(limit, 200))],
+  );
+
+  return rows.map((r) => {
+    const p0 = big(r.p0, "p0");
+    const pg = big(r.pg, "pg");
+    const qG = big(r.qg, "qg");
+    const distributed = big(r.distributed, "distributed");
+    const balance = big(r.balance, "balance");
+
+    // The same linear interpolation `toMarketView`'s consumers use. Written
+    // once here rather than recomputed by every caller, because a second
+    // implementation of a price is how two screens start disagreeing.
+    const price = qG > 0n ? p0 + ((pg - p0) * distributed) / qG : p0;
+
+    return {
+      token: addr(r.token, "token"),
+      market: addr(r.market, "market"),
+      name: String(r.name),
+      symbol: String(r.symbol),
+      quoteAsset: addr(r.quote_asset, "quote_asset"),
+      quoteDecimals: Number(r.quote_decimals),
+      status: Number(r.status),
+      balance,
+      price,
+      value: (balance * price) / 10n ** 18n,
+      lastBlock: big(r.last_block, "last_block"),
+    };
+  });
+}
+
+export interface AccountStockbackRow {
+  readonly token: `0x${string}`;
+  readonly market: `0x${string}`;
+  readonly symbol: string;
+  readonly rewardAsset: `0x${string}`;
+  readonly quoteDecimals: number;
+  /** Payable against the ACTIVE root, already net of what was claimed. */
+  readonly claimable: bigint;
+  /** Everything the vault has ever paid this account on this market. */
+  readonly lifetimeClaimed: bigint;
+  /** The active root, or null when nothing is attested yet. */
+  readonly merkleRoot: `0x${string}` | null;
+}
+
+/**
+ * One account's Stockback across every market it holds or has claimed on (§347).
+ *
+ * Only ACTIVE roots contribute to `claimable`. §293 keeps estimated accrual and
+ * claimable entitlement apart, and this endpoint answers the second question
+ * only: a cross-market "claim everything" figure that included unattested
+ * arithmetic would be a total the vault will not pay.
+ *
+ * Driven from entitlements joined to the active commitment, so a holder who has
+ * exited but is still owed for a past epoch is included — leaving them out
+ * because their balance is now zero would strand money they earned.
+ */
+export async function accountStockback(
+  db: Db,
+  account: string,
+): Promise<AccountStockbackRow[]> {
+  const rows = await db.query<Record<string, unknown>>(
+    `WITH active AS (
+       SELECT DISTINCT ON (c.market) c.market, c.merkle_root
+       FROM stockback_commitments c
+       WHERE c.activated_at_block IS NOT NULL AND c.cancelled_at_block IS NULL
+       ORDER BY c.market, c.submitted_at_block DESC
+     ),
+     claimed AS (
+       SELECT market, MAX(cumulative) AS cumulative
+       FROM stockback_claims WHERE account = $1 GROUP BY market
+     ),
+     owed AS (
+       /* Entitlements are keyed by epoch sequence, not by root; the dataset is
+          what carries the root. Joining through it is what ties an entitlement
+          to the commitment the chain actually activated — an entitlement from a
+          newer, unattested dataset must not count as claimable. */
+       SELECT e.market, e.cumulative
+       FROM stockback_entitlements e
+         JOIN stockback_datasets d
+           ON d.market = e.market AND d.epoch_sequence = e.epoch_sequence
+         JOIN active a ON a.market = e.market AND a.merkle_root = d.merkle_root
+       WHERE e.account = $1
+     )
+     SELECT m.token, m.market, m.symbol, m.quote_asset, m.quote_decimals,
+            a.merkle_root,
+            COALESCE(o.cumulative, 0) AS cumulative,
+            COALESCE(cl.cumulative, 0) AS claimed
+     FROM markets m
+       LEFT JOIN active a  ON a.market = m.market
+       LEFT JOIN owed o    ON o.market = m.market
+       LEFT JOIN claimed cl ON cl.market = m.market
+     WHERE o.cumulative IS NOT NULL OR cl.cumulative IS NOT NULL
+     ORDER BY m.launched_at DESC`,
+    [toBytes(account)],
+  );
+
+  return rows.map((r) => {
+    const cumulative = big(r.cumulative, "cumulative");
+    const claimed = big(r.claimed, "claimed");
+
+    return {
+      token: addr(r.token, "token"),
+      market: addr(r.market, "market"),
+      symbol: String(r.symbol),
+      rewardAsset: addr(r.quote_asset, "quote_asset"),
+      quoteDecimals: Number(r.quote_decimals),
+      // Floored at zero. A holder who claimed under a LATER root than the one
+      // currently active would otherwise show a negative balance, which is not
+      // a state the vault can be in — it reverts on the underflow.
+      claimable: cumulative > claimed ? cumulative - claimed : 0n,
+      lifetimeClaimed: claimed,
+      merkleRoot: r.merkle_root === null ? null : hexBytes(r.merkle_root, "merkle_root"),
+    };
+  });
+}
+
+export interface ClaimRow {
+  readonly market: `0x${string}`;
+  readonly token: `0x${string}`;
+  readonly symbol: string;
+  readonly amount: bigint;
+  readonly cumulative: bigint;
+  readonly blockNumber: bigint;
+  readonly timestamp: number;
+}
+
+/** An account's claim history, newest first (§346). */
+export async function listClaimsByAccount(
+  db: Db,
+  account: string,
+  limit = 50,
+): Promise<ClaimRow[]> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT c.market, m.token, m.symbol, c.amount, c.cumulative,
+            c.block_number, c.timestamp
+     FROM stockback_claims c JOIN markets m ON m.market = c.market
+     WHERE c.account = $1
+     ORDER BY c.block_number DESC, c.log_index DESC
+     LIMIT $2`,
+    [toBytes(account), Math.max(1, Math.min(limit, 200))],
+  );
+
+  return rows.map((r) => ({
+    market: addr(r.market, "market"),
+    token: addr(r.token, "token"),
+    symbol: String(r.symbol),
+    amount: big(r.amount, "amount"),
+    cumulative: big(r.cumulative, "cumulative"),
+    blockNumber: big(r.block_number, "block_number"),
+    timestamp: Number(big(r.timestamp, "timestamp")),
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Platform statistics (§166, §168)
+// ---------------------------------------------------------------------------
+
+export interface PlatformStats {
+  readonly totalLaunches: number;
+  readonly activePreGrad: number;
+  readonly graduated: number;
+  /** Lifetime notional, normalized to 18 decimals. */
+  readonly totalVolume: bigint;
+  readonly windowVolume: bigint;
+  readonly creatorFeesEarned: bigint;
+  readonly stockbackDistributed: bigint;
+  readonly activeQuoteAssets: number;
+  readonly launchableQuoteAssets: number;
+  readonly uniqueTraders: number;
+  readonly windowLaunches: number;
+  readonly windowGraduations: number;
+  readonly windowTrades: number;
+  /** The highest block any of this was read through. */
+  readonly asOfBlock: bigint;
+}
+
+/**
+ * §166's metrics, from §168's sources.
+ *
+ * Every figure here is counted from the projection's own tables — the same rows
+ * the market pages are built from — rather than kept as running totals. A
+ * counter that is incremented per event is the thing that survives a reorg and
+ * then quietly disagrees with the data it claims to summarise; §168's rule
+ * against vanity metrics is easier to keep when nothing is stored separately to
+ * go wrong.
+ *
+ * ONE ROUND TRIP
+ * --------------
+ * Written as a single statement with CTEs rather than a dozen queries. This is
+ * a homepage endpoint, so it will be called by everyone who visits, and twelve
+ * sequential round trips is how a stats block becomes the slowest thing on the
+ * page.
+ *
+ * "Active xStock Pairs" is the registry's count (§168), not a DISTINCT over
+ * markets: an asset that is verified and enabled is an available pair whether or
+ * not anyone has launched against it yet.
+ */
+export async function platformStats(
+  db: Db,
+  options: { now?: number; windowSeconds?: number } = {},
+): Promise<PlatformStats> {
+  const now = options.now ?? Math.floor(Date.now() / 1000);
+  const windowStart = now - (options.windowSeconds ?? WINDOW_SECONDS);
+
+  const row = await db.queryOne<Record<string, unknown>>(
+    `SELECT
+       (SELECT COUNT(*) FROM markets)::TEXT                                    AS total_launches,
+       (SELECT COUNT(*) FROM market_state WHERE status = 0)::TEXT              AS active_pre_grad,
+       (SELECT COUNT(*) FROM market_state WHERE status = 2)::TEXT              AS graduated,
+       (SELECT COALESCE(SUM(notional), 0) FROM trades)::TEXT                   AS total_volume,
+       (SELECT COALESCE(SUM(notional), 0) FROM trades WHERE timestamp >= $1)::TEXT
+                                                                               AS window_volume,
+       (SELECT COALESCE(SUM(creator_amount), 0) FROM fee_accruals)::TEXT       AS creator_fees,
+       (SELECT COALESCE(SUM(amount), 0) FROM stockback_claims)::TEXT           AS stockback_claimed,
+       (SELECT COUNT(*) FROM xstock_assets)::TEXT                              AS assets,
+       (SELECT COUNT(*) FROM xstock_assets WHERE enabled_for_new_launches)::TEXT
+                                                                               AS launchable_assets,
+       (SELECT COUNT(DISTINCT trader) FROM trades)::TEXT                       AS unique_traders,
+       (SELECT COUNT(*) FROM markets WHERE launched_at >= $1)::TEXT            AS window_launches,
+       (SELECT COUNT(*) FROM market_state s JOIN blocks b ON b.number = s.graduated_at_block
+         WHERE b.timestamp >= $1)::TEXT                                        AS window_graduations,
+       (SELECT COUNT(*) FROM trades WHERE timestamp >= $1)::TEXT               AS window_trades,
+       (SELECT COALESCE(MAX(number), 0) FROM blocks)::TEXT                     AS as_of_block`,
+    [windowStart],
+  );
+
+  const n = (key: string): number => Number(row?.[key] ?? "0");
+  const b = (key: string): bigint => BigInt(String(row?.[key] ?? "0"));
+
+  return {
+    totalLaunches: n("total_launches"),
+    activePreGrad: n("active_pre_grad"),
+    graduated: n("graduated"),
+    totalVolume: b("total_volume"),
+    windowVolume: b("window_volume"),
+    creatorFeesEarned: b("creator_fees"),
+    // What holders have actually been PAID, not what has been funded. §168
+    // wants figures that mean what they say, and "distributed" claimed for
+    // money still sitting in the vault would be one of the vanity metrics it
+    // forbids.
+    stockbackDistributed: b("stockback_claimed"),
+    activeQuoteAssets: n("assets"),
+    launchableQuoteAssets: n("launchable_assets"),
+    uniqueTraders: n("unique_traders"),
+    windowLaunches: n("window_launches"),
+    windowGraduations: n("window_graduations"),
+    windowTrades: n("window_trades"),
+    asOfBlock: b("as_of_block"),
+  };
 }
 
 // ---------------------------------------------------------------------------
