@@ -19,8 +19,35 @@ import {IGraduationRouter} from "./interfaces/IGraduationRouter.sol";
 /// LIFECYCLE (§19) — exactly one canonical venue per state:
 ///
 ///   PRE_GRAD    curve is the canonical venue; buy and sell both live
-///   GRADUATING  transient, single-transaction; no competing state mutation
+///   GRADUATING  curve permanently closed, HyperSwap position not yet minted;
+///               NO state mutation of any kind is reachable in this state
 ///   GRADUATED   curve permanently dead; HyperSwap is the canonical venue
+///
+/// GRADUATING IS A REAL STATE, NOT A TRANSIENT ONE (D-016, V-20)
+/// ------------------------------------------------------------
+/// It was written as a single-transaction flicker, because §14 graduates inside
+/// the buy that crosses the endpoint. That does not fit on this chain.
+///
+/// HyperEVM produces two block lanes. The default one caps at 3,000,000 gas and
+/// runs at 99.8% of that ceiling in ordinary blocks; the opt-in one caps at
+/// 30,000,000 and is produced roughly once in 120 blocks. A full graduation
+/// measures 5,395,811 gas, of which HyperSwap's own `createPool` is 2,777,465 -
+/// 92.6% of an entire default-lane block before this protocol does anything.
+///
+/// So a crossing buy could not be included at all for a buyer on the default
+/// lane, which is essentially every buyer. The market would stall one wei short
+/// of graduating, permanently, since every retry fails identically.
+///
+/// §16 and §95.6 prescribe the answer for exactly this case: "jika dependency
+/// eksternal mengharuskan retryable workflow" - deterministic escrow, a
+/// permissionless `finalizeGraduation()`, idempotent retry, and no privilege for
+/// the caller who finalises. The block lane is that external dependency.
+///
+/// The escrow is deterministic because there is nothing left to determine. When
+/// the curve closes, `distributed`, `curveCollateral` and `graduationDust` are
+/// fixed by curve math, and every function that could move them is `onlyPreGrad`.
+/// `finalizeGraduation` reads frozen state; it cannot be front-run into a
+/// different migration ratio, because there is no other ratio to reach.
 ///
 /// The masterplan is honest that a freely transferable ERC-20 cannot stop third
 /// parties from opening unofficial pools. The invariant is about PROTOCOL-canonical
@@ -132,7 +159,17 @@ contract LaunchMarket is ReentrancyGuard {
         address indexed token, address indexed pool, uint256 positionId, uint256 tokenAmount, uint256 quoteAmount
     );
 
-    event CrossingBuy(uint256 preGradGross, uint256 postGradGross, uint256 totalTokensOut);
+    /// @dev `refundedGross` is quote returned to the buyer unspent, in normalized
+    ///      units. It is NOT a post-graduation fill: see `_executeCrossingBuy`.
+    event CrossingBuy(uint256 preGradGross, uint256 refundedGross, uint256 totalTokensOut);
+
+    /// @dev The curve closed and the migration is now owed. Emitted in the buy
+    ///      that crosses; `Graduated` follows from `finalizeGraduation`. An
+    ///      indexer seeing this without a matching `Graduated` is looking at a
+    ///      market that needs a finaliser, which is exactly the alert (V-20).
+    event GraduationPending(
+        address indexed token, uint256 tokenAmount, uint256 quoteAmount, uint256 pg
+    );
     event RouterSet(address indexed router);
     event MarketInitialised(
         address indexed token,
@@ -157,6 +194,7 @@ contract LaunchMarket is ReentrancyGuard {
     error RouterNotSet();
     error RouterAlreadySet();
     error GraduationIncomplete();
+    error NotGraduating();
     error ZeroAddress();
     error FeeSearchFailed(uint256 gross, uint256 targetNet);
     error CrossingUnderCollateralised(uint256 net, uint256 required);
@@ -323,24 +361,49 @@ contract LaunchMarket is ReentrancyGuard {
             buyer, preGradGross, netToEndpoint, curveTokens, f.coreFee, f.stockback, distributed, curveCollateral
         );
 
-        // Graduate atomically. Any failure here reverts the entire user action —
-        // there is no GRADUATED status without a complete migration (§16).
-        _graduate();
+        // Close the curve. This is §14 step 3, and on this chain it is where the
+        // user's transaction ends — the migration itself cannot fit in the block
+        // lane an ordinary buyer sends to (V-20, D-016, and the note on the
+        // GRADUATING state above).
+        _enterGraduating();
 
-        uint256 postGradGross = grossNormalized - preGradGross;
-        uint256 postGradTokens = 0;
+        /*
+         * The excess is REFUNDED, not swapped.
+         *
+         * §14's crossing order says public UX "boleh bablas" through graduation
+         * — may, not must — and makes the blended bound a requirement only where
+         * a blended execution exists. Here none does: at this instant the pool
+         * has not been created, so there is no venue to route the remainder to
+         * and no price at which to route it.
+         *
+         * Refunding is the honest settlement of that. The buyer paid the curve
+         * for exactly what the curve sold them and gets the rest of their money
+         * back in the same transaction — never a claim to chase later.
+         *
+         * It also closes V-19 rather than mitigating it. That row is open
+         * because `minTokensOut` bounds the curve leg while the post-grad leg
+         * rode along unprotected, so a user's slippage limit covered part of
+         * their own trade. With no post-grad leg, the curve leg IS the trade and
+         * the bound covers all of it. The weaker-than-§14 bound is not being
+         * accepted as a risk; it stops existing.
+         */
+        uint256 refundGross = grossNormalized - preGradGross;
 
-        if (postGradGross > 0) {
-            // Post-grad notional pays HyperSwap's fee, never PRE_GRAD rates (§411).
-            uint256 raw = _denormalizeForPayout(postGradGross);
-            if (raw > 0) {
-                IERC20(QUOTE_ASSET).safeTransfer(address(router), raw);
-                postGradTokens = router.swapExactQuoteForToken(TOKEN, QUOTE_ASSET, raw, buyer);
-            }
+        if (refundGross > 0) {
+            uint256 refundRaw = _denormalizeForPayout(refundGross);
+
+            // `toRawForPayout` rounds down, so on a sub-18-decimal quote asset a
+            // sliver smaller than one raw unit cannot be returned. It is booked
+            // as dust and migrates into the LP, which is holder-neutral (§417).
+            // Leaving it unbooked would strand it in a market that never trades
+            // again — the one outcome nobody benefits from.
+            graduationDust += refundGross - _normalize(refundRaw);
+
+            if (refundRaw > 0) IERC20(QUOTE_ASSET).safeTransfer(buyer, refundRaw);
         }
 
-        tokensOut = curveTokens + postGradTokens;
-        emit CrossingBuy(preGradGross, postGradGross, tokensOut);
+        tokensOut = curveTokens;
+        emit CrossingBuy(preGradGross, refundGross, tokensOut);
     }
 
     // -----------------------------------------------------------------------
@@ -559,11 +622,51 @@ contract LaunchMarket is ReentrancyGuard {
     // Graduation (§14, §15, §16)
     // -----------------------------------------------------------------------
 
-    function _graduate() private {
+    /// @dev §14 step 3. Closes the curve and nothing else — no external call, no
+    ///      token movement, no room to fail.
+    ///
+    ///      The router is checked HERE, not in `finalizeGraduation`. A market
+    ///      with no router that entered GRADUATING would be sealed: the curve is
+    ///      shut and the migration has nowhere to go. Reverting the buy instead
+    ///      leaves the market tradeable, which is the recoverable failure.
+    function _enterGraduating() private {
         if (address(router) == address(0)) revert RouterNotSet();
 
         status = Status.GRADUATING;
 
+        emit GraduationPending(
+            TOKEN, Curve.TOTAL_SUPPLY - distributed, curveCollateral, curve.pg
+        );
+    }
+
+    /// @notice Mint the permanent HyperSwap position and finish graduation.
+    ///
+    /// @dev PERMISSIONLESS, and deliberately so (§16, §95.6).
+    ///
+    ///      The caller pays ~4.5M gas and receives nothing for it: no collateral
+    ///      ownership, no LP ownership, no creator rights, no fee share, no
+    ///      economic privilege of any kind. §16 lists those four exclusions by
+    ///      name and this function satisfies them by having no parameter and no
+    ///      use of `msg.sender` — there is nothing to point at the caller.
+    ///
+    ///      Anyone may call it because a permissioned finaliser is a party who
+    ///      can freeze a graduated market by doing nothing. Whoever gets there
+    ///      first does the same thing, since every input is already frozen.
+    ///
+    ///      Retry is idempotent by state rather than by bookkeeping: the status
+    ///      check admits exactly one success, and any failure reverts the whole
+    ///      call, leaving GRADUATING intact for the next attempt. There is no
+    ///      half-migrated state to reconcile, which is §16's "tidak boleh ada
+    ///      TOKEN atau xStock orphaned akibat partial transition".
+    ///
+    ///      This needs HyperEVM's large block lane. That is a deployment fact,
+    ///      not a contract one, and it is recorded in the recovery runbook.
+    function finalizeGraduation() external nonReentrant returns (address pool_, uint256 positionId_) {
+        if (status != Status.GRADUATING) revert NotGraduating();
+        return _migrate();
+    }
+
+    function _migrate() private returns (address, uint256) {
         // The reserve is DERIVED FROM CURVE STATE, never read as a balance.
         //
         // This contract treats collateral as a liability rather than a balance
@@ -610,6 +713,8 @@ contract LaunchMarket is ReentrancyGuard {
         status = Status.GRADUATED;
 
         emit Graduated(TOKEN, pool_, positionId_, tokenRaw, quoteRaw);
+
+        return (pool_, positionId_);
     }
 
     // -----------------------------------------------------------------------

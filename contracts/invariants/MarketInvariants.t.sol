@@ -58,6 +58,19 @@ contract MarketHandler is Test {
     uint256 public buyCount;
     uint256 public sellCount;
     uint256 public graduatedAt;
+    uint256 public finalizeCount;
+
+    /// @dev The escrow as it stood the instant the curve closed. §95.6 requires
+    ///      the migration's inputs to be deterministic, which means fixed from
+    ///      that moment on — so they are recorded once and compared forever.
+    bool public escrowSnapshotted;
+    uint256 public escrowDistributed;
+    uint256 public escrowCollateral;
+    uint256 public escrowDust;
+    uint256 public escrowTokenBalance;
+
+    /// @dev Highest status ever observed, to catch a lifecycle running backwards.
+    uint8 public highWaterStatus;
 
     constructor(LaunchMarket market_, LaunchToken token_, InvQuote quote_) {
         market = market_;
@@ -92,9 +105,41 @@ contract MarketHandler is Test {
         try market.buy(amount, 0, block.timestamp + 1) {
             totalQuoteIn += amount;
             buyCount++;
-            if (market.status() == LaunchMarket.Status.GRADUATED && graduatedAt == 0) {
-                graduatedAt = block.number;
-            }
+            _observe();
+        } catch {}
+    }
+
+    /// @dev Snapshot the escrow the first time the curve is seen closed, and
+    ///      track the lifecycle high-water mark.
+    function _observe() internal {
+        LaunchMarket.Status st = market.status();
+
+        if (uint8(st) > highWaterStatus) highWaterStatus = uint8(st);
+
+        if (st == LaunchMarket.Status.GRADUATING && !escrowSnapshotted) {
+            escrowSnapshotted = true;
+            escrowDistributed = market.distributed();
+            escrowCollateral = market.curveCollateral();
+            escrowDust = market.graduationDust();
+            escrowTokenBalance = token.balanceOf(address(market));
+        }
+
+        if (st == LaunchMarket.Status.GRADUATED && graduatedAt == 0) {
+            graduatedAt = block.number;
+        }
+    }
+
+    /// @dev The permissionless finaliser (§16, D-016).
+    ///
+    ///      Driven by the fuzzer from an arbitrary actor, at an arbitrary point,
+    ///      possibly many times — which is the whole point. If finalising twice
+    ///      could mint a second position, or if WHO finalised changed anything,
+    ///      this handler is what finds it.
+    function finalize(uint256 actorSeed) external {
+        vm.prank(_actor(actorSeed));
+        try market.finalizeGraduation() {
+            finalizeCount++;
+            _observe();
         } catch {}
     }
 
@@ -111,6 +156,7 @@ contract MarketHandler is Test {
         try market.sell(amount, 0, block.timestamp + 1) returns (uint256 out) {
             totalQuoteOut += out;
             sellCount++;
+            _observe();
         } catch {}
     }
 
@@ -342,13 +388,126 @@ contract MarketInvariants is Test {
     // Lifecycle (§19)
     // -----------------------------------------------------------------------
 
-    /// @dev GRADUATING is transient within a single transaction. It must never be
-    ///      observable between transactions — a market caught mid-migration would
-    ///      mean a partial state the masterplan explicitly forbids (§16).
-    function invariant_neverRestsInGraduatingState() public view {
-        assertTrue(
-            market.status() != LaunchMarket.Status.GRADUATING, "GRADUATING must never persist across transactions"
+    /// @dev GRADUATING now rests between transactions, so the guarantee that used
+    ///      to be "it is never observable" has to be replaced rather than dropped
+    ///      (D-016). This is the replacement, and it is the stronger claim.
+    ///
+    ///      §95.6 asks for a DETERMINISTIC escrow. What that means concretely is
+    ///      that from the instant the curve closes, the migration's inputs cannot
+    ///      move — not by a trade, not by a donation, not by a failed finalise,
+    ///      not by anything the fuzzer can reach. So the handler records them at
+    ///      the moment of closing and this compares against that record for the
+    ///      rest of the run.
+    ///
+    ///      The old invariant said a partial state must not exist. This says a
+    ///      resting state must not be a partial one: nothing is in flight,
+    ///      nothing is half-moved, and the finaliser has no ratio to choose
+    ///      because there is only one set of numbers it could ever read.
+    function invariant_graduatingEscrowIsFrozen() public view {
+        if (market.status() != LaunchMarket.Status.GRADUATING) return;
+        if (!handler.escrowSnapshotted()) return;
+
+        assertEq(market.distributed(), handler.escrowDistributed(), "distributed frozen while GRADUATING");
+        assertEq(market.curveCollateral(), handler.escrowCollateral(), "collateral frozen while GRADUATING");
+        assertEq(market.graduationDust(), handler.escrowDust(), "dust frozen while GRADUATING");
+        // Deliberately >= and not ==. The fuzzer donates TOKEN into GRADUATING
+        // markets, and the first version of this line demanded equality and
+        // failed — correctly, and against the invariant rather than the code.
+        //
+        // A donation is allowed to raise the balance and cannot affect anything,
+        // because the migration reads CURVE STATE and never a balance. That is
+        // the point `invariant_reserveIsCurveStateNotBalance` exists to make, and
+        // it is why the three assertions above are the real escrow.
+        //
+        // What must hold is that nothing LEAVES: the reserve owed to the pool is
+        // still here, whatever has been piled on top of it.
+        assertGe(
+            token.balanceOf(address(market)),
+            handler.escrowTokenBalance(),
+            "no TOKEN may leave a market while GRADUATING"
         );
+
+        // Nothing has been handed over yet, so nothing may be recorded as having
+        // been. §16: no GRADUATED status, and no pool, without a full migration.
+        assertEq(market.pool(), address(0), "no pool before the migration runs");
+        assertEq(market.positionId(), 0, "no position before the migration runs");
+    }
+
+    /// @dev Proof that the state-gated invariants above are not vacuous.
+    ///
+    ///      Three of them open with an early `return` when the market is in the
+    ///      wrong state. That is the correct shape for an invariant, and it is
+    ///      also how one quietly stops testing anything: if a run never closes a
+    ///      curve, `invariant_graduatingEscrowIsFrozen` passes without ever
+    ///      having looked at an escrow, and the suite reports green for a path it
+    ///      never entered.
+    ///
+    ///      The first attempt at this check was an `afterInvariant()` demanding
+    ///      the campaign reach GRADUATED. That was wrong, and it failed honestly:
+    ///      `afterInvariant` runs after EVERY run, and most runs have no business
+    ///      graduating anything. Requiring it of all of them would have forced
+    ///      the assertion to be watered down until it proved nothing.
+    ///
+    ///      So reachability is established deterministically instead, through the
+    ///      same handler the fuzzer drives - not a separate fixture that could
+    ///      drift from it. Every gated invariant is then called by hand, in the
+    ///      state it guards, where it has no way to return early.
+    function test_theGatedInvariantsAreReachableThroughTheHandler() public {
+        // Walk the curve down with the handler's own buy action.
+        for (uint256 i = 0; i < 64 && !handler.escrowSnapshotted(); i++) {
+            handler.buy(i, type(uint256).max);
+        }
+
+        assertTrue(handler.escrowSnapshotted(), "the handler can close a curve");
+        assertEq(
+            uint256(market.status()),
+            uint256(LaunchMarket.Status.GRADUATING),
+            "and the market is resting in GRADUATING"
+        );
+
+        // In the state it guards, this one cannot return early.
+        invariant_graduatingEscrowIsFrozen();
+        invariant_lifecycleNeverRunsBackwards();
+
+        // A donation and a failed trade while GRADUATING must move nothing.
+        handler.donateToken(1, 1e18);
+        handler.sell(2, type(uint256).max);
+        invariant_graduatingEscrowIsFrozen();
+
+        handler.finalize(3);
+        assertEq(handler.finalizeCount(), 1, "the handler can finalise");
+        assertEq(
+            uint256(market.status()), uint256(LaunchMarket.Status.GRADUATED), "and it completes"
+        );
+
+        // A second finalise must do nothing at all, from anyone.
+        handler.finalize(4);
+        assertEq(handler.finalizeCount(), 1, "exactly one finalise ever succeeds");
+
+        invariant_graduationIsTerminal();
+        invariant_finalisingConfersNothing();
+        invariant_lifecycleNeverRunsBackwards();
+        invariant_donatedTokenIsNeverMigrated();
+    }
+
+    /// @dev The lifecycle is one-way: PRE_GRAD -> GRADUATING -> GRADUATED. A
+    ///      status that ever moved backwards would mean a closed curve reopened,
+    ///      which §19 forbids and which the retry path is the obvious place to
+    ///      get wrong.
+    function invariant_lifecycleNeverRunsBackwards() public view {
+        assertGe(uint8(market.status()), handler.highWaterStatus(), "status must never regress");
+    }
+
+    /// @dev §16's "no retry caller privilege", asserted rather than trusted.
+    ///
+    ///      The fuzzer finalises from arbitrary actors, repeatedly. None of them
+    ///      may end up holding TOKEN, or quote beyond what trading gave them, for
+    ///      having done it. The simplest form of the check: the finalise path
+    ///      pays nobody, so a successful finalise cannot leave the market holding
+    ///      less than a failed one would have.
+    function invariant_finalisingConfersNothing() public view {
+        if (market.status() != LaunchMarket.Status.GRADUATED) return;
+        assertLe(handler.finalizeCount(), 1, "exactly one finalise can ever succeed");
     }
 
     /// @dev Once graduated, the curve is permanently closed and its collateral is

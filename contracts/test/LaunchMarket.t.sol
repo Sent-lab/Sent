@@ -276,8 +276,34 @@ contract LaunchMarketTest is Test {
 
     /// @dev Walk the curve to the endpoint and confirm graduation is automatic,
     ///      complete, and permanently closes the curve.
+    ///
+    ///      "Automatic" survives D-016 intact, and it is worth being exact about
+    ///      why. The buy that reaches the endpoint closes the curve by itself —
+    ///      nobody decides, and `test_noCallerCanTriggerGraduationManually`
+    ///      proves nobody can. What the second transaction does is carry out a
+    ///      migration that is already owed and whose every input is frozen. It
+    ///      chooses nothing.
     function test_graduationIsAutomaticAndClosesTheCurve() public {
-        _walkToGraduation();
+        _buy(alice, 40e18);
+        _buyToEndpoint(bob);
+
+        // The curve is dead the instant the endpoint is reached, before anyone
+        // has finalised anything. This is the half that must be automatic.
+        assertEq(
+            uint256(market.status()),
+            uint256(LaunchMarket.Status.GRADUATING),
+            "the crossing buy closed the curve on its own"
+        );
+
+        vm.prank(alice);
+        vm.expectRevert(LaunchMarket.NotPreGrad.selector);
+        market.buy(1e18, 0, block.timestamp + 1);
+
+        vm.prank(alice);
+        vm.expectRevert(LaunchMarket.NotPreGrad.selector);
+        market.sell(1e18, 0, block.timestamp + 1);
+
+        _finalize();
 
         assertEq(uint256(market.status()), uint256(LaunchMarket.Status.GRADUATED), "must be GRADUATED");
         assertTrue(market.pool() != address(0), "pool recorded");
@@ -315,6 +341,7 @@ contract LaunchMarketTest is Test {
         assertGt(donation, 0, "the donation must actually be non-trivial");
 
         _buyToEndpoint(bob);
+        _finalize();
 
         (,,, uint256 qG) = market.curve();
         uint256 expectedReserve = token.totalSupply() - qG;
@@ -349,19 +376,56 @@ contract LaunchMarketTest is Test {
         assertEq(router.lastPrice(), _curveParams().pg, "pool opens at final marginal price");
     }
 
-    /// @dev §16: a failed migration must revert everything. No GRADUATED status
-    ///      with an incomplete migration, no orphaned assets.
-    function test_failedGraduationRevertsEntirely() public {
+    /// @dev §16 under the retryable branch (§95.6, D-016).
+    ///
+    ///      The requirement that survives verbatim is the one that matters: no
+    ///      `GRADUATED` status without a complete migration, and no orphaned
+    ///      TOKEN or xStock from a partial one. What changes is where a failure
+    ///      lands. It no longer unwinds the user's buy — it leaves the market in
+    ///      GRADUATING with every input still frozen, which is the state §95.6
+    ///      calls "deterministic escrow, idempotent retry".
+    ///
+    ///      That is strictly better for the buyer, too. Under the atomic design
+    ///      a HyperSwap outage meant their trade reverted; now their curve fill
+    ///      stands and only the migration waits.
+    function test_failedMigrationLeavesARetryableEscrow() public {
         router.setShouldFail(true);
 
-        uint256 grossNeeded = _prepareEndpointBuy(alice);
+        _buy(alice, 40e18);
+        _buyToEndpoint(bob);
 
-        vm.prank(alice);
+        uint256 reserveBefore = token.balanceOf(address(market));
+        uint256 collateralBefore = market.curveCollateral();
+
+        vm.prank(FINALISER);
         vm.expectRevert(LaunchMarket.GraduationIncomplete.selector);
-        market.buy(grossNeeded, 0, block.timestamp + 1);
+        market.finalizeGraduation();
 
-        assertEq(uint256(market.status()), uint256(LaunchMarket.Status.PRE_GRAD), "must stay PRE_GRAD");
-        assertGt(token.balanceOf(address(market)), 0, "reserve not orphaned");
+        assertEq(
+            uint256(market.status()),
+            uint256(LaunchMarket.Status.GRADUATING),
+            "no GRADUATED status without a complete migration"
+        );
+        assertEq(token.balanceOf(address(market)), reserveBefore, "reserve not orphaned");
+        assertEq(market.curveCollateral(), collateralBefore, "collateral not orphaned");
+
+        // Idempotent retry: the escrow is unchanged, so the same call succeeds
+        // once the external dependency recovers. Nothing had to be reconciled.
+        router.setShouldFail(false);
+        _finalize();
+
+        assertEq(uint256(market.status()), uint256(LaunchMarket.Status.GRADUATED), "retry completes it");
+        assertEq(market.curveCollateral(), 0, "and only then is collateral zeroed");
+    }
+
+    /// @dev §16: finalising twice must not mint a second position. The status
+    ///      check is the whole mechanism, so it is asserted rather than assumed.
+    function test_graduationCannotHappenTwice() public {
+        _walkToGraduation();
+
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(LaunchMarket.NotGraduating.selector);
+        market.finalizeGraduation();
     }
 
     /// @dev section 14: graduation has no manual trigger, for anyone.
@@ -466,10 +530,24 @@ contract LaunchMarketTest is Test {
         return market.buy(grossNeeded, 0, block.timestamp + 1);
     }
 
+    /// @dev Two transactions, because that is what graduation is on this chain
+    ///      (D-016). `_buyToEndpoint` closes the curve; the migration follows.
+    ///      The finaliser is a stranger to the market on purpose — if any of
+    ///      these assertions ever needed a privileged caller here, §16's
+    ///      "no retry caller privilege" would have been broken.
     function _walkToGraduation() internal {
         // A partial buy first, so graduation happens from a non-zero state.
         _buy(alice, 40e18);
         _buyToEndpoint(bob);
+        _finalize();
+    }
+
+    /// @dev Nobody. No creator, no governance, no factory, no trader in any test.
+    address internal constant FINALISER = address(0xF1A115E);
+
+    function _finalize() internal {
+        vm.prank(FINALISER);
+        market.finalizeGraduation();
     }
 
     function _curveParams() internal view returns (Curve.Params memory p) {

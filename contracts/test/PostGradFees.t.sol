@@ -129,17 +129,22 @@ contract PostGradFeesTest is Test {
 
         market = LaunchMarket(marketAddress);
 
-        // Buy all the way through graduation in one order. §411's crossing
-        // order: the part before the endpoint fills on the curve, the rest is
-        // swapped on the pool that graduation just created — so the mock swap
-        // router needs TOKEN to deliver.
+        // Buy through the endpoint, then finalise. Two transactions rather than
+        // one, because the migration does not fit in a default-lane block on
+        // this chain (D-016). The crossing buy refunds the unspent remainder, so
+        // no mock swap has to deliver anything.
         quote.mint(trader, 1_000_000e6);
-        deal(token, address(swapRouter), 1e36);
 
         vm.startPrank(trader);
         quote.approve(address(market), type(uint256).max);
         market.buy(60_000e6, 0, block.timestamp + 1);
         vm.stopPrank();
+
+        assertEq(uint256(market.status()), 1, "the curve closed, migration owed");
+
+        // Permissionless: a party with no relationship to this market at all.
+        vm.prank(address(0xF1)); 
+        market.finalizeGraduation();
 
         assertEq(uint256(market.status()), 2, "the market graduated");
         positionId = market.positionId();
