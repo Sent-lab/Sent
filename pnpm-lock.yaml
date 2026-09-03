@@ -152,6 +152,9 @@ importers:
       '@sent/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@sent/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@sent/stockback':
         specifier: workspace:*
         version: link:../../packages/stockback
@@ -194,6 +197,9 @@ importers:
       '@sent/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@sent/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@sent/realtime':
         specifier: workspace:*
         version: link:../../packages/realtime
@@ -221,6 +227,9 @@ importers:
       '@sent/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@sent/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
 
   tests/e2e:
     dependencies:

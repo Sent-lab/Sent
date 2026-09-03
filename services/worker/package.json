@@ -6,7 +6,8 @@
   "description": "Background workers per Masterplan 431. Idempotent, retried, dead-lettered.",
   "dependencies": {
     "@sent/database": "workspace:*",
-    "@sent/config": "workspace:*"
+    "@sent/config": "workspace:*",
+    "@sent/observability": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

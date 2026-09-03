@@ -15,6 +15,16 @@
  */
 
 import { WebSocketServer, WebSocket } from "ws";
+import type { Registry } from "@sent/observability/metrics";
+
+import {
+  createRealtimeRegistry,
+  BROADCASTS_TOTAL,
+  DELIVERED_TOTAL,
+  DROPPED_TOTAL,
+  DEGRADED_TOTAL,
+  CONNECTIONS_TOTAL,
+} from "./observability.ts";
 
 import {
   Gateway,
@@ -73,10 +83,26 @@ export class RealtimeServer {
   private flushTimer: NodeJS.Timeout | undefined;
   private heartbeatTimer: NodeJS.Timeout | undefined;
 
+  /**
+   * §146's WebSocket health.
+   *
+   * Owned by the server rather than passed in, so a caller cannot construct one
+   * without metrics and end up with a gateway that reports nothing — which is
+   * the state this service was in.
+   */
+  readonly metrics: Registry;
+
   constructor(config: RealtimeConfig = DEFAULT_REALTIME_CONFIG) {
     this.config = config;
     this.gateway = new Gateway(new ReplayBuffer(config.replayCapacity));
     this.wss = new WebSocketServer({ port: config.port, host: config.host });
+
+    this.metrics = createRealtimeRegistry({
+      connections: () => this.connections.size,
+      headBlock: () => this.headBlock,
+      indexedBlock: () => this.indexedBlock,
+      chainConnected: () => this.chainConnected,
+    });
 
     this.wss.on("connection", (socket) => this.onConnection(socket));
   }
@@ -90,8 +116,25 @@ export class RealtimeServer {
 
   /** Publish an event to every subscriber and retain it for replay. */
   broadcast(item: RetainedMessage): void {
-    const { dropped } = this.gateway.broadcast(item);
+    const { delivered, dropped } = this.gateway.broadcast(item);
+
+    /*
+     * Delivered is recorded even when it is zero.
+     *
+     * A gateway holding connections and delivering nothing is exactly the shape
+     * of the bug this service already had — `Gateway.open()` constructs a
+     * session rather than returning one, and the flush loop called it per
+     * connection, wiping every subscription. Sockets were healthy and no
+     * subscriber ever received a message. Broadcasts rising while delivery
+     * stays flat is what makes that visible.
+     */
+    this.metrics.increment(BROADCASTS_TOTAL, { type: item.message.type });
+    this.metrics.increment(DELIVERED_TOTAL, {}, delivered);
+
     if (dropped > 0) {
+      this.metrics.increment(DROPPED_TOTAL, {}, dropped);
+      this.metrics.increment(DEGRADED_TOTAL, { cause: "slow_client" }, dropped);
+
       // Not silent. A dropped message is a hole in a client's view, and the
       // sessions that took it are already marked degraded — this makes the
       // operator aware too.
@@ -107,7 +150,14 @@ export class RealtimeServer {
    */
   handleReorg(rollbackTo: bigint): void {
     const affected = this.gateway.handleReorg(rollbackTo);
-    if (affected > 0) console.warn(`[realtime] reorg to ${rollbackTo}: ${affected} session(s) degraded`);
+
+    if (affected > 0) {
+      // A different cause from a slow client, and worth telling apart: one is a
+      // capacity problem on one socket, the other is the chain changing
+      // underneath everybody at once.
+      this.metrics.increment(DEGRADED_TOTAL, { cause: "reorg" }, affected);
+      console.warn(`[realtime] reorg to ${rollbackTo}: ${affected} session(s) degraded`);
+    }
   }
 
   start(): void {
@@ -133,6 +183,7 @@ export class RealtimeServer {
   // -------------------------------------------------------------------------
 
   private onConnection(socket: WebSocket): void {
+    this.metrics.increment(CONNECTIONS_TOTAL);
     const id = `s${this.nextId++}`;
     // Opened exactly once, at connect, and kept.
     const session = this.gateway.open(id);

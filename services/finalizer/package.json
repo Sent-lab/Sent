@@ -11,7 +11,8 @@
     "@sent/database": "workspace:*",
     "@sent/stockback": "workspace:*",
     "@sent/stockback-service": "workspace:*",
-    "@sent/config": "workspace:*"
+    "@sent/config": "workspace:*",
+    "@sent/observability": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

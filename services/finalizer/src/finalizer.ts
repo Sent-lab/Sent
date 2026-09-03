@@ -60,6 +60,19 @@ import {
   bucketByEpoch,
   type PipelineResult,
 } from "@sent/stockback-service";
+import { createLogger, type Logger } from "@sent/observability/logger";
+import type { Registry } from "@sent/observability/metrics";
+
+import {
+  createFinalizerRegistry,
+  RUNS_TOTAL,
+  RUN_SECONDS,
+  MARKET_SECONDS,
+  DATASETS_TOTAL,
+  SKIPS_TOTAL,
+  FAILURES_TOTAL,
+  HOLDERS,
+} from "./observability.ts";
 
 export interface FinalizerConfig {
   /**
@@ -153,6 +166,11 @@ export function computeFinalization(
     // The pipeline refuses degenerate input: nothing funded yet, every holder
     // excluded, an over-commitment. For a quiet market those are states rather
     // than failures, and the run must carry on to the next market.
+    // `console` rather than the instance logger: this runs inside
+    // `computeFinalization`, which is a pure function with no instance to reach
+    // and is called directly by the simulations. Taking a logger as an argument
+    // would put I/O into the one place in this service that deliberately has
+    // none.
     console.info(
       `[finalizer] ${input.target.market}: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -172,14 +190,30 @@ export function computeFinalization(
   return { result, totalFunded: input.totalFunded };
 }
 
+function seconds(startedAt: bigint): number {
+  return Number(process.hrtime.bigint() - startedAt) / 1e9;
+}
+
 export class Finalizer {
   private readonly db: Database;
   private readonly config: FinalizerConfig;
   private running = false;
 
+  private lastPublishedAt: number | null = null;
+  private lastRunAt: number | null = null;
+
+  private readonly log: Logger;
+  readonly metrics: Registry;
+
   constructor(db: Database, config: FinalizerConfig = DEFAULT_FINALIZER_CONFIG) {
     this.db = db;
     this.config = config;
+    this.log = createLogger({ service: "finalizer" });
+
+    this.metrics = createFinalizerRegistry({
+      lastPublishedAt: () => this.lastPublishedAt,
+      lastRunAt: () => this.lastRunAt,
+    });
   }
 
   /**
@@ -323,29 +357,96 @@ export class Finalizer {
 
   /** One pass over every funded market. Returns how many datasets were written. */
   async runOnce(): Promise<number> {
+    const runStarted = process.hrtime.bigint();
+
     const settled = await finalizedHead(this.db);
-    if (settled === null) return 0;
+
+    if (settled === null) {
+      // Nothing has settled far enough to compute anything. A normal state on a
+      // fresh deployment, and the run is still recorded so the "last run" age
+      // does not climb as though the process had stopped.
+      this.lastRunAt = Math.floor(Date.now() / 1000);
+      this.metrics.increment(RUNS_TOTAL, { outcome: "nothing_settled" });
+      return 0;
+    }
 
     let written = 0;
 
     for (const target of await listFundedMarkets(this.db)) {
-      const outcome = await this.finalizeMarket(
-        { market: target.market, token: target.token, rewardAsset: target.quoteAsset },
-        settled,
-      );
+      const marketStarted = process.hrtime.bigint();
 
-      if (typeof outcome === "string") continue;
+      /*
+       * One market's failure does not end the pass.
+       *
+       * `runOnce` is called from a loop that already catches, but a throw there
+       * abandons every market after the one that failed — so a single bad
+       * market would stop distributions for all of them, and the symptom would
+       * be "Stockback stopped" rather than "this market is broken".
+       */
+      let outcome: Awaited<ReturnType<typeof this.finalizeMarket>>;
 
-      await this.db.transaction((tx) => this.persist(tx, outcome));
+      try {
+        outcome = await this.finalizeMarket(
+          { market: target.market, token: target.token, rewardAsset: target.quoteAsset },
+          settled,
+        );
+      } catch (error) {
+        this.metrics.increment(FAILURES_TOTAL);
+        this.metrics.observe(MARKET_SECONDS, seconds(marketStarted), { outcome: "error" });
+
+        this.log.error("finalizing a market failed", {
+          marketAddress: target.market,
+          tokenAddress: target.token,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        continue;
+      }
+
+      if (typeof outcome === "string") {
+        // A quiet market skips on every pass, and that is the system working.
+        // Counted under its own name so a market that is suddenly always
+        // NOT_DISTRIBUTABLE is visible, without training anyone to ignore the
+        // failure counter.
+        this.metrics.increment(SKIPS_TOTAL, { reason: outcome });
+        this.metrics.observe(MARKET_SECONDS, seconds(marketStarted), { outcome: "skipped" });
+        continue;
+      }
+
+      try {
+        await this.db.transaction((tx) => this.persist(tx, outcome as FinalizationOutput));
+      } catch (error) {
+        this.metrics.increment(FAILURES_TOTAL);
+        this.metrics.observe(MARKET_SECONDS, seconds(marketStarted), { outcome: "error" });
+
+        this.log.error("persisting a dataset failed", {
+          marketAddress: target.market,
+          epochId: outcome.result.commitment.epochSequence,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        continue;
+      }
+
       written += 1;
+      this.lastPublishedAt = Math.floor(Date.now() / 1000);
 
-      console.info(
-        `[finalizer] ${target.market} epoch ${outcome.result.commitment.epochSequence}: ` +
-          `${outcome.result.tree.entries.length} holders, ` +
-          `${outcome.result.commitment.totalCumulative} of ${outcome.totalFunded} funded, ` +
-          `root ${outcome.result.commitment.merkleRoot}`,
-      );
+      this.metrics.increment(DATASETS_TOTAL);
+      this.metrics.observe(HOLDERS, outcome.result.tree.entries.length);
+      this.metrics.observe(MARKET_SECONDS, seconds(marketStarted), { outcome: "written" });
+
+      this.log.info("dataset written", {
+        marketAddress: target.market,
+        tokenAddress: target.token,
+        epochId: outcome.result.commitment.epochSequence,
+        holders: outcome.result.tree.entries.length,
+        totalCumulative: outcome.result.commitment.totalCumulative,
+        totalFunded: outcome.totalFunded,
+        merkleRoot: outcome.result.commitment.merkleRoot,
+      });
     }
+
+    this.lastRunAt = Math.floor(Date.now() / 1000);
+    this.metrics.increment(RUNS_TOTAL, { outcome: "ok" });
+    this.metrics.observe(RUN_SECONDS, seconds(runStarted));
 
     return written;
   }
@@ -359,7 +460,10 @@ export class Finalizer {
       } catch (error) {
         // One bad market must not take the loop down. The next pass rebuilds
         // from chain state, which is the only state that matters.
-        console.error("[finalizer] run failed:", error instanceof Error ? error.message : error);
+        this.metrics.increment(RUNS_TOTAL, { outcome: "error" });
+        this.log.error("run failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
 
       await new Promise((resolve) => setTimeout(resolve, this.config.runIntervalMs));
@@ -368,5 +472,10 @@ export class Finalizer {
 
   stop(): void {
     this.running = false;
+  }
+
+  /** Unix seconds the last full pass completed, or null before the first. */
+  lastCompletedRun(): number | null {
+    return this.lastRunAt;
   }
 }

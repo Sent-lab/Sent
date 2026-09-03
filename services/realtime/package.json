@@ -18,6 +18,7 @@
     "@sent/realtime": "workspace:*",
     "@sent/config": "workspace:*",
     "viem": "^2.56.3",
-    "@sent/database": "workspace:*"
+    "@sent/database": "workspace:*",
+    "@sent/observability": "workspace:*"
   }
 }

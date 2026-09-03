@@ -8,6 +8,8 @@
  */
 
 import { Database, headBlockIndexed, EventListener } from "@sent/database";
+import { createLogger } from "@sent/observability/logger";
+import { serveOperations } from "@sent/observability/server";
 import { chainEnv, databaseEnv, realtimeEnv, loadAll } from "@sent/config/env";
 import { createPublicClient, http } from "viem";
 
@@ -34,6 +36,26 @@ async function main(): Promise<void> {
   });
 
   server.start();
+
+  const log = createLogger({ service: "realtime" }).child({ chainId: chain.chainId });
+
+  /*
+   * §437's scrape and liveness surface, on its own port.
+   *
+   * Not on the WebSocket port: an upgrade handler that also answers plain GETs
+   * is a surface where a scrape and a handshake share a code path, and the two
+   * have very different exposure. A monitoring system should never be one
+   * malformed request away from the socket server.
+   */
+  const operations = await serveOperations({
+    port: Number(process.env.REALTIME_METRICS_PORT ?? 9104),
+    registry: server.metrics,
+    logger: log,
+    // The socket server is either listening or the process is dead. Reporting
+    // unhealthy because the chain is unreachable would restart a gateway that
+    // is correctly serving RECONNECTING to its clients.
+    liveness: () => ({ ok: true }),
+  });
 
   /*
    * Subscribe to the indexer's published events.
@@ -116,6 +138,7 @@ async function main(): Promise<void> {
     console.info(`[realtime] ${signal} received, closing ${server.connectionCount} connection(s)`);
     clearInterval(refresh);
     await listener.stop();
+    await operations.close();
     await server.stop();
     await db.close();
     process.exit(0);
