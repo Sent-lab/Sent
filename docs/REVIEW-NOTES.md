@@ -264,11 +264,13 @@ verification item blocking it:
 - The xStock allowlist, empty — V-02, V-03, V-05
 - Platform accounts, unset — C-08
 - `Logo.tsx` geometry, pending the official SVG export
-- Creator metadata — description, links, image (§95.20) — and share-card
-  generation (§95.25). Both need object storage, which §427 leaves as a CHOOSE
-  decision and no deployment target has been fixed for (§434). The half that
-  does not need storage would be a text column nobody writes to, which is the
-  shape of defect this document is mostly about.
+- Share-card generation (§95.25). Needs object storage, which §427 leaves as a
+  CHOOSE decision with no deployment target fixed (§434).
+
+  Token metadata is no longer here: it went on-chain (D-013), and the image is
+  an IPFS CID rather than a file this platform stores. That sidesteps §427
+  rather than answering it, which is the right outcome for a dependency nothing
+  actually needs.
 - `liveMarketCapUsd` (§403). Needs the live xStock/USD DISPLAY feed, V-12. The
   field is ABSENT from the response rather than zero: an absent field renders as
   nothing, a zero renders as a market worth nothing.

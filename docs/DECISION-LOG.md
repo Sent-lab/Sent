@@ -333,3 +333,119 @@ direction for this class of mistake.
 **Migration impact:** deployments must set `API_ALLOWED_ORIGINS`. Documented in
 `.env.example` and the compose file.
 **Approved by:** implementation agent (ordinary CHOOSE).
+
+---
+
+## D-012 — The launch anchor comes from a feed, never from the caller
+
+**Class:** CHOOSE (closes a defect, and a §135 gap)
+**Date:** Day 6
+
+**Decision:** `LaunchpadFactory` reads `IReferencePriceAdapter.usdPriceWad(asset)` to
+derive `p0`, and refuses to launch when no adapter is set. `params.xStockUsdWad` remains
+in the calldata but is now an ACCEPTANCE BOUND — the price the creator reviewed — with a
+5% tolerance against what the feed says. Zero opts out explicitly.
+
+**Reason:** `xStockUsdWad` arrived as plain calldata and was checked only against zero.
+`p0` is derived from it and is immutable for the market's entire life; `pg = 25 × p0`,
+the collateral the curve accumulates, and the real value of the permanent LP all inherit
+it. A launch a thousand times too low makes a market that can never realistically
+graduate; a thousand times too high makes one that graduates for almost nothing and locks
+dust into a pool meant to hold permanent liquidity.
+
+§20 lists `ReferencePriceAdapter` in the architecture, §135 gives it a Definition of
+Done, and §402 says the anchor is required at creation and that an invalid or stale one
+blocks the launch. The contract did not exist.
+
+The bound is the same shape as `minTokensOut` on a trade: it protects the creator from
+launching at a price they never saw, and it cannot move the anchor. The deviation is
+measured against the ACTUAL price rather than the reviewed one, because a denominator the
+caller controls is a tolerance the caller controls.
+
+**No price setter exists**, and one test enumerates every mutating selector to keep it
+that way. §18 forbids an admin injecting a manual price to force a graduation, and a
+`setPrice` — however guarded — is that capability with a comment attached. Governance
+names a SOURCE; the source address is public, per-configuration and emitted.
+
+The sanity band refuses rather than clamps. Clamping would let a launch proceed at a
+number the feed never said: the same arbitrary price, reached from the other direction.
+
+**Economic impact:** large and positive. It removes the only path by which a market's
+permanent starting price could be chosen rather than observed.
+**Security impact:** positive.
+**UX impact:** a launch is refused outright until governance configures a feed. That is
+the §402 behaviour and it is visible at deploy time, not at a user's first launch.
+**Migration impact:** V-11 must be resolved before mainnet. `REFERENCE_PRICE_FEEDS` is
+empty and `assertProductionConfigReady` names V-11 while it is.
+**Approved by:** implementation agent (closes a defect; the feed choice remains owner's).
+
+---
+
+## D-013 — Token metadata is on-chain, revisable by its creator, with the image on IPFS
+
+**Class:** PRODUCT (owner decision, §274)
+**Date:** Day 6
+**Decided by:** owner, asked directly.
+
+**Decision:** description and links are emitted on-chain by the factory. The image is an
+IPFS CID, also on-chain. Nothing lives in the platform's database except a rebuildable
+projection of those events. The creator — and only the creator — may revise, and every
+revision is numbered and kept.
+
+**Options considered:**
+
+| | |
+|---|---|
+| Off-chain, hash-bound | content in our database, `launchIntentHash` proves tampering |
+| **On-chain, IPFS image** | **chosen** |
+| Off-chain, unbound | a plain column, editable by the operator with no trace |
+| Not yet | name and ticker only |
+
+**Reason:** every other fact about a market is on-chain and verifiable. A description in
+the platform's own database would be the one a human actually reads and the one the
+platform could silently rewrite — the exact asymmetry the rest of this system avoids.
+§27's admin boundary would have a hole in it shaped like the most visible field on the
+page.
+
+The image is on IPFS because a PNG does not belong in calldata, and a CID is a hash of
+the bytes: a gateway serving something else fails the check without the platform storing
+anything or choosing a provider. §427's object-storage decision is sidestepped rather
+than answered, which is the correct outcome for a dependency nothing needs.
+
+**This closes a loop that was already half-built.** §412 binds `launchIntentHash` into
+the CREATE2 salt and the factory has always called it the hash of "the launch intent the
+creator reviewed (metadata, socials)". The commitment was in every token's address; the
+content was published nowhere. Publishing it makes the commitment checkable — and
+`TokenLaunched` now carries the hash, because `effectiveSalt` is a hash OF it and could
+not be reversed.
+
+**Revisable, deliberately.** The obvious reading of "on-chain" is immutable, and
+immutability here would not be a virtue: a creator who cannot fix a typo hosts the real
+description somewhere else, which is what putting it on-chain was meant to avoid. A
+revision cannot rewrite history — the launch content stays published and still hashes to
+the address — so the audit trail §95.20 asks about is a property of the design rather
+than a feature added to it.
+
+**Events, not storage.** No contract reads metadata. Storage would cost ~20,000 gas per
+word for data whose only consumer is an indexer, against ~8 gas a byte in a log. The one
+exception is the revision counter, which a contract must read: two revisions in one block
+are otherwise indistinguishable, and log order is not something the chain promises across
+a reorg.
+
+**URLs are not validated on-chain.** A `javascript:` URL is inert in calldata and
+dangerous only where something renders it. Validating on-chain would charge every creator
+gas for a guarantee the client still has to enforce — and a client that trusted the chain
+instead of doing its own check would be one upgrade away from an XSS. The allowlist runs
+at the API's render boundary, and the count of what it dropped travels with the response
+so a UI can say "1 link hidden" rather than silently showing fewer.
+
+**Economic impact:** a modest gas increase per launch, bounded by the field limits (512
+bytes of description, 128 of CID, four links).
+**Security impact:** positive. It removes an operator-controlled field that would
+otherwise have been the most visible one on the page.
+**UX impact:** creators get a description, links and a logo, and can correct them.
+**Migration impact:** `TokenLaunched` gained a field, so any consumer decoding it
+positionally must be regenerated. Markets launched before this have no metadata and
+report `null` rather than an empty description — the two are different and only one of
+them should render a blank field.
+**Approved by:** owner.

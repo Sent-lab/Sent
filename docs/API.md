@@ -134,6 +134,45 @@ Beyond the obvious fields:
   field renders as nothing. A zero would render as a market worth nothing.
 - **`authentic`** — from the factory's own registry, never from the address
   shape (§4).
+- **`metadata`** — the newest revision, or `null` when the market has none. See
+  below; `null` and an empty description are different things.
+
+#### Metadata
+
+On-chain (§95.20, D-013). The description and links are emitted by the factory;
+the image is an IPFS CID, which is a hash of the bytes — a gateway serving
+something else fails the check without this platform storing anything.
+
+```jsonc
+{
+  "revision": "1",
+  "description": "…",
+  "imageCid": "bafybei…",
+  "links": [ { "label": "website", "url": "https://example.com" } ],
+  "unsafeLinksRemoved": 1,
+  "verified": null
+}
+```
+
+**`verified` is `null`, not `false`, when it cannot be determined.**
+`launchIntentHash` is bound into the token's CREATE2 address (§412) and commits
+to what the creator reviewed **at launch** — a revision deliberately cannot
+alter the address. So only revision 0 is verifiable; a revision reports `null`,
+and so does a market launched before the event carried the hash.
+
+"We have not checked" and "this does not match" are opposite claims about a
+creator. Rendering the first as the second accuses people who did nothing wrong.
+
+**Links are filtered to `http(s)` before they leave this API,** and
+`unsafeLinksRemoved` says how many were dropped. The chain deliberately does not
+validate schemes — a `javascript:` URL is inert in calldata and dangerous only
+where something renders it — so the check happens here, and the count travels
+with it so a UI can say "1 link hidden" rather than silently showing fewer than
+the creator published. A client should still not render a URL it has not checked
+itself; this API is not the only consumer, and it is not the last line.
+
+To fetch the image, pick a gateway: `https://<gateway>/ipfs/<imageCid>`. This
+API does not choose one for you.
 
 ### `GET /v1/markets/:token/trades`
 
