@@ -46,6 +46,8 @@ import {
 } from "@sent/database";
 import { launchMarketAbi, launchpadFactoryAbi, feeVaultAbi } from "@sent/contracts";
 
+import { BoundedCache, CACHE_LIMITS } from "./cache.ts";
+
 import type {
   DataPort,
   ExploreOptions,
@@ -206,17 +208,17 @@ export class PostgresPort implements DataPort {
   // async, would have pulled I/O into the layer that has none.
   // -------------------------------------------------------------------------
 
-  private readonly cachedMarkets = new Map<string, MarketRow[]>();
-  private readonly cachedByToken = new Map<string, MarketRow>();
-  private readonly cachedTrades = new Map<string, TradeRow[]>();
-  private readonly cachedStockback = new Map<string, StockbackRow>();
-  private readonly cachedQuotes = new Map<string, QuoteResult>();
-  private readonly cachedCandles = new Map<string, CandleBar[]>();
-  private readonly cachedCreators = new Map<string, CreatorRow>();
-  private readonly cachedAccounts = new Map<string, AccountRow>();
-  private readonly cachedCounts = new Map<string, number>();
+  private readonly cachedMarkets = new BoundedCache<MarketRow[]>(CACHE_LIMITS.markets);
+  private readonly cachedByToken = new BoundedCache<MarketRow>(CACHE_LIMITS.byToken);
+  private readonly cachedTrades = new BoundedCache<TradeRow[]>(CACHE_LIMITS.trades);
+  private readonly cachedStockback = new BoundedCache<StockbackRow>(CACHE_LIMITS.stockback);
+  private readonly cachedQuotes = new BoundedCache<QuoteResult>(CACHE_LIMITS.quotes);
+  private readonly cachedCandles = new BoundedCache<CandleBar[]>(CACHE_LIMITS.candles);
+  private readonly cachedCreators = new BoundedCache<CreatorRow>(CACHE_LIMITS.creators);
+  private readonly cachedAccounts = new BoundedCache<AccountRow>(CACHE_LIMITS.accounts);
+  private readonly cachedCounts = new BoundedCache<number>(CACHE_LIMITS.counts);
   private cachedStats: PlatformStatsRow | null = null;
-  private readonly cachedEpochs = new Map<string, EpochsRow>();
+  private readonly cachedEpochs = new BoundedCache<EpochsRow>(CACHE_LIMITS.epochs);
 
   /** Resolved once from the factory, then remembered. */
   private feeVault: `0x${string}` | null = null;
