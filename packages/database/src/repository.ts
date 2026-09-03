@@ -1004,6 +1004,149 @@ export async function creatorAccruals(
   }));
 }
 
+// ---------------------------------------------------------------------------
+// xStock registry projection (§420, §252)
+// ---------------------------------------------------------------------------
+
+export interface XStockAsset {
+  readonly asset: `0x${string}`;
+  readonly decimals: number;
+  readonly coreTokenIndex: bigint;
+  readonly evmExtraWeiDecimals: number;
+  readonly gates: {
+    readonly canonical: boolean;
+    readonly transfer: boolean;
+    readonly multiplier: boolean;
+    readonly priceSource: boolean;
+    readonly haltSource: boolean;
+    readonly hyperSwap: boolean;
+    readonly accounting: boolean;
+    readonly legal: boolean;
+  };
+  readonly launchable: boolean;
+  readonly verifiedAt: number | null;
+  readonly lastBlock: bigint;
+}
+
+/**
+ * Record an asset the registry accepted.
+ *
+ * `xstock_assets` was the fourth table shipped in the first migration with no
+ * writer — and unlike the others it had no reader either, so nothing was
+ * visibly wrong. §168 needs it: "Active xStock Pairs" is sourced from the
+ * registry, and there was nothing to source it from.
+ *
+ * The eight §420 gates are stored individually rather than as one boolean, so a
+ * half-verified asset is visible as exactly which checks passed. An asset that
+ * is one gate short of launchable is a very different thing from one that has
+ * had no review at all, and a single flag cannot say which.
+ */
+export async function upsertXStockAsset(
+  db: Db,
+  a: {
+    asset: string;
+    decimals: number;
+    coreTokenIndex: bigint;
+    evmExtraWeiDecimals: number;
+    lastBlock: bigint;
+  },
+): Promise<void> {
+  await db.query(
+    `INSERT INTO xstock_assets (
+       asset, decimals, core_token_index, evm_extra_wei_decimals, last_block
+     ) VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (asset) DO UPDATE SET
+       decimals = EXCLUDED.decimals,
+       core_token_index = EXCLUDED.core_token_index,
+       evm_extra_wei_decimals = EXCLUDED.evm_extra_wei_decimals,
+       last_block = EXCLUDED.last_block`,
+    [
+      toBytes(a.asset),
+      a.decimals,
+      a.coreTokenIndex.toString(),
+      a.evmExtraWeiDecimals,
+      a.lastBlock.toString(),
+    ],
+  );
+}
+
+/** The eight §420 gates, as the registry last set them. */
+export async function setAssetGates(
+  db: Db,
+  asset: string,
+  gates: readonly boolean[],
+  lastBlock: bigint,
+): Promise<void> {
+  if (gates.length !== 8) {
+    throw new Error(`setAssetGates: expected 8 gates, got ${gates.length}`);
+  }
+
+  await db.query(
+    `UPDATE xstock_assets SET
+       gate_canonical = $2, gate_transfer = $3, gate_multiplier = $4,
+       gate_price_source = $5, gate_halt_source = $6, gate_hyperswap = $7,
+       gate_accounting = $8, gate_legal = $9, last_block = $10
+     WHERE asset = $1`,
+    [toBytes(asset), ...gates, lastBlock.toString()],
+  );
+}
+
+/**
+ * Enable or disable an asset for new launches.
+ *
+ * Disabling never touches markets that already launched against it. §420's
+ * availability rule governs what may be CREATED; an existing market's holders
+ * are not stranded because governance stopped accepting new pairs.
+ */
+export async function setAssetLaunchable(
+  db: Db,
+  asset: string,
+  launchable: boolean,
+  verifiedAt: number | null,
+  lastBlock: bigint,
+): Promise<void> {
+  await db.query(
+    `UPDATE xstock_assets SET
+       enabled_for_new_launches = $2,
+       verified_at = COALESCE($3, verified_at),
+       last_block = $4
+     WHERE asset = $1`,
+    [toBytes(asset), launchable, verifiedAt, lastBlock.toString()],
+  );
+}
+
+export async function listXStockAssets(db: Db, onlyLaunchable = false): Promise<XStockAsset[]> {
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT asset, decimals, core_token_index, evm_extra_wei_decimals,
+            gate_canonical, gate_transfer, gate_multiplier, gate_price_source,
+            gate_halt_source, gate_hyperswap, gate_accounting, gate_legal,
+            enabled_for_new_launches, verified_at, last_block
+     FROM xstock_assets
+     ${onlyLaunchable ? "WHERE enabled_for_new_launches" : ""}
+     ORDER BY asset`,
+  );
+
+  return rows.map((r) => ({
+    asset: addr(r.asset, "asset"),
+    decimals: Number(r.decimals),
+    coreTokenIndex: big(r.core_token_index, "core_token_index"),
+    evmExtraWeiDecimals: Number(r.evm_extra_wei_decimals),
+    gates: {
+      canonical: r.gate_canonical === true,
+      transfer: r.gate_transfer === true,
+      multiplier: r.gate_multiplier === true,
+      priceSource: r.gate_price_source === true,
+      haltSource: r.gate_halt_source === true,
+      hyperSwap: r.gate_hyperswap === true,
+      accounting: r.gate_accounting === true,
+      legal: r.gate_legal === true,
+    },
+    launchable: r.enabled_for_new_launches === true,
+    verifiedAt: r.verified_at === null ? null : Number(r.verified_at),
+    lastBlock: big(r.last_block, "last_block"),
+  }));
+}
+
 /** Addresses registered as ineligible for Stockback (§323, §324). */
 export async function getExclusions(db: Db, market: string): Promise<`0x${string}`[]> {
   const rows = await db.query<Record<string, unknown>>(

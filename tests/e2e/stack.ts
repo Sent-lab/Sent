@@ -61,6 +61,7 @@ import {
   getActiveCommitment,
   getClaimedTotal,
   getExclusions,
+  listXStockAssets,
 } from "@sent/database";
 import { Indexer, DEFAULT_CONFIG } from "@sent/indexer";
 import { Finalizer } from "@sent/finalizer";
@@ -1089,6 +1090,37 @@ try {
       "the projected claim total matches what the vault paid",
       entitlement === null || claimed === entitlement.cumulative,
     );
+  }
+
+  section("The xStock registry projection (§420, §168)");
+
+  /*
+   * The fourth table shipped with no writer — and unlike the others, no reader
+   * either, so nothing about the system looked wrong. §168 sources "Active
+   * xStock Pairs" from the registry, and there was nothing to source it from.
+   *
+   * Eight gates, stored individually. An asset one gate short of launchable is
+   * a very different thing from one nobody has reviewed, and a single boolean
+   * cannot say which.
+   */
+  {
+    const assets = await listXStockAssets(db);
+    check("the registered asset reached the projection", assets.length === 1);
+
+    const asset = assets[0];
+    check("with the registry's decimals, not a default", asset?.decimals === 6);
+    check("and its Core token index", asset?.coreTokenIndex === 0n);
+
+    check(
+      "every §420 gate is recorded as passed",
+      asset !== undefined && Object.values(asset.gates).every((g) => g === true),
+    );
+
+    check("and the asset is launchable", asset?.launchable === true);
+    check("with the timestamp governance verified it", (asset?.verifiedAt ?? 0) > 0);
+
+    const launchable = await listXStockAssets(db, true);
+    check("it appears in the launchable set", launchable.length === 1);
   }
 
   section("Stockback exclusions (§323, §324)");

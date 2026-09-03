@@ -52,6 +52,9 @@ import {
   markCommitmentActivated,
   markCommitmentCancelled,
   recordClaim,
+  upsertXStockAsset,
+  setAssetGates,
+  setAssetLaunchable,
   refreshHolderCount,
   recordStockbackFunding,
   type Transaction,
@@ -137,6 +140,9 @@ export class Indexer {
    * better absent than guessed.
    */
   private router: `0x${string}` | null = null;
+
+  /** The xStock registry, also from the factory. Its own events are indexed. */
+  private registry: `0x${string}` | null = null;
 
   private running = false;
   private connected = false;
@@ -331,6 +337,7 @@ export class Indexer {
      * launch another market — one extra pass is the normal case.
      */
     const feeVault = await this.resolveFeeVault();
+    const registry = await this.resolveRegistry();
     await this.resolveRouter();
 
     let logs = await this.client.getLogs({
@@ -338,6 +345,7 @@ export class Indexer {
         this.config.factory,
         this.config.rewardVault,
         ...(feeVault === null ? [] : [feeVault]),
+        ...(registry === null ? [] : [registry]),
         ...this.marketAddresses(),
       ],
       fromBlock: from,
@@ -613,6 +621,9 @@ export class Indexer {
     }
     if (this.feeVault !== null && address === this.feeVault.toLowerCase()) {
       return this.handleFeeVaultLog(tx, log, blockTimestamp);
+    }
+    if (this.registry !== null && address === this.registry.toLowerCase()) {
+      return this.handleRegistryLog(tx, log, blockTimestamp);
     }
     // Both committed markets and ones staged earlier in THIS transaction. A
     // market launched and traded in the same range emits its first trades before
@@ -944,6 +955,31 @@ export class Indexer {
     }
   }
 
+  /**
+   * The xStock registry, from the factory.
+   *
+   * Cached after the first success, like the fee vault, and never cached as a
+   * failure. `quoteDecimalsOf` used to re-read `REGISTRY` on every uncached
+   * asset; it now shares this resolution, so a launch costs one RPC call rather
+   * than two.
+   */
+  private async resolveRegistry(): Promise<`0x${string}` | null> {
+    if (this.registry !== null) return this.registry;
+
+    try {
+      const registry = (await this.client.readContract({
+        address: this.config.factory,
+        abi: launchpadFactoryAbi,
+        functionName: "REGISTRY",
+      })) as `0x${string}`;
+
+      this.registry = registry;
+      return registry;
+    } catch {
+      return null;
+    }
+  }
+
   private async resolveFeeVault(): Promise<`0x${string}` | null> {
     if (this.feeVault !== null) return this.feeVault;
 
@@ -1050,6 +1086,78 @@ export class Indexer {
     }
   }
 
+  /**
+   * The xStock registry's own state (§420, §252).
+   *
+   * `xstock_assets` was the one dead table with no reader either, so nothing
+   * looked wrong. §168 needs it — "Active xStock Pairs" is sourced from the
+   * registry — and so does anything that wants to show WHICH of the eight
+   * verification gates an asset has passed rather than a single yes or no.
+   *
+   * Registry rows are not tied to a market and carry no foreign key to one, so
+   * unlike the vault handlers this one has nothing to skip: an asset can be
+   * registered long before any market quotes against it.
+   */
+  private async handleRegistryLog(tx: Transaction, log: Log, timestamp: number): Promise<void> {
+    const decoded = tryDecode(xStockRegistryAbi, log);
+    if (decoded === null) return;
+
+    const a = decoded.args as Record<string, unknown>;
+    const { blockNumber } = this.positionOf(log);
+    const asset = a.token === undefined ? null : String(a.token).toLowerCase();
+    if (asset === null) return;
+
+    switch (decoded.eventName) {
+      case "AssetRegistered":
+        return upsertXStockAsset(tx, {
+          asset,
+          decimals: Number(a.decimals),
+          coreTokenIndex: BigInt(a.coreTokenIndex as number | bigint),
+          // Not in this event. §399's adapter carries it, and `getAsset` is the
+          // place it can be read from; zero is the registry's own default for
+          // an asset registered without one.
+          evmExtraWeiDecimals: 0,
+          lastBlock: blockNumber,
+        });
+
+      case "GatesUpdated": {
+        const g = a.gates as Record<string, boolean>;
+
+        // Ordered to match the eight columns, and to match §420's own order.
+        // A positional list is the one thing here that could silently mean
+        // something else, so it is written out rather than mapped over.
+        return setAssetGates(
+          tx,
+          asset,
+          [
+            g.canonicalRepresentation === true,
+            g.transferBehaviour === true,
+            g.multiplierBehaviour === true,
+            g.priceSource === true,
+            g.haltSource === true,
+            g.hyperSwapCompatible === true,
+            g.normalizedAccountingTested === true,
+            g.legalReviewed === true,
+          ],
+          blockNumber,
+        );
+      }
+
+      case "AssetEnabled":
+        return setAssetLaunchable(tx, asset, true, Number(a.verifiedAt as bigint), blockNumber);
+
+      case "AssetDisabled":
+        // Existing markets are untouched. §420's rule governs what may be
+        // CREATED; holders of a market that already launched are not stranded
+        // because governance stopped accepting new pairs against the asset.
+        return setAssetLaunchable(tx, asset, false, null, blockNumber);
+
+      default:
+        void timestamp;
+        return;
+    }
+  }
+
   /** Committed, or staged earlier in this same transaction. */
   private isKnownMarket(market: string): boolean {
     return (
@@ -1133,11 +1241,13 @@ export class Indexer {
     const cached = this.quoteDecimalsCache.get(asset);
     if (cached !== undefined) return cached;
 
-    const registry = (await this.client.readContract({
-      address: this.config.factory,
-      abi: launchpadFactoryAbi,
-      functionName: "REGISTRY",
-    })) as `0x${string}`;
+    const registry = await this.resolveRegistry();
+    if (registry === null) {
+      // Refused rather than defaulted. Eighteen was the placeholder here once
+      // already, and it scaled every price and notional for a six-decimal
+      // xStock by 10^12 without anything failing.
+      throw new Error(`[indexer] cannot read the registry to size ${asset}`);
+    }
 
     const record = (await this.client.readContract({
       address: registry,
