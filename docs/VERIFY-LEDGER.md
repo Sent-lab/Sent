@@ -824,10 +824,17 @@ Deployed alongside them, and worth knowing for deployment: the Arachnid CREATE2 
 (`0xcA11bde05977b3631167028862bE2a173976CA11`) and Permit2
 (`0x000000000022D473030F116dDEE9F6B43aC78BA3`).
 
-**What is NOT verified here, and is genuinely the owner's:** whether a hosted Safe transaction
-service and UI cover chain 999. The contracts being present means a Safe can be created and
-used with any client that can build the calldata; it does not mean `app.safe.global` will show
-it. That is a convenience question, not a custody one, and it does not block §555.
+**And the hosted service covers it too** — checked after the contracts, because the two are
+different questions and only the first is a custody one.
+
+```text
+safe-config.safe.global/api/v1/chains  ->  chainId 999, "HyperEVM", shortName "hyper-evm"
+```
+
+So a Safe can be created and operated through `app.safe.global` like any other chain, rather
+than by hand-building calldata. That does not change what §555 requires; it changes how
+painful the key ceremony is, which is the difference between a procedure people follow and one
+they work around.
 
 **Still owner-blocked, separately: C-08** — who the signers are. No amount of probing answers
 that.
