@@ -56,7 +56,7 @@ contract Deploy is Script {
 
         _assertSafeForChain(config);
 
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        uint256 deployerKey = _deployerKey();
 
         vm.startBroadcast(deployerKey);
 
@@ -137,6 +137,36 @@ contract Deploy is Script {
     ///      integration test legitimately runs with an EOA holding governance,
     ///      and a check that blocked that would only teach people to comment it
     ///      out — which is worse than not having it.
+    /**
+     * @dev The deployer key, with or without a `0x` prefix.
+     *
+     *      `vm.envUint` requires the prefix and fails with "missing hex prefix"
+     *      when it is absent. That is a correct error and a useless one: every
+     *      wallet this key comes out of exports it WITHOUT the prefix. MetaMask
+     *      does, and it is the obvious place an operator gets it from.
+     *
+     *      So the first attempt at a mainnet deploy fails on a formatting detail
+     *      that has nothing to do with the deployment, after the operator has
+     *      already typed a private key into a terminal — which is exactly the
+     *      moment to not make someone retry blind.
+     *
+     *      Read as a string and normalised instead. The key itself is never
+     *      logged; only its shape is checked.
+     */
+    function _deployerKey() internal view returns (uint256) {
+        string memory raw = vm.envString("DEPLOYER_PRIVATE_KEY");
+        bytes memory b = bytes(raw);
+
+        require(b.length == 64 || b.length == 66, "Deploy: DEPLOYER_PRIVATE_KEY must be 64 hex chars, 0x optional");
+
+        if (b.length == 66) {
+            require(b[0] == "0" && (b[1] == "x" || b[1] == "X"), "Deploy: 66-char key must start with 0x");
+            return vm.parseUint(raw);
+        }
+
+        return vm.parseUint(string.concat("0x", raw));
+    }
+
     function _assertSafeForChain(Config memory config) internal view {
         require(config.governance != address(0), "Deploy: governance is zero");
         require(config.treasury != address(0), "Deploy: treasury is zero");
