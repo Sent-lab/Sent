@@ -28,14 +28,16 @@
  * at. Clients that want the real logo have the CID from the API and can fetch it
  * themselves, in a browser, where the request is the user's and not ours.
  *
- * SVG, AND WHY THIS STOPS HERE
- * ----------------------------
- * Most crawlers want PNG for `og:image`. Rasterising needs a native dependency
- * — resvg, sharp, a headless browser — and which one depends on the runtime,
- * which §434 has not fixed. Everything that carries product knowledge is in
- * this file: what to show, how it degrades, how it looks. Rasterisation is a
- * mechanical transform behind a documented seam, in the same shape as
- * `IGraduationRouter` and `IReferencePriceAdapter`.
+ * SVG HERE, PNG NEXT DOOR
+ * -----------------------
+ * Crawlers want PNG for `og:image` — X, Discord and Telegram will not draw an
+ * SVG in an unfurl — so `preview-png.ts` rasterises whatever this produces.
+ * The split is deliberate and this side is the one that matters: everything
+ * carrying product knowledge is here, and the native dependency is over there.
+ *
+ * That means this file stays the single description of the card. Change what
+ * it says and both formats change together; there is no second layout to keep
+ * in step.
  */
 
 export interface PreviewMarket {
@@ -64,6 +66,30 @@ const VOLT = "#c6f600";
 const UP = "#34d399";
 /** The one state a reader should look twice at (§42). Matches the app token. */
 const WARN = "#fbbf24";
+
+/**
+ * The SENT mark, on the same terms as the colours above.
+ *
+ * This card used to draw a lightning bolt here. The brand mark is two stepped
+ * diagonal forms, so the artefact that travels furthest carried a glyph that is
+ * not the logo — on every link anyone ever posted.
+ *
+ * Measured from `Brand.png` by `scripts/trace-mark.py`, which prints exactly
+ * these constants; `apps/web/src/components/Logo.tsx` holds the same values for
+ * the same reason the colours are repeated here. An SVG served to a crawler has
+ * no stylesheet and no imports — it has to be self-contained, and the price of
+ * that is a copy. The script is the source; both copies are its output.
+ *
+ * The paths are the outline INSET by the corner radius, stroked with twice it
+ * and a round join, which rounds every corner uniformly without a dozen arcs.
+ */
+const MARK_UPPER =
+  "M 14.16 1.96 L 20.23 8.34 L 22.78 8.82 L 28.37 8.66 L 29.96 10.41 L 29.96 16.64 L 28.85 17.60 L 14.80 8.50 L 14.32 7.38 L 14.16 2.12 Z";
+const MARK_LOWER =
+  "M 3.15 13.29 L 11.29 20.31 L 18.95 24.30 L 19.59 25.89 L 19.59 30.04 L 12.09 22.38 L 4.27 22.38 L 2.99 21.90 L 2.20 20.63 L 2.04 18.55 L 2.04 15.04 L 2.99 13.45 Z";
+const MARK_CORNER = 0.957;
+/** The mark is authored in a 32-unit box; the card wants it at 44. */
+const MARK_SCALE = 44 / 32;
 
 /**
  * Escape text for XML.
@@ -189,9 +215,12 @@ export function renderPreview(m: PreviewMarket): string {
   <rect x="0" y="0" width="${WIDTH}" height="4" fill="${VOLT}" />
 
   <!-- Brand mark. §231: the platform is named on anything that travels. -->
-  <g transform="translate(80 72)">
-    <path d="M0 0 L26 0 L14 20 L26 20 L0 44 L12 24 L0 24 Z" fill="${VOLT}" />
-    <text x="44" y="30" font-family="Sora, system-ui, sans-serif" font-size="26" font-weight="600" letter-spacing="6" fill="${TEXT}">SENT</text>
+  <g transform="translate(80 66)">
+    <g transform="scale(${MARK_SCALE})" fill="${VOLT}" stroke="${VOLT}" stroke-width="${MARK_CORNER * 2}" stroke-linejoin="round" stroke-linecap="round">
+      <path d="${MARK_UPPER}" />
+      <path d="${MARK_LOWER}" />
+    </g>
+    <text x="56" y="30" font-family="Sora, system-ui, sans-serif" font-size="26" font-weight="600" letter-spacing="6" fill="${TEXT}">SENT</text>
   </g>
 
   <g transform="translate(1120 78)" text-anchor="end">

@@ -1,21 +1,48 @@
 /**
  * SENT — brand mark.
  *
- * ⚠ PLACEHOLDER GEOMETRY. The brand board lists an official SVG export as READY,
- * and that file is not in this repository. This is a faithful reconstruction of
- * the mark — two offset parallelogram slabs on the diagonal — drawn from the
- * board so the interface is not blocked on an asset handoff.
+ * WHERE THIS GEOMETRY COMES FROM
+ * ------------------------------
+ * `Brand.png`, in the repository root, measured. The previous version of this
+ * file was drawn by eye from that board and said so; it was three flat slabs and
+ * the real mark is two stepped diagonal forms with 180° rotational symmetry, so
+ * it did not look like the brand on any page that used it — which is every page,
+ * plus the favicon.
  *
- * It must be replaced by the official export before launch. §699 treats brand
- * and address integrity as the same class of problem: an approximated logo is a
- * small wrongness that ships everywhere, on every page, in the favicon and the
- * share image. Tracked as an open item rather than left to be noticed later.
+ * The board was there the whole time. The shape is a measurement rather than an
+ * opinion: the volt-lime pixels were masked, the two components traced with a
+ * Moore boundary walk, and each contour reduced to the handful of vertices it
+ * actually has. Re-derive with `scripts/trace-mark.py` if the board changes.
  *
- * The mark is never re-coloured beyond the LOCKED palette, and never stretched:
+ * WHY THE CORNERS ARE A STROKE AND NOT ARCS
+ * -----------------------------------------
+ * Every corner on the mark is rounded by the same radius. Writing that as arc
+ * segments would mean twelve hand-tuned curves per path and a shape nobody can
+ * safely edit afterwards.
+ *
+ * Instead each path is the outline INSET by the corner radius, stroked with
+ * twice that radius and a round line join. The stroke grows the shape back to
+ * its true size with every corner rounded uniformly and exactly. It is why the
+ * polygons below are traced from an eroded mask rather than the raw one.
+ *
+ * The mark is never re-coloured beyond the LOCKED palette and never stretched:
  * `preserveAspectRatio` is left at its default for exactly that reason.
  */
 
 import type { JSX } from "react";
+
+/**
+ * The two forms, inset by {@link CORNER}, in a 32×32 box.
+ *
+ * Traced from `Brand.png`. The pair reads as an S at a glance and as two
+ * offset slabs up close, which is what the board's "clear space and grid" panel
+ * is protecting — hence the margin baked into these coordinates.
+ */
+const UPPER = "M 14.16 1.96 L 20.23 8.34 L 22.78 8.82 L 28.37 8.66 L 29.96 10.41 L 29.96 16.64 L 28.85 17.6 L 14.8 8.5 L 14.32 7.38 L 14.16 2.12 Z";
+const LOWER = "M 3.15 13.29 L 11.29 20.31 L 18.95 24.3 L 19.59 25.89 L 19.59 30.04 L 12.09 22.38 L 4.27 22.38 L 2.99 21.9 L 2.2 20.63 L 2.04 18.55 L 2.04 15.04 L 2.99 13.45 Z";
+
+/** Corner radius in viewBox units, from the board. */
+const CORNER = 0.957;
 
 export interface LogoProps {
   readonly size?: number;
@@ -44,29 +71,25 @@ export function Logo({
       aria-label={variant === "full" ? undefined : "SENT"}
       style={glow ? { filter: "drop-shadow(0 0 8px rgba(198, 246, 0, 0.5))" } : undefined}
     >
-      {/* Upper slab: leans right, sits above the diagonal. */}
-      <path
-        d="M17.2 3.4 L28.6 3.4 L23.4 13.2 L12 13.2 Z"
+      <g
         fill="currentColor"
-        rx="1"
-      />
-      {/* Lower slab: the mirrored offset that closes the S. */}
-      <path
-        d="M8.6 18.8 L20 18.8 L14.8 28.6 L3.4 28.6 Z"
-        fill="currentColor"
-      />
-      {/* The connecting stroke. Narrower than the slabs, which is what stops the
-          mark reading as two unrelated bars. */}
-      <path
-        d="M13.4 13.2 L21.8 13.2 L18.6 18.8 L10.2 18.8 Z"
-        fill="currentColor"
-        opacity="0.92"
-      />
+        stroke="currentColor"
+        strokeWidth={CORNER * 2}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      >
+        <path d={UPPER} />
+        <path d={LOWER} />
+      </g>
     </svg>
   );
 
   if (variant === "mark") {
-    return <span className={className} style={{ color: "var(--volt)", display: "inline-flex" }}>{mark}</span>;
+    return (
+      <span className={className} style={{ color: "var(--volt)", display: "inline-flex" }}>
+        {mark}
+      </span>
+    );
   }
 
   return (
