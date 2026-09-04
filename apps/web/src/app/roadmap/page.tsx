@@ -108,8 +108,8 @@ export default function RoadmapPage(): JSX.Element {
   return (
     <div className={`${styles.page} container`} data-mode="experience">
       <header className={styles.head}>
-        <h1 className={styles.title}>Roadmap</h1>
-        <p className={styles.subtitle}>
+        <h1 className={`${styles.title} m-primary`}>Roadmap</h1>
+        <p className={`${styles.subtitle} m-secondary`}>
           Where each piece actually stands. No dates, because a date on this page would
           be a guess wearing a commitment&rsquo;s clothes.
         </p>
@@ -122,7 +122,7 @@ export default function RoadmapPage(): JSX.Element {
 
           return (
             <section key={state} className={styles.group} aria-labelledby={`state-${state}`}>
-              <header className={styles.groupHead}>
+              <header className={`${styles.groupHead} m-secondary`}>
                 {/* The state is a word first. Colour reinforces it and never
                     carries it alone (§84). */}
                 <h2 className={styles.groupTitle} id={`state-${state}`} data-state={state}>
@@ -133,7 +133,7 @@ export default function RoadmapPage(): JSX.Element {
 
               <ul className={styles.items}>
                 {items.map((item) => (
-                  <li key={item.title} className={styles.item} data-state={state}>
+                  <li key={item.title} className={`${styles.item} m-ambient`} data-state={state}>
                     <h3 className={styles.itemTitle}>{item.title}</h3>
                     <p className={styles.itemBody}>{item.body}</p>
                   </li>

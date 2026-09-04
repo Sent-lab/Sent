@@ -64,8 +64,8 @@ export default async function ExplorePage({
     <div className="container" data-mode="experience">
       <header className={styles.head}>
         <div>
-          <h1 className={styles.title}>Explore</h1>
-          <p className={styles.subtitle}>
+          <h1 className={`${styles.title} m-primary`}>Explore</h1>
+          <p className={`${styles.subtitle} m-secondary`}>
             Every market launched through SENT, quoted against official xStocks.
           </p>
         </div>
@@ -74,7 +74,7 @@ export default async function ExplorePage({
 
       {/* Links rather than buttons: each filter state is a real, shareable URL,
           and a keyboard user gets browser history for free. */}
-      <nav className={styles.filters} aria-label="Market filters">
+      <nav className={`${styles.filters} m-secondary`} aria-label="Market filters">
         <div className={styles.group} role="group" aria-label="Sort">
           {SORTS.map((option) => (
             <Link
@@ -109,7 +109,7 @@ export default async function ExplorePage({
       ) : !isOk(result) ? (
         <p className={styles.state}>{result.message}</p>
       ) : result.data.items.length === 0 ? (
-        <div className={styles.empty}>
+        <div className={`${styles.empty} m-ambient`}>
           <p className={styles.emptyTitle}>No markets match this view.</p>
           <p className={styles.emptyBody}>Try a different filter, or launch the first one.</p>
           <Link href="/create" className={styles.emptyCta}>

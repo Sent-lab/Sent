@@ -90,8 +90,8 @@ export default function UpdatesPage(): JSX.Element {
   return (
     <div className={`${styles.page} container`} data-mode="experience">
       <header className={styles.head}>
-        <h1 className={styles.title}>Updates</h1>
-        <p className={styles.subtitle}>
+        <h1 className={`${styles.title} m-primary`}>Updates</h1>
+        <p className={`${styles.subtitle} m-secondary`}>
           What changed, when, and what turned out to be wrong. Nothing here is shipped to
           mainnet yet — SENT is pre-audit and not deployed.
         </p>
@@ -101,7 +101,7 @@ export default function UpdatesPage(): JSX.Element {
         {ENTRIES.map((entry) => (
           // Keyed on date AND title: two entries can share a day, and a
           // duplicate key makes React reuse the wrong DOM node between them.
-          <li key={`${entry.date}-${entry.title}`} className={styles.entry}>
+          <li key={`${entry.date}-${entry.title}`} className={`${styles.entry} m-secondary`}>
             <div className={styles.entryHead}>
               {/* A machine-readable date and a rendered one. Never relative: a
                   changelog line reading "3 days ago" is wrong by the next week. */}

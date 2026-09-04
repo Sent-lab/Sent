@@ -64,8 +64,8 @@ export default function CreatePage(): JSX.Element {
   return (
     <div className={`${styles.page} container`} data-mode="experience">
       <header className={styles.head}>
-        <h1 className={styles.title}>Launch a token</h1>
-        <p className={styles.subtitle}>
+        <h1 className={`${styles.title} m-primary`}>Launch a token</h1>
+        <p className={`${styles.subtitle} m-secondary`}>
           One billion tokens, fixed at launch. You receive no allocation and neither does
           the platform — the entire supply goes to the curve.
         </p>
@@ -76,7 +76,7 @@ export default function CreatePage(): JSX.Element {
         cost disclosed on the review screen has already cost the creator their
         time.
       */}
-      <section className={styles.terms} aria-label="Launch terms">
+      <section className={`${styles.terms} m-secondary`} aria-label="Launch terms">
         <Term label="Your allocation" value="0%" detail="No premine. The curve holds all of it." />
         <Term label="Platform allocation" value="0%" detail="The same answer, for the same reason." />
         <Term
@@ -92,7 +92,7 @@ export default function CreatePage(): JSX.Element {
       </section>
 
       <div className={styles.layout}>
-        <form className={styles.form} onSubmit={(event) => event.preventDefault()}>
+        <form className={`${styles.form} m-secondary`} onSubmit={(event) => event.preventDefault()}>
           <Field
             label="Token name"
             hint="The full name, as it will appear everywhere."
@@ -173,7 +173,7 @@ export default function CreatePage(): JSX.Element {
           </p>
         </form>
 
-        <aside className={styles.previewPane} aria-label="Preview">
+        <aside className={`${styles.previewPane} m-secondary`} aria-label="Preview">
           <h2 className={styles.previewTitle}>Preview</h2>
 
           {/*

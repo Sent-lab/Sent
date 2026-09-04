@@ -67,15 +67,15 @@ export default function AccountPage(): JSX.Element {
   return (
     <div className={`${styles.page} container`} data-mode="trading">
       <header className={styles.head}>
-        <h1 className={styles.title}>Account</h1>
-        <p className={styles.subtitle}>
+        <h1 className={`${styles.title} m-primary`}>Account</h1>
+        <p className={`${styles.subtitle} m-secondary`}>
           Your positions, launches and earnings across every SENT market.
         </p>
       </header>
 
       <section className={styles.metrics} aria-label="Portfolio summary">
         {METRICS.map((metric) => (
-          <div key={metric.label} className={styles.metric}>
+          <div key={metric.label} className={`${styles.metric} m-ambient`}>
             <span className={styles.metricLabel}>{metric.label}</span>
             {/*
               An em dash, not a zero. §222 wants these figures; showing 0.00 to a
@@ -88,7 +88,7 @@ export default function AccountPage(): JSX.Element {
         ))}
       </section>
 
-      <div className={styles.connect} role="status">
+      <div className={`${styles.connect} m-secondary`} role="status">
         <p className={styles.connectTitle}>Holdings are not wired yet</p>
         <p className={styles.connectBody}>
           Positions and P&amp;L on this page still need a per-account holdings read, which is
@@ -103,7 +103,7 @@ export default function AccountPage(): JSX.Element {
 
       <div className={styles.sections}>
         {SECTIONS.map((section) => (
-          <section key={section.title} className={styles.section}>
+          <section key={section.title} className={`${styles.section} m-secondary`}>
             <h2 className={styles.sectionTitle}>{section.title}</h2>
             <p className={styles.sectionBody}>{section.body}</p>
             <div className={styles.sectionEmpty}>Available once a wallet is connected.</div>

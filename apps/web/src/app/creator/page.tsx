@@ -103,8 +103,8 @@ export default function CreatorPage(): JSX.Element {
     <div className={`${styles.page} container`} data-mode="trading">
       <header className={styles.head}>
         <div className={styles.headMain}>
-          <h1 className={styles.title}>Creator</h1>
-          <p className={styles.subtitle}>
+          <h1 className={`${styles.title} m-primary`}>Creator</h1>
+          <p className={`${styles.subtitle} m-secondary`}>
             Your markets, what they have earned, and what you can withdraw right now.
           </p>
         </div>
@@ -142,7 +142,7 @@ export default function CreatorPage(): JSX.Element {
 
 function Disconnected({ wallet }: { wallet: ReturnType<typeof useWallet> }): JSX.Element {
   return (
-    <div className={styles.connect} role="status">
+    <div className={`${styles.connect} m-secondary`} role="status">
       <p className={styles.connectTitle}>Connect the wallet that launched your markets</p>
       <p className={styles.connectBody}>
         Nothing here is stored against an account — the page reads your launches from the
@@ -199,7 +199,7 @@ function Earnings({
 
   return (
     <section className={styles.metrics} aria-label="Creator earnings">
-      <div className={styles.metric}>
+      <div className={`${styles.metric} m-ambient`}>
         <span className={styles.metricLabel}>Claimable now</span>
         <span className={`${styles.metricValue} num`}>
           {/* An em dash while unknown, never a zero: "0" to a creator who has
@@ -218,7 +218,7 @@ function Earnings({
         )}
       </div>
 
-      <div className={styles.metric}>
+      <div className={`${styles.metric} m-ambient`}>
         <span className={styles.metricLabel}>Earned all time</span>
         <span className={`${styles.metricValue} num`}>
           {loading && data === null ? "—" : assetTotal(accrued)}
@@ -229,7 +229,7 @@ function Earnings({
         <AssetList items={accrued} empty="No fees yet." />
       </div>
 
-      <div className={styles.metric}>
+      <div className={`${styles.metric} m-ambient`}>
         <span className={styles.metricLabel}>Launches</span>
         <span className={`${styles.metricValue} num`}>
           {data === null ? "—" : data.launches.length}
@@ -239,7 +239,7 @@ function Earnings({
         </span>
       </div>
 
-      <div className={styles.metric}>
+      <div className={`${styles.metric} m-ambient`}>
         <span className={styles.metricLabel}>Graduated</span>
         <span className={`${styles.metricValue} num`}>
           {data === null

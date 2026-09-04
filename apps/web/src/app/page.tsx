@@ -55,19 +55,19 @@ export default async function HomePage(): Promise<JSX.Element> {
         <div className={`${styles.heroInner} container`}>
           <Logo size={72} glow />
 
-          <h1 className={styles.title}>
+          <h1 className={`${styles.title} m-primary`}>
             Launch. Pair.
             <br />
             <span className={styles.titleAccent}>Create market.</span>
           </h1>
 
-          <p className={styles.lede}>
+          <p className={`${styles.lede} m-secondary`}>
             Permissionless fixed-supply launches on HyperEVM, quoted against official
             xStocks. One billion tokens, no creator allocation, no platform allocation —
             and liquidity that locks permanently when a market graduates.
           </p>
 
-          <div className={styles.heroActions}>
+          <div className={`${styles.heroActions} m-secondary`}>
             <Link href="/explore" className={styles.primaryCta}>
               Explore markets
             </Link>
@@ -122,7 +122,7 @@ function Fact({
   detail: string;
 }): JSX.Element {
   return (
-    <div className={styles.fact}>
+    <div className={`${styles.fact} m-ambient`}>
       <dt className={styles.factTerm}>{term}</dt>
       <dd className={`${styles.factValue} num`}>{value}</dd>
       <dd className={styles.factDetail}>{detail}</dd>
@@ -151,7 +151,7 @@ function Rail({
 }): JSX.Element {
   return (
     <section className={styles.rail}>
-      <header className={styles.railHead}>
+      <header className={`${styles.railHead} m-secondary`}>
         <div>
           <h2 className={styles.railTitle}>{title}</h2>
           <p className={styles.railDescription}>{description}</p>

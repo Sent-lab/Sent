@@ -100,7 +100,7 @@ export default async function TerminalPage({
   return (
     <div className={`${styles.page} container-wide`} data-mode="trading">
       {/* --- Header (§215: identity and status first) --------------------- */}
-      <header className={styles.header}>
+      <header className={`${styles.header} m-secondary`}>
         <div className={styles.identity}>
           <span className={styles.monogram} aria-hidden="true">
             {market.symbol.slice(0, 2).toUpperCase()}
@@ -130,7 +130,7 @@ export default async function TerminalPage({
       </header>
 
       {/* --- Metrics ----------------------------------------------------- */}
-      <section className={styles.metrics} aria-label="Market metrics">
+      <section className={`${styles.metrics} m-secondary`} aria-label="Market metrics">
         <Metric
           label="Price"
           value={
@@ -163,7 +163,7 @@ export default async function TerminalPage({
 
       {/* --- Chart + trade (§216) ---------------------------------------- */}
       <div className={styles.core}>
-        <section className={styles.chart} aria-label="Price chart">
+        <section className={`${styles.chart} m-secondary`} aria-label="Price chart">
           <ChartPanel
             token={market.token}
             quoteSymbol={market.quoteSymbol}
@@ -173,7 +173,7 @@ export default async function TerminalPage({
           />
         </section>
 
-        <aside className={styles.trade} aria-label="Trade">
+        <aside className={`${styles.trade} m-secondary`} aria-label="Trade">
           <TradePanel
             token={market.token}
             market={market.market}
@@ -188,7 +188,7 @@ export default async function TerminalPage({
       </div>
 
       {/* --- Graduation --------------------------------------------------- */}
-      <section className={styles.graduation} aria-label="Graduation">
+      <section className={`${styles.graduation} m-secondary`} aria-label="Graduation">
         <GraduationProgress
           progressBps={market.graduationProgressBps.value}
           status={status}
@@ -199,7 +199,7 @@ export default async function TerminalPage({
 
       {/* --- Activity + details ------------------------------------------ */}
       <div className={styles.lower}>
-        <section className={styles.activity} aria-label="Recent trades">
+        <section className={`${styles.activity} m-secondary`} aria-label="Recent trades">
           {/* Server-rendered rows, then live ones prepended over the socket. The
               tape is the surface where §22's "no manual refresh" is most
               visible, and the one where a silent gap is least acceptable. */}
@@ -210,7 +210,7 @@ export default async function TerminalPage({
           />
         </section>
 
-        <section className={styles.details} aria-label="Market details">
+        <section className={`${styles.details} m-secondary`} aria-label="Market details">
           <h2 className={styles.sectionTitle}>Market details</h2>
 
           <dl className={styles.detailList}>

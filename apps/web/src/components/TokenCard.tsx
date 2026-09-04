@@ -43,7 +43,7 @@ export function TokenCard({ item }: TokenCardProps): JSX.Element {
   const holders = safeBigint(item.holderCount.value);
 
   return (
-    <Link href={`/t/${item.token}`} className={styles.card} data-status={status}>
+    <Link href={`/t/${item.token}`} className={`${styles.card} m-secondary`} data-status={status}>
       <div className={styles.head}>
         {/* No token-supplied image. A market can name itself anything, and an
             uploaded avatar rendered beside a price is a phishing surface. The
