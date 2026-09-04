@@ -26,8 +26,42 @@ pragma solidity 0.8.28;
  * "Backed Token Implementation", so this is the real issuer's design and not one
  * venue's wrapper.
  *
+ * THIS IS THE WHOLE ASSET CLASS, NOT ONE BAD TOKEN
+ * ------------------------------------------------
+ * All ten of the largest xStocks are deployed on this chain running byte-identical
+ * code, and six have already moved off a 1.0 multiplier:
+ *
+ *     STRCx 1.0808929977   SPYx  1.0057145603   QQQx   1.0027250297
+ *     GOOGLx 1.0023772501  NVDAx 1.0009180758   MUx    1.0004015986
+ *
+ * So this library is not a safety net catching one unsuitable asset. **It refuses
+ * the entire intended quote-asset class, and it is why the allowlist is empty.**
+ * That is correct for the accounting as it stands, and it should be uncomfortable
+ * rather than reassuring.
+ *
+ * Changing chain does not help. Backed's developer documentation states that on
+ * every EVM chain their tokens "implement the ERC-20 standard with rebasing
+ * logic"; only Solana and TON keep raw balances constant, and neither runs this
+ * codebase.
+ *
+ * THE FIX THIS IS HOLDING THE DOOR FOR
+ * ------------------------------------
+ * These tokens expose `sharesOf(address)`, and shares are the rebase-invariant
+ * unit: `balanceOf = sharesOf × multiplier`. A market that booked collateral in
+ * SHARES would be neutral to the multiplier in both directions — claims scale
+ * together, dividends accrue to whoever holds the claim, and a reverse split
+ * cannot make it insolvent.
+ *
+ * That is an accounting change rather than a workaround, and it is the shape any
+ * real answer takes. Until it exists, refusing is the honest behaviour: the
+ * alternative is a market that looks fine for months and then cannot pay.
+ *
  * WHAT WOULD HAPPEN WITHOUT THIS CHECK
  * ------------------------------------
+ * Every multiplier measured so far has drifted UPWARD, because dividends accrue
+ * into it, and a rising multiplier leaves the market holding more than its books
+ * owe. Surplus, not insolvency. The danger is the other direction.
+ *
  * A reverse split lowers the multiplier. Every holder's balance shrinks, and so
  * does the market's — while `curveCollateral` does not move, because no transfer
  * occurred and no event fired. The market becomes **insolvent against its own

@@ -27,28 +27,34 @@ Last updated: Day 8.
 
 | Status | Count | Rows |
 |---|---|---|
-| VERIFIED | 10 | V-01, V-02, V-03, V-05, V-07, V-08, V-09, V-13, V-16, V-20 |
-| PARTIAL | 5 | V-06, V-10, V-11, V-15 |
+| VERIFIED | 11 | V-01, V-02, V-03, V-05, V-07, V-08, V-09, V-13, V-16, V-20, V-22 |
+| PARTIAL | 4 | V-06, V-10, V-11, V-15 |
 | UNVERIFIED | 4 | V-04, V-12, V-14, V-17 |
 | OWNER-BLOCKED | 1 | V-18 |
 | CLOSED | 1 | V-19 |
 
-**No P0 row is open on engineering grounds. One is open on product grounds, and it is the
-whole product.**
+**No P0 row is open on engineering grounds. One decision is open on product grounds.**
 
-V-02, V-03 and V-05 are all VERIFIED in the uncomfortable sense: they were answered, and the
-answers say the same thing from three directions.
+- **V-02** — the full xStock suite is deployed on HyperEVM at Backed's canonical addresses, with
+  byte-identical code to Optimism and BNB and **the largest EVM supply of the three**. Over
+  $100M of assets. *This row first read "none", and that was wrong — the error and its shape are
+  recorded in the row rather than overwritten.*
+- **V-03** — every one of them **rebases**, and six of the ten largest have already moved off a
+  1.0 multiplier. Not escapable by changing chain: Backed's own docs say every EVM deployment
+  rebases. The observed direction is upward (dividends), which leaves surplus rather than
+  insolvency; a reverse split is the failure case.
+- **V-05** — they are also pausable and upgradeable behind proxies.
+- **V-22** — no xStock has a HyperSwap pool at any fee tier. Holders exist; an EVM-side market
+  between them does not.
 
-- **V-02** — read HyperCore's `tokenInfo` for 400 token indices. Every equity-shaped token has
-  `evmContract = address(0)`. There is no canonically linked xStock ERC-20 on HyperEVM, and no
-  first party lists this chain.
-- **V-03** — the unlinked SPYx deployment that does exist **rebases**. `multiplier()` reads
-  1.0057145603 and has already moved.
-- **V-05** — it is also pausable, upgradeable behind a proxy, and its minter is an EOA.
+§2 LOCKS every market to an official xStock, and the assets are there. What is not resolved is
+how the accounting meets a rebasing quote asset. `RebaseDetector` currently refuses the entire
+class, which is correct for today's balance-based accounting and is why the allowlist is empty.
 
-§2 LOCKS every market to an official xStock. On these measurements no asset qualifies today.
-That is a **product escalation**, not an engineering gap: the registry correctly lists nothing,
-every launch correctly reverts, and no code change alters the finding.
+The options are narrow and each is a product decision, not an engineering one: book collateral
+in **shares** (the rebase-invariant unit these tokens already expose), quote against a
+**non-rebasing wrapper**, or restrict to assets where a reverse split is implausible and accept
+the tail. None is blocked by code.
 
 **Day 8 movement.** V-08 and V-09 closed together, against the real HyperSwap deployment
 rather than against a mock — see `contracts/test/fork/HyperSwapFork.t.sol`. V-06 located its
@@ -108,7 +114,8 @@ HOW TO VERIFY:      1. obtain the HIP-1 spot token indices for the xStock assets
                     4. confirm against first-party xStocks/Hyperliquid publication
 BLOCKS:             XStockRegistry, every market, launch flow, the entire product
 OWNER:              Stream A
-STATUS:             VERIFIED (PRIMARY), Day 8 — and the answer is NONE
+STATUS:             VERIFIED (PRIMARY), Day 8 — the suite is deployed and this
+                    chain holds the largest EVM supply of it
 ```
 
 **Day 1 findings (context, not resolution):** xStocks launched tokenized US equities on
@@ -119,90 +126,87 @@ written into `packages/config` until read from chain.
 
 ---
 
-**Day 8 (PRIMARY): one xStock found, by measurement.**
+**Day 8 (PRIMARY): the whole xStock suite is deployed on HyperEVM.**
 
-Not by guessing an address. HyperSwap's `NonfungiblePositionManager` was sampled for the token
-pairs its 177,889 positions actually hold — 500 of the most recent positions, 433 unique
-tokens — and the list was filtered for equity-shaped names. Exactly one hit:
+Every one of the ten largest xStocks by AUM exists on this chain, at Backed's address, holding
+real supply:
 
 ```text
-SP500 xStock   SPYx    0x90a2a4c76b5d8c0bc892a69ea28aa775a8f2dd48   18 dec
-  totalSupply      14,496.95 units
-  implementation   0xd865ce1b07540b5ede20e8298f48da69770fe22e
-                   name() -> "Backed Token Implementation"  (EIP-1967 proxy)
-  minter()         0x0a934bc9c64309c9654451f23d8331c2dad34c2a   (an EOA)
-  owner()          0x49754062e35f7591b93cc4f9915965be89643a65   (a 171-byte contract)
-  isPaused()       false
-
-Wrapped SP500 xStock   wSPYx   0xe7e553cd128f0011777323a0b44a7b96ea1cb540   18 dec
-  asset()          -> SPYx        an ERC-4626 wrapper over it
-  convertToAssets(1e18) -> 1.0057145603      NOT one-to-one
+sym      units on HyperEVM     global AUM      multiplier
+CRCLx           312,842.17    $ 82,435,641      1.0
+STRCx           108,351.50    $142,453,184      1.0808929977
+NVDAx           104,729.99    $ 40,197,476      1.0009180758
+MSTRx            66,795.81    $ 72,231,310      1.0
+GOOGLx           59,252.11    $ 36,006,406      1.0023772501
+TSLAx            46,467.32    $ 71,847,306      1.0
+SPCXx            30,000.00    $ 40,173,058      1.0
+MUx              24,113.04    $ 17,590,887      1.0004015986
+QQQx             16,106.56    $ 36,363,722      1.0027250297
+SPYx             14,496.95    $ 55,393,845      1.0057145603
 ```
 
-The implementation is Backed Finance's own. This is the real issuer's code, not a lookalike.
+Priced against the spot reads available on-chain, CRCLx alone is ~$32M here, GOOGLx ~$20M and
+TSLAx ~$11M. The three that can be priced from measured feeds come to **~$63M**; the suite is
+well over $100M.
 
-**But canonicity for THIS chain is contradicted by the first party.** `xstocks.com` lists the
-supported chains as Ethereum, Solana, BNB Smart Chain, Mantle, TON and Ink; `docs.xstocks.fi`
-lists Ethereum, Solana, Arbitrum, Mantle, TON, Ink "and other EVM-compatible networks".
-**Neither names HyperEVM.** So what is on HyperEVM is genuine Backed code at an address no
-first party has published for this chain, which is precisely the situation §420 was written
-against: *"Do not infer availability from the global xStocks product catalog."*
+**These are Backed's canonical deployments, and that is asserted rather than assumed.** Backed
+deploys deterministically, so the address is the same on every EVM chain — `SPYx` is
+`0x90a2…dd48` on HyperEVM *and* on Optimism. The runtime bytecode hash is byte-identical across
+all three chains checked:
 
-**And it is the only one.** 433 unique tokens across the sampled positions, and no NVDAx,
-TSLAx, AAPLx or anything else. Whatever else is true, the HyperEVM xStock universe is one
-asset with 14,497 units outstanding and a single thin pool — which is a product question
-(§420's "at least one qualifying asset") before it is a verification one.
+```text
+                 HyperEVM      Optimism       BNB
+codehash         07152ae5      07152ae5       07152ae5
+TSLAx supply     46,467.32      8,882.85    20,000.00
+CRCLx supply    312,842.17     67,223.12    41,413.21
+SPYx  supply     14,496.95      6,482.16    10,057.15
+```
+
+**HyperEVM is not a fringe deployment. It is the largest EVM deployment of xStocks** — several
+times Optimism's and BNB's on every asset checked.
 
 ---
 
-**Settled the same day, by this row's own verification method.**
+**THIS ROW WAS FIRST ANSWERED "NONE", AND THAT WAS WRONG.**
 
-Step 2 of `HOW TO VERIFY` says to read the linked ERC-20 "via the spot-deployer's finalized
-`requestEvmContract` linkage". That linkage is readable on-chain: HyperEVM exposes HyperCore's
-read precompiles, and `tokenInfo(uint32)` at `0x…080C` returns each HIP-1 token's `evmContract`
-along with its `szDecimals`, `weiDecimals` and `evmExtraWeiDecimals`.
+Recorded rather than quietly overwritten, because the mistake is more instructive than the
+correction and the same reasoning would produce it again.
 
-400 token indices were read. 119 have an EVM contract linked. **Every equity-shaped token has
-`evmContract` = `address(0)`:**
+Two searches were run, both came back empty, and both empties were read as absence of the
+asset:
 
-```text
-idx  name      szDec  weiDec  evmExtra  evmContract                    spot  spotPx
-312  USPYX       2      8        0      0x0000…0000  NOT LINKED        189   620000000
-319  UUUSPX      1      8        0      0x0000…0000  NOT LINKED        193     6468400
-290  DNDX        2      8        0      0x0000…0000  NOT LINKED        (none)
-```
-
-`USPYX` is the S&P xStock, and it is live: it has a HyperCore spot market and a price. What it
-does not have is an EVM representation linked by the official mechanism — **the linkage this
-row's verification procedure depends on does not exist for any xStock.**
-
-**So the answer to "which xStock assets have a canonical, verified ERC-20 representation on
-HyperEVM" is: none.** Not "not yet found" — read, and absent.
-
-That also settles the standing of the SPYx ERC-20 found earlier at
-`0x90a2a4c76b5d8c0bc892a69ea28aa775a8f2dd48`. It is genuine Backed code, and it is **not** the
-canonically linked representation, because there is no canonically linked representation. It is
-a deployment that HyperCore does not point at and that no first party lists for this chain.
-
-Three independent readings agree, which is why this is VERIFIED rather than PARTIAL:
-
-| Source | Says |
+| What was searched | What empty actually meant |
 |---|---|
-| HyperCore `tokenInfo` (PRIMARY) | no xStock has a linked EVM contract |
-| `xstocks.com` (OFFICIAL) | supported chains are Ethereum, Solana, BNB, Mantle, TON, Ink |
-| `docs.xstocks.fi` (OFFICIAL) | Ethereum, Solana, Arbitrum, Mantle, TON, Ink |
+| HyperSwap V3 positions, sampled for token pairs | xStocks have **no HyperSwap pools**. True, and a different fact — a token can be widely held and never pooled. |
+| HyperCore `tokenInfo.evmContract` for 400 HIP-1 tokens | xStocks are **EVM-native**. They were never HyperCore tokens, so they have no HIP-1 record to link. Asking that table about them is asking the wrong table. |
 
-**What this means for the product, stated plainly.** §2 LOCKS every market to an official xStock
-quote asset and §420 forbids inferring availability from the global catalog. On the measurements
-above there is no asset that qualifies today. That is a **product escalation**, not an
-engineering gap — no amount of code closes it, and the registry correctly refuses to list
-anything, which is the honest failure rather than a broken one.
+`SPYx` was found — through a pool belonging to its *wrapper*, `wSPYx` — and was then treated as
+an anomaly rather than as the edge of a suite. The step never taken was the cheapest one
+available: take a published xStock address and call `eth_getCode` on it. That is one RPC call,
+and it would have answered the row on day one.
 
-**What remains genuinely unprovable from here:** whether Backed intends to link `USPYX` to an
-EVM contract, or considers the unlinked SPYx deployment canonical anyway. Those need the issuer.
-§421 forbids proceeding on a guess, and the allowlist stays empty until they answer.
+**The general shape:** absence in a derived index was read as absence in the world. A pool
+registry indexes what trades; a HIP-1 table indexes what was bridged from Core. Neither is a
+census of what exists, and both were treated as one. This is the same defect shape as the rows
+recorded in `REVIEW-NOTES.md` — a reader with no writer, an argument nobody checked — turned on
+the verification process itself.
 
 ---
+
+**What this row does NOT clear.**
+
+- **The assets rebase.** See V-03. It is not a HyperEVM problem and it is not fixable by
+  changing chain: Backed's own developer documentation states that "on EVM chains … tokens
+  implement the ERC-20 standard with rebasing logic". Ethereum, Arbitrum, Optimism, Mantle, Ink
+  and BNB are all the same. Only Solana and TON keep raw balances constant, and neither runs
+  this codebase.
+- **There is no EVM-side trading venue.** No xStock has a HyperSwap V3 pool at any fee tier
+  (V-22). Holders exist; a market between them does not yet.
+- **`xstocks.com` and `docs.xstocks.fi` still do not list HyperEVM** among supported chains.
+  Given identical bytecode at identical addresses with the largest supply of any EVM chain, the
+  most likely explanation is that the site lags the deployment — but "most likely" is not
+  first-party confirmation, and §420 asks for the confirmation before an address is written into
+  `packages/config`.
 
 ## V-03 — xStock decimals, wrapper / multiplier / share semantics · **VERIFIED · P0**
 
@@ -220,8 +224,16 @@ STATUS:             VERIFIED (PRIMARY), Day 8 — and the answer disqualifies th
 
 **Answered, and it is the answer nobody wanted.**
 
-The only xStock on HyperEVM (V-02) has multiplier semantics of the most dangerous kind. Read
-directly from `SPYx` at `0x90a2a4c76b5d8c0bc892a69ea28aa775a8f2dd48`:
+Every xStock has multiplier semantics of the most dangerous kind — not one stray asset, the
+whole suite (V-02). Measured multipliers on HyperEVM:
+
+```text
+STRCx  1.0808929977      NVDAx  1.0009180758      GOOGLx 1.0023772501
+SPYx   1.0057145603      QQQx   1.0027250297      MUx    1.0004015986
+```
+
+Six of the ten largest have already moved off 1.0. Read directly from `SPYx` at
+`0x90a2a4c76b5d8c0bc892a69ea28aa775a8f2dd48`:
 
 ```text
 multiplier()            1005714560286254000   =  1.0057145603
@@ -237,6 +249,26 @@ xStocks' own documentation says why, and says it plainly: corporate actions such
 stock splits, and reverse splits are reflected through an onchain rebasing mechanism"* so that
 *"token balances always reflect a 1:1 exposure of the underlying equity."* The rebase is the
 product working as designed, not a flaw in it.
+
+**And it is not escapable by changing chain.** Their developer documentation is explicit: *"On
+EVM chains (e.g. Ethereum, Arbitrum, Mantle, Ink, etc.) tokens implement the ERC-20 standard
+with rebasing logic."* Only Solana (SPL Token-2022 Scaled UI) and TON keep the raw balance
+constant and apply the multiplier for display — and neither runs Solidity. Any EVM chain this
+product could move to has the same problem.
+
+**Which direction it moves matters, and the observed direction is the safe one.** Every
+multiplier measured is ≥ 1.0 and has drifted upward, because dividends accrue into it. A rising
+multiplier leaves the market holding MORE than its books owe — surplus, not insolvency. The
+failure case needs a **reverse split**, which drives the multiplier down. That is rare, absent
+in practice for the ETFs (SPYx, QQQx), and entirely real for individual equities.
+
+**There is a principled fix, and it is not a wrapper.** These tokens expose `sharesOf(address)`,
+and shares are the rebase-invariant unit: `balanceOf = sharesOf × multiplier`. A market that
+booked collateral in SHARES rather than balance units would be neutral to the multiplier in both
+directions — every holder's claim scales with it, dividends accrue to whoever holds the claim,
+and a reverse split cannot make it insolvent. That is an accounting change, not a workaround,
+and it is the shape any real solution here takes. It is **not implemented**; recorded so the
+option is not lost.
 
 The `wSPYx` wrapper at `0xe7e553cd128f0011777323a0b44a7b96ea1cb540` is the other half of the
 picture: an ERC-4626 over SPYx whose `convertToAssets(1e18)` returns the same 1.0057145603. It
@@ -259,6 +291,13 @@ ticks, which is the exact defect shape this codebase has hit five times: a check
 performs. `RebaseDetector` now sits UNDERNEATH that gate and reverts regardless of it — an
 asset with all eight gates green is still refused — at registration and again at enable, because
 these are upgradeable proxies and the answer can change between the two.
+
+**Be clear about what that detector currently does: it refuses the entire intended asset
+class.** It is correct given today's accounting, and it is not a safety net catching one bad
+token — it is the reason the allowlist is empty. Either the accounting moves to shares, or a
+non-rebasing wrapper becomes the quote asset, or there is no market. That is a product decision
+and the detector's job is to make sure it is taken deliberately rather than discovered after a
+reverse split.
 
 **Verified mechanism (OFFICIAL — Hyperliquid docs):**
 
@@ -306,7 +345,8 @@ OWNER:              Stream A / I
 STATUS:             VERIFIED (PRIMARY), Day 8 — for the only candidate that exists
 ```
 
-**Read on-chain, Day 8, against `SPYx` `0x90a2a4c76b5d8c0bc892a69ea28aa775a8f2dd48`:**
+**Read on-chain, Day 8, against `SPYx` `0x90a2a4c76b5d8c0bc892a69ea28aa775a8f2dd48`** (whose
+runtime bytecode is identical to every other xStock on this chain):
 
 | This row asked | Answer |
 |---|---|
@@ -320,6 +360,10 @@ STATUS:             VERIFIED (PRIMARY), Day 8 — for the only candidate that ex
 
 This row's own UNKNOWN line asks "rebasing?" first. It is answered, and the answer is the one
 that breaks curve solvency — the row anticipated exactly the right question.
+
+**It applies to the whole suite, not this one token.** All ten xStocks measured on HyperEVM run
+byte-identical code (V-02), so these answers are properties of Backed's implementation rather
+than of one deployment.
 
 **Three of these are disqualifying on their own terms**, and it is worth separating them:
 
@@ -969,3 +1013,43 @@ would trade in.
 
 Recorded rather than acted on. It is a naming decision, and the only thing worse than making it
 late is making it silently.
+
+---
+
+## V-22 — EVM-side trading venue for the quote asset · **VERIFIED · surfaced**
+
+```text
+UNKNOWN:            can a trader acquire the quote asset ON HyperEVM, and can a graduated
+                    market's pool find natural counterparty flow
+WHY IT MATTERS:     §14 graduates every market into a HyperSwap V3 pool quoted in the xStock.
+                    A quote asset nobody can buy on this chain makes the post-graduation venue
+                    a pool with one side and no traffic.
+CURRENT ASSUMPTION: (none needed — measured)
+HOW TO VERIFY:      query the HyperSwap V3 factory for pools of each xStock against WHYPE,
+                    USDT0 and USDC at every fee tier
+BLOCKS:             nothing in code. Named because it shapes what launch day looks like.
+OWNER:              Stream A / owner
+STATUS:             VERIFIED (PRIMARY), Day 8
+```
+
+**Measured.** `getPool` was called for every xStock and dStock found, against WHYPE, USDT0 and
+USDC, at the 500 / 3000 / 10000 tiers:
+
+```text
+AAPLd  GOOGLd  CRCLd  HOODd  SLVd  TSLA(Wagyu)  SPYx      →  NO POOL, any pair, any tier
+```
+
+The only equity-linked pool found on HyperSwap at all was for `wSPYx`, the ERC-4626 wrapper —
+which is how SPYx was found in the first place.
+
+**What this does and does not mean.** It does not mean the assets are unreachable: on
+Hyperliquid the deep venue is HyperCore's order book, and holders bridge to the EVM side. Over
+$100M of xStocks sit on this chain, so people clearly do. What it means is that **the EVM side
+has no spot market for them yet**, and §14's graduated pool is an EVM-side venue.
+
+For this product that is a two-sided fact. A market graduating into a pool whose quote asset has
+no other EVM venue has thin external arbitrage keeping it honest — and equally, this protocol
+would be creating the first real EVM-side liquidity for tokenized equities on this chain. Which
+of those dominates is a launch-strategy question, not a verification one.
+
+Recorded now because it is invisible until launch day, and expensive to discover then.

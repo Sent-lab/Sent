@@ -356,6 +356,48 @@ deterministically through the same handler the fuzzer drives.
 
 ---
 
+## Shape 7 — an empty index read as an empty world
+
+Every shape above is a defect in the code. This one is a defect in the *verification*, and it
+produced a wrong P0 conclusion that was written into the ledger and reported as fact.
+
+**The claim:** "there is no canonical xStock ERC-20 on HyperEVM."
+
+**The truth:** all ten of the largest xStocks are deployed there, at Backed's canonical
+addresses, running byte-identical code to Optimism and BNB — and HyperEVM holds *more* supply
+than either. Over $100M of assets.
+
+**How the wrong answer was reached.** Two searches, both empty, both empties read as absence of
+the thing itself:
+
+| Searched | Came back | What empty actually meant |
+|---|---|---|
+| HyperSwap V3 positions, sampled for their token pairs | no xStocks | xStocks have **no pools**. A token can be widely held and never pooled. |
+| HyperCore `tokenInfo.evmContract`, 400 HIP-1 indices | every equity `address(0)` | xStocks are **EVM-native**. They were never HyperCore tokens, so there is no HIP-1 record to link. Wrong table. |
+
+Neither search was wrong. Both were answered correctly. The error was reading a **derived
+index** as a **census**: a pool registry indexes what trades, a HIP-1 table indexes what was
+bridged from Core, and neither is a list of what exists.
+
+The tell was there and was explained away. `SPYx` *was* found — through a pool belonging to its
+wrapper — and was treated as an anomaly rather than as the edge of a suite. One contradicting
+data point against two confident absences, and the data point lost.
+
+**The check never run was the cheapest one available.** Take a published address, call
+`eth_getCode`. One RPC call. It would have answered the row on day one and refuted the
+conclusion in seconds.
+
+**Why this belongs in a document about code defects.** It is the same shape as Shape 1 and
+Shape 5 — a reader with no writer, an argument nobody checked — turned on the process that is
+supposed to catch them. An absence is evidence only if you know the index would have contained
+the thing. Both indices here were guaranteed *not* to contain it, for reasons that were
+knowable before the search.
+
+The correction is recorded inside V-02 rather than replacing the wrong text, because a ledger
+that silently repairs itself teaches nobody anything.
+
+---
+
 ## What is deliberately not implemented
 
 These are not placeholders. They are recorded refusals, and each names the
