@@ -1,0 +1,188 @@
+/*
+ * The wrap panel.
+ *
+ * A sibling of the trade panel rather than a dialog. Wrapping is a step on the
+ * way to a trade, and burying it behind a modal would make the one piece of
+ * friction in the flow also the hardest to find — §44 is against making people
+ * hunt for the thing that unblocks them.
+ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.body {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+/* --- Direction ------------------------------------------------------------ */
+
+.sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-1);
+  padding: var(--s-1);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.side,
+.sideActive {
+  min-height: 38px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.side {
+  color: var(--text-dim);
+}
+
+.side:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.sideActive {
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* --- Amount --------------------------------------------------------------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.fieldLabel {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 0 var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.inputRow:focus-within {
+  border-color: var(--volt);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+}
+
+.input::placeholder {
+  color: var(--text-dim);
+}
+
+.inputSuffix {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+/*
+ * The balance doubles as the "use all of it" control.
+ *
+ * Left-aligned and quiet: it is a fact first and an action second, and styling
+ * it as a button would compete with the one control that submits.
+ */
+.balance {
+  align-self: flex-start;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.balance:hover {
+  color: var(--volt);
+}
+
+.fieldError {
+  color: var(--warn);
+  font-size: var(--text-xs);
+}
+
+/* --- Review and submit ---------------------------------------------------- */
+
+.review {
+  min-height: 3rem;
+}
+
+.placeholder {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.submit {
+  min-height: 48px;
+  border-radius: var(--radius);
+  background: var(--volt);
+  color: #06070a;
+  font-size: var(--text-base);
+  font-weight: 600;
+  transition: filter var(--dur-fast) var(--ease-out);
+}
+
+.submit:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.submit:disabled {
+  background: var(--surface-hover);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.note {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.error {
+  color: var(--warn);
+  font-size: var(--text-sm);
+}

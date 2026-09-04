@@ -227,8 +227,19 @@ export interface BuildApproveParams {
   readonly chainId: number;
   /** The ERC-20 being approved. */
   readonly token: `0x${string}`;
-  /** Who may spend it — always a market, never an EOA. */
+  /** Who may spend it — always a contract of ours, never an EOA. */
   readonly spender: `0x${string}`;
+  /**
+   * What the spender IS, for the summary line. Defaults to "this market".
+   *
+   * The summary used to say "market" unconditionally, which was true while a
+   * market was the only thing anyone approved. Wrapping added a second: the
+   * spender is the `WrappedXStock` contract, and a review reading "allow this
+   * market to spend your TSLAx" would be describing a contract the transaction
+   * does not touch. The address is in the rows either way; this is the sentence
+   * a user actually reads (§694).
+   */
+  readonly spenderRole?: string;
   /** Exact amount, in the asset's own raw units. */
   readonly amount: bigint;
   readonly decimals: number;
@@ -260,6 +271,7 @@ export interface BuildApproveParams {
  */
 export function buildApproveIntent(params: BuildApproveParams): TransactionIntent {
   const { chainId, token, spender, amount, decimals, symbol, kind } = params;
+  const spenderRole = params.spenderRole ?? "this market";
 
   if (amount <= 0n) throw new Error("buildApproveIntent: amount must be positive");
 
@@ -277,7 +289,7 @@ export function buildApproveIntent(params: BuildApproveParams): TransactionInten
     value: 0n,
     review: {
       kind,
-      summary: `Allow this market to spend ${formatUnits(amount, decimals)} ${symbol}`,
+      summary: `Allow ${spenderRole} to spend ${formatUnits(amount, decimals)} ${symbol}`,
       rows: [
         {
           label: "Amount",

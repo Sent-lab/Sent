@@ -68,10 +68,31 @@ export interface WalletState {
   readonly error: string | null;
 }
 
+/** One `eth_call`: a read of chain state, signing nothing and costing nothing. */
+export interface ChainRead {
+  readonly to: `0x${string}`;
+  readonly data: `0x${string}`;
+}
+
 export interface Wallet extends WalletState {
   connect(): Promise<void>;
   send(intent: WireIntent): Promise<`0x${string}`>;
   switchChain(): Promise<void>;
+  /**
+   * Read chain state through the SAME provider that will send the transaction.
+   *
+   * §87 asks where a number came from, and for a wrapper's exchange rate the
+   * only acceptable answer is the chain. It is not in the projection and must
+   * not be: a stale `convertToAssets` is a number a user signs against.
+   *
+   * Through the wallet's own node rather than a separate RPC, so the value that
+   * was quoted and the state the transaction executes against come from one
+   * place. A second endpoint could be a block behind and nothing would say so.
+   *
+   * Needs a provider, not a connection — a read works before the user has
+   * granted an account, so a rate can be shown to someone still deciding.
+   */
+  read(request: ChainRead): Promise<`0x${string}`>;
 }
 
 export function useWallet(): Wallet {
@@ -227,7 +248,36 @@ export function useWallet(): Wallet {
     [state.address],
   );
 
-  return { ...state, connect, send, switchChain };
+  const read = useCallback(async (request: ChainRead): Promise<`0x${string}`> => {
+    const provider = window.ethereum;
+    if (provider === undefined) {
+      throw new WalletError("NO_WALLET", "No wallet was found in this browser.");
+    }
+
+    /*
+     * The chain is checked here too, and for a sharper reason than on `send`.
+     *
+     * A wallet pointed at another network answers `eth_call` from THAT chain,
+     * cheerfully and with no error. The address exists there or it does not; if
+     * it does, the number that comes back is real and belongs to a different
+     * contract. Reading a rate off the wrong chain and showing it as this
+     * market's rate is worse than showing nothing.
+     */
+    const chain = Number((await provider.request({ method: "eth_chainId" })) as string);
+    if (chain !== CHAIN_ID) {
+      throw new WalletError(
+        "WRONG_CHAIN",
+        `Your wallet is on chain ${chain}. Switch to ${CHAIN_ID} to read this market.`,
+      );
+    }
+
+    return (await provider.request({
+      method: "eth_call",
+      params: [{ to: request.to, data: request.data }, "latest"],
+    })) as `0x${string}`;
+  }, []);
+
+  return { ...state, connect, send, switchChain, read };
 }
 
 function applyAccounts(

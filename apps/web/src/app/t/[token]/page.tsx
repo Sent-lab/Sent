@@ -37,6 +37,7 @@ import { TradePanel } from "../../../components/TradePanel.tsx";
 import { ChartPanel } from "../../../components/ChartPanel.tsx";
 import { LiveTape } from "../../../components/LiveTape.tsx";
 import { FinalizePanel } from "../../../components/FinalizePanel.tsx";
+import { WrapPanel } from "../../../components/WrapPanel.tsx";
 
 import styles from "./terminal.module.css";
 import type { JSX } from "react";
@@ -198,6 +199,24 @@ export default async function TerminalPage({
             status={status}
             freshness={marketResult.freshness}
           />
+
+          {/*
+            Next to the trade panel, not behind a link.
+
+            A user holding the xStock cannot trade here until they wrap, so this
+            is the step that unblocks the panel directly above it. §44 is against
+            making someone hunt for the thing standing between them and the
+            action they came to take — and only markets whose quote asset is
+            actually a wrapper show it at all.
+          */}
+          {market.quoteUnderlying != null && (
+            <WrapPanel
+              wrapper={market.quoteAsset}
+              underlying={market.quoteUnderlying}
+              wrapperSymbol={market.quoteSymbol}
+              decimals={decimals}
+            />
+          )}
         </aside>
       </div>
 

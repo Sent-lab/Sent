@@ -229,6 +229,24 @@
   /* Below the 60px header plus a gap: the panel stays reachable while the tape
      scrolls, which is §215's "trade panel always easy to find". */
   top: calc(60px + var(--s-4));
+
+  /* The column holds the trade panel and, on a wrapper-quoted market, the wrap
+     panel under it. */
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+
+  /*
+   * A sticky element taller than the viewport hides its own bottom.
+   *
+   * Once its top reaches the offset it stops moving, so whatever hangs below
+   * the fold can never be scrolled to — and with two panels stacked here that
+   * is the submit button. Bounding the height and letting the column scroll
+   * inside itself keeps every control reachable without giving up §215's
+   * always-visible trade panel.
+   */
+  max-height: calc(100vh - 60px - var(--s-4) * 2);
+  overflow-y: auto;
 }
 
 /* --- Graduation ----------------------------------------------------------- */
