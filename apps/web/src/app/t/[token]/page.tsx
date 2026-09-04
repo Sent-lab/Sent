@@ -58,19 +58,12 @@ export const revalidate = 0;
  * whether to open the link actually wants, and they are LOCKED values so they
  * cannot go stale.
  *
- * THE IMAGE IS SVG, AND THAT IS THE OPEN HALF
- * -------------------------------------------
- * X, Discord and Telegram do not render SVG in an unfurl. Slack does, and every
- * other crawler that cannot simply omits the image and shows the text card —
- * which is strictly better than the bare title it showed before. So this is
- * pointed at the SVG, with `og:image:type` declared so a crawler skips it
- * cleanly instead of guessing at the bytes.
- *
- * Rasterising to PNG needs a native dependency — resvg, sharp, a headless
- * browser — and which one depends on a runtime §434 has not fixed. That is a
- * deployment decision, not a code one, and inventing it here would be picking
- * for someone else. When a PNG endpoint lands, the only change is the URL and
- * the type on the two lines below.
+ * THE IMAGE IS A PNG, AND THAT IS WHY
+ * -------------------------------------
+ * X, Discord and Telegram do not render SVG in an unfurl. They do not fail
+ * loudly either — they drop the image and show text — so pointing at the SVG
+ * meant a card nobody's client would draw on the three surfaces that matter.
+ * The API rasterises the same card at `/preview.png`, which is what this names.
  */
 export async function generateMetadata({
   params,
@@ -89,7 +82,7 @@ export async function generateMetadata({
     `Fixed supply of one billion, no creator allocation, and liquidity that ` +
     `locks permanently when the market graduates.`;
 
-  const image = `${API_BASE}/markets/${market.token}/preview.svg`;
+  const image = `${API_BASE}/markets/${market.token}/preview.png`;
 
   return {
     title,
@@ -99,12 +92,9 @@ export async function generateMetadata({
       description,
       siteName: "SENT",
       type: "website",
-      images: [{ url: image, width: 1200, height: 630, type: "image/svg+xml", alt: title }],
+      images: [{ url: image, width: 1200, height: 630, type: "image/png", alt: title }],
     },
     twitter: {
-      // `summary_large_image` even though the image is SVG: the card type also
-      // decides the text layout, and a crawler that drops the image still lays
-      // the rest out correctly.
       card: "summary_large_image",
       title,
       description,

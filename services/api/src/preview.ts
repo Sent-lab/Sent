@@ -62,6 +62,8 @@ const TEXT = "#f5f7fa";
 const DIM = "#9aa4b2";
 const VOLT = "#c6f600";
 const UP = "#34d399";
+/** The one state a reader should look twice at (§42). Matches the app token. */
+const WARN = "#fbbf24";
 
 /**
  * Escape text for XML.
@@ -146,8 +148,30 @@ export function renderPreview(m: PreviewMarket): string {
   const barWidth = 1040;
   const filled = Math.max((barWidth * progress) / 100, progress > 0 ? 6 : 0);
 
-  const statusLabel = graduated ? "GRADUATED" : "ON THE CURVE";
-  const statusColour = graduated ? UP : VOLT;
+  /*
+   * THREE STATES, NOT TWO (D-016, §228)
+   * -----------------------------------
+   * This asked one question — has it GRADUATED — so a market in GRADUATING was
+   * labelled "ON THE CURVE" on the card that gets shared. Its curve is
+   * permanently shut and nothing can be bought or sold, which is close to the
+   * opposite of what that label says, and this is the surface that travels
+   * furthest from anyone who could correct it.
+   *
+   * The same binary check was in the trade panel and had the same consequence
+   * there. It is the shape a state machine leaves behind when it grows a state:
+   * every `x ? a : b` written against the old one keeps compiling.
+   */
+  const statusLabel =
+    m.status === "GRADUATED"
+      ? "GRADUATED"
+      : m.status === "GRADUATING"
+        ? "GRADUATING"
+        : "ON THE CURVE";
+
+  // Amber for GRADUATING: it is neither done nor proceeding normally, and §42
+  // keeps that colour for the state a reader should look twice at.
+  const statusColour =
+    m.status === "GRADUATED" ? UP : m.status === "GRADUATING" ? WARN : VOLT;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}" role="img" aria-label="${xml(`${m.symbol} paired with ${m.quoteSymbol}`)}">
   <defs>
@@ -176,8 +200,16 @@ export function renderPreview(m: PreviewMarket): string {
 
   ${mark(m.token, 80, 180)}
 
-  <text x="80" y="380" font-family="Sora, system-ui, sans-serif" font-size="96" font-weight="700" letter-spacing="-3" fill="${TEXT}">${xml(fit(m.symbol, 12))}</text>
-  <text x="${80 + Math.min(fit(m.symbol, 12).length, 12) * 58 + 24}" y="380" font-family="Sora, system-ui, sans-serif" font-size="40" font-weight="500" fill="${DIM}">/ ${xml(fit(m.quoteSymbol, 10))}</text>
+  <!--
+    The pair follows the symbol as a tspan, not at a computed x.
+
+    It used to be positioned at "80 + symbolLength * 58", which assumes every
+    glyph in a proportional face is 58px wide at this size. "WIND" is wider than
+    that and the two ran into each other; "III" is narrower and left a hole. A
+    tspan continues at the text cursor the renderer is already tracking, so the
+    gap is exact for any symbol without measuring anything.
+  -->
+  <text x="80" y="380" font-family="Sora, system-ui, sans-serif" font-size="96" font-weight="700" letter-spacing="-3" fill="${TEXT}">${xml(fit(m.symbol, 12))}<tspan dx="28" font-size="40" font-weight="500" letter-spacing="0" fill="${DIM}">/ ${xml(fit(m.quoteSymbol, 10))}</tspan></text>
 
   <text x="80" y="428" font-family="Sora, system-ui, sans-serif" font-size="28" font-weight="400" fill="${DIM}">${xml(fit(m.name, 46))}</text>
 

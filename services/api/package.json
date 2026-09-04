@@ -15,14 +15,15 @@
     "start": "node --experimental-strip-types src/main.ts"
   },
   "dependencies": {
-    "fastify": "^5.2.0",
-    "viem": "^2.56.3",
+    "@resvg/resvg-js": "^2.6.2",
+    "@sent/config": "workspace:*",
+    "@sent/contracts": "workspace:*",
+    "@sent/database": "workspace:*",
+    "@sent/economics": "workspace:*",
+    "@sent/observability": "workspace:*",
     "@sent/realtime": "workspace:*",
     "@sent/sdk": "workspace:*",
-    "@sent/economics": "workspace:*",
-    "@sent/database": "workspace:*",
-    "@sent/contracts": "workspace:*",
-    "@sent/config": "workspace:*",
-    "@sent/observability": "workspace:*"
+    "fastify": "^5.2.0",
+    "viem": "^2.56.3"
   }
 }

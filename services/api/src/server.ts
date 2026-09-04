@@ -50,6 +50,7 @@ import {
 } from "./handlers.ts";
 import { PostgresPort, type PortConfig } from "./port.ts";
 import { renderPreview, PREVIEW_CACHE_CONTROL } from "./preview.ts";
+import { renderPreviewPng, PNG_CACHE_CONTROL } from "./preview-png.ts";
 import {
   RateLimiter,
   clientKey,
@@ -522,6 +523,55 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
       .header("content-type", "image/svg+xml; charset=utf-8")
       .header("cache-control", PREVIEW_CACHE_CONTROL)
       .send(svg);
+  });
+
+  /*
+   * The same card, rasterised (§117).
+   *
+   * X, Discord and Telegram do not render SVG in a link unfurl — they drop the
+   * image and show text — so the SVG route alone is invisible on exactly the
+   * three surfaces this feature is for. This is the one `og:image` points at.
+   *
+   * It builds the SVG through the same `renderPreview` call rather than a
+   * parallel path. Two renderers would be two cards that agree until one of
+   * them is edited.
+   */
+  scope.get("/markets/:token/preview.png", async (request, reply) => {
+    const { token } = request.params as { token: string };
+
+    await port.loadMarket(token);
+    const market = port.getMarket(token);
+
+    if (market === null) {
+      // JSON, not a PNG saying "not found": a crawler caches whatever image it
+      // is handed, and an error rendered as an image outlives the error.
+      return reply.code(404).send({
+        ok: false,
+        code: "MARKET_NOT_FOUND",
+        message: `No market for token ${token}`,
+        retryable: false,
+        freshness: handleHealth(port).freshness,
+      });
+    }
+
+    const png = renderPreviewPng(
+      renderPreview({
+        symbol: market.symbol,
+        name: market.name,
+        quoteSymbol: market.quoteSymbol,
+        token: market.token,
+        status: market.status,
+        graduationProgressBps: market.qG > 0n ? (market.distributed * 10_000n) / market.qG : 0n,
+        referenceMarketCapUsd: referenceMarketCapUsd(market.p0, market.price),
+        holderCount: market.holderCount,
+      }),
+    );
+
+    return reply
+      .code(200)
+      .header("content-type", "image/png")
+      .header("cache-control", PNG_CACHE_CONTROL)
+      .send(png);
   });
 
   scope.get("/markets/:token/epochs", async (request, reply) => {
