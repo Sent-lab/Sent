@@ -1,0 +1,93 @@
+/*
+ * The finalise panel.
+ *
+ * Deliberately NOT styled as an alert. A market waiting on finalisation is not
+ * an error and nothing is at risk — §42 reserves warning colour for things a
+ * user should worry about, and painting this red would tell holders their
+ * position is in danger when it is untouched.
+ *
+ * It reads as an open task instead: a bordered card with a volt edge, the same
+ * weight as the trade panel it stands in for.
+ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--volt);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.body {
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
+.body strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/*
+ * The cost, set apart from the explanation.
+ *
+ * It is the one paragraph that changes whether someone should press the button,
+ * so it does not sit in the middle of prose where it can be skimmed past.
+ */
+.cost {
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.review {
+  min-height: 3rem;
+}
+
+.placeholder {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.submit {
+  min-height: 48px;
+  border-radius: var(--radius);
+  background: var(--volt);
+  color: #06070a;
+  font-size: var(--text-base);
+  font-weight: 600;
+  transition: filter var(--dur-fast) var(--ease-out);
+}
+
+.submit:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.submit:disabled {
+  background: var(--surface-hover);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.note {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.error {
+  color: var(--warn);
+  font-size: var(--text-sm);
+}

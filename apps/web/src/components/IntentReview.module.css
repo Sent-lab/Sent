@@ -1,0 +1,121 @@
+/*
+ * The review an intent describes about itself (§694).
+ *
+ * Its own module because the review is not a trading surface: every signable
+ * action renders through it, and a finalise or an approval must look exactly
+ * like a buy does. Styles that lived in `TradePanel.module.css` were reachable
+ * only by things willing to call themselves a trade panel.
+ */
+
+.reviewFresh,
+.reviewStale {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+/*
+ * A pending re-quote dims the previous one rather than clearing it. An empty
+ * panel between keystrokes reads as a failure, and a stale number that is
+ * visibly stale is more useful than no number.
+ */
+.reviewStale {
+  opacity: 0.5;
+}
+
+.summary {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.row,
+.rowPrimary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+  font-size: var(--text-xs);
+}
+
+.row dt,
+.rowPrimary dt {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.row dd,
+.rowPrimary dd {
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.rowPrimary {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  padding-top: var(--s-2);
+  border-top: 1px solid var(--border);
+}
+
+.row[data-warning="true"] dd,
+.rowPrimary[data-warning="true"] dd {
+  color: var(--warn);
+}
+
+/* §411 and V-19 notices. Distinct from an error: nothing has gone wrong, the
+   figure simply does not mean what it would normally mean. */
+.partial {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  line-height: var(--leading-normal);
+  padding: var(--s-2);
+  border-left: 2px solid var(--border-strong);
+}
+
+.warning {
+  font-size: var(--text-xs);
+  color: var(--warn);
+  line-height: var(--leading-normal);
+  padding: var(--s-2);
+  border-left: 2px solid var(--warn);
+}
+
+.calldata {
+  font-size: var(--text-xs);
+}
+
+.calldata summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+}
+
+.calldata summary:hover {
+  color: var(--text);
+}
+
+.calldata > .rows {
+  margin-top: var(--s-2);
+}
+
+.data {
+  margin-top: var(--s-2);
+  padding: var(--s-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  /* The calldata is long and must scroll inside its own box rather than widen
+     the panel (§80). */
+  overflow-x: auto;
+  white-space: pre;
+}

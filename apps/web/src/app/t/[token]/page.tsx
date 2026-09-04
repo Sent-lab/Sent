@@ -27,8 +27,8 @@ import { notFound } from "next/navigation";
 import { getMarket, getTape, isOk } from "../../../lib/api.ts";
 import {
   formatCompact,
-  formatFixed,
-  placesFor,
+  formatQuoteCompact,
+  formatQuoteFixed,
   truncateAddress,
 } from "../../../lib/format.ts";
 import { FreshnessBadge } from "../../../components/Freshness.tsx";
@@ -36,6 +36,7 @@ import { GraduationProgress, type MarketStatus } from "../../../components/Gradu
 import { TradePanel } from "../../../components/TradePanel.tsx";
 import { ChartPanel } from "../../../components/ChartPanel.tsx";
 import { LiveTape } from "../../../components/LiveTape.tsx";
+import { FinalizePanel } from "../../../components/FinalizePanel.tsx";
 
 import styles from "./terminal.module.css";
 import type { JSX } from "react";
@@ -139,18 +140,14 @@ export default async function TerminalPage({
               : // Precision from the magnitude (§41), then padded to it so the
                 // figure keeps a stable width as it ticks (§80). A fixed eight
                 // places renders a sub-cent price as zeros.
-                formatFixed(price, decimals, {
-                  places: placesFor(price, decimals),
-                  pad: true,
-                  grouped: true,
-                })
+                formatQuoteFixed(price, { grouped: true })
           }
           suffix={market.quoteSymbol}
           emphasis
         />
         <Metric
           label="Curve collateral"
-          value={collateral === null ? "—" : formatCompact(collateral, decimals)}
+          value={collateral === null ? "—" : formatQuoteCompact(collateral)}
           suffix={market.quoteSymbol}
         />
         <Metric
@@ -195,6 +192,25 @@ export default async function TerminalPage({
           quoteSymbol={market.quoteSymbol}
           size="lg"
         />
+
+        {/*
+          The one state where the product needs the user to act.
+
+          §16 makes `finalizeGraduation()` permissionless so a stalled market is
+          never anyone's hostage — but that only means something if a holder can
+          reach it. Rendered here, under the progress bar that shows the curve at
+          100%, because this is where someone looking at a stuck market looks.
+        */}
+        {status === "GRADUATING" && (
+          <FinalizePanel
+            market={market.market}
+            symbol={market.symbol}
+            quoteSymbol={market.quoteSymbol}
+            quoteDecimals={decimals}
+            distributed={market.distributed.value}
+            curveCollateral={market.curveCollateral.value}
+          />
+        )}
       </section>
 
       {/* --- Activity + details ------------------------------------------ */}
