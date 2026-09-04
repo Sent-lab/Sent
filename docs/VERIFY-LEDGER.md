@@ -27,18 +27,28 @@ Last updated: Day 8.
 
 | Status | Count | Rows |
 |---|---|---|
-| VERIFIED | 9 | V-01, V-03, V-05, V-07, V-08, V-09, V-13, V-16, V-20 |
-| PARTIAL | 4 | V-02, V-06, V-10, V-15 |
-| UNVERIFIED | 5 | V-04, V-11, V-12, V-14, V-17 |
+| VERIFIED | 10 | V-01, V-02, V-03, V-05, V-07, V-08, V-09, V-13, V-16, V-20 |
+| PARTIAL | 5 | V-06, V-10, V-11, V-15 |
+| UNVERIFIED | 4 | V-04, V-12, V-14, V-17 |
 | OWNER-BLOCKED | 1 | V-18 |
 | CLOSED | 1 | V-19 |
 
-**P0 rows still open: V-02.** And it is now a product question rather than an engineering one.
+**No P0 row is open on engineering grounds. One is open on product grounds, and it is the
+whole product.**
 
-V-03 and V-05 are VERIFIED in the uncomfortable sense: they were answered, and the answers
-disqualify the only xStock that exists on HyperEVM. SPYx rebases, is pausable, and sits behind
-an upgradeable proxy with an EOA minter. V-02 found it and simultaneously found that no first
-party lists HyperEVM as a supported chain at all.
+V-02, V-03 and V-05 are all VERIFIED in the uncomfortable sense: they were answered, and the
+answers say the same thing from three directions.
+
+- **V-02** — read HyperCore's `tokenInfo` for 400 token indices. Every equity-shaped token has
+  `evmContract = address(0)`. There is no canonically linked xStock ERC-20 on HyperEVM, and no
+  first party lists this chain.
+- **V-03** — the unlinked SPYx deployment that does exist **rebases**. `multiplier()` reads
+  1.0057145603 and has already moved.
+- **V-05** — it is also pausable, upgradeable behind a proxy, and its minter is an EOA.
+
+§2 LOCKS every market to an official xStock. On these measurements no asset qualifies today.
+That is a **product escalation**, not an engineering gap: the registry correctly lists nothing,
+every launch correctly reverts, and no code change alters the finding.
 
 **Day 8 movement.** V-08 and V-09 closed together, against the real HyperSwap deployment
 rather than against a mock — see `contracts/test/fork/HyperSwapFork.t.sol`. V-06 located its
@@ -82,7 +92,7 @@ attestation domain (§405) and every EIP-712 domain.
 
 ---
 
-## V-02 — Canonical HyperEVM xStock representations + exact addresses · **PARTIAL · P0**
+## V-02 — Canonical HyperEVM xStock representations + exact addresses · **VERIFIED · P0**
 
 ```text
 UNKNOWN:            which xStock assets have a canonical, verified ERC-20 representation on
@@ -98,8 +108,7 @@ HOW TO VERIFY:      1. obtain the HIP-1 spot token indices for the xStock assets
                     4. confirm against first-party xStocks/Hyperliquid publication
 BLOCKS:             XStockRegistry, every market, launch flow, the entire product
 OWNER:              Stream A
-STATUS:             PARTIAL — one genuine xStock LOCATED on HyperEVM and read on-chain;
-                    canonicity for this chain is contradicted by first-party sources
+STATUS:             VERIFIED (PRIMARY), Day 8 — and the answer is NONE
 ```
 
 **Day 1 findings (context, not resolution):** xStocks launched tokenized US equities on
@@ -144,10 +153,54 @@ TSLAx, AAPLx or anything else. Whatever else is true, the HyperEVM xStock univer
 asset with 14,497 units outstanding and a single thin pool — which is a product question
 (§420's "at least one qualifying asset") before it is a verification one.
 
-**This row stays PARTIAL, and the blocker has moved rather than shrunk.** The address is no
-longer unknown; what is unknown is whether Backed considers this deployment canonical, who
-controls the EOA that can mint it, and whether it is intended to exist on this chain at all.
-Only a first party can answer those, and §421 forbids proceeding without.
+---
+
+**Settled the same day, by this row's own verification method.**
+
+Step 2 of `HOW TO VERIFY` says to read the linked ERC-20 "via the spot-deployer's finalized
+`requestEvmContract` linkage". That linkage is readable on-chain: HyperEVM exposes HyperCore's
+read precompiles, and `tokenInfo(uint32)` at `0x…080C` returns each HIP-1 token's `evmContract`
+along with its `szDecimals`, `weiDecimals` and `evmExtraWeiDecimals`.
+
+400 token indices were read. 119 have an EVM contract linked. **Every equity-shaped token has
+`evmContract` = `address(0)`:**
+
+```text
+idx  name      szDec  weiDec  evmExtra  evmContract                    spot  spotPx
+312  USPYX       2      8        0      0x0000…0000  NOT LINKED        189   620000000
+319  UUUSPX      1      8        0      0x0000…0000  NOT LINKED        193     6468400
+290  DNDX        2      8        0      0x0000…0000  NOT LINKED        (none)
+```
+
+`USPYX` is the S&P xStock, and it is live: it has a HyperCore spot market and a price. What it
+does not have is an EVM representation linked by the official mechanism — **the linkage this
+row's verification procedure depends on does not exist for any xStock.**
+
+**So the answer to "which xStock assets have a canonical, verified ERC-20 representation on
+HyperEVM" is: none.** Not "not yet found" — read, and absent.
+
+That also settles the standing of the SPYx ERC-20 found earlier at
+`0x90a2a4c76b5d8c0bc892a69ea28aa775a8f2dd48`. It is genuine Backed code, and it is **not** the
+canonically linked representation, because there is no canonically linked representation. It is
+a deployment that HyperCore does not point at and that no first party lists for this chain.
+
+Three independent readings agree, which is why this is VERIFIED rather than PARTIAL:
+
+| Source | Says |
+|---|---|
+| HyperCore `tokenInfo` (PRIMARY) | no xStock has a linked EVM contract |
+| `xstocks.com` (OFFICIAL) | supported chains are Ethereum, Solana, BNB, Mantle, TON, Ink |
+| `docs.xstocks.fi` (OFFICIAL) | Ethereum, Solana, Arbitrum, Mantle, TON, Ink |
+
+**What this means for the product, stated plainly.** §2 LOCKS every market to an official xStock
+quote asset and §420 forbids inferring availability from the global catalog. On the measurements
+above there is no asset that qualifies today. That is a **product escalation**, not an
+engineering gap — no amount of code closes it, and the registry correctly refuses to list
+anything, which is the honest failure rather than a broken one.
+
+**What remains genuinely unprovable from here:** whether Backed intends to link `USPYX` to an
+EVM contract, or considers the unlinked SPYx deployment canonical anyway. Those need the issuer.
+§421 forbids proceeding on a guess, and the allowlist stays empty until they answer.
 
 ---
 
@@ -552,7 +605,7 @@ that verification is required before it can be treated as a bounded risk.
 
 ---
 
-## V-11 — Launch-anchor reference price + multiplier source · **UNVERIFIED · P0**
+## V-11 — Launch-anchor reference price + multiplier source · **PARTIAL · P0**
 
 ```text
 UNKNOWN:            which feed provides the launch-time xStock/USD reference snapshot
@@ -563,8 +616,46 @@ HOW TO VERIFY:      identify available feeds on HyperEVM and review their securi
 BLOCKS:             the launch flow. Every launch reverts with ReferencePriceNotSet
                     until governance configures a feed and points the factory at it.
 OWNER:              Stream A
-STATUS:             UNVERIFIED
+STATUS:             PARTIAL — a native candidate is measured and live; the choice is open
 ```
+
+**A candidate exists, on-chain, with no third party in it (PRIMARY, Day 8).**
+
+HyperEVM exposes HyperCore's read precompiles, and they answer:
+
+```text
+0x…0809  l1BlockNumber()      1,134,825,491     (live)
+0x…0806  markPx(uint32)       810740, 252260, 15239
+0x…0807  oraclePx(uint32)     810952, 252231, 15265
+0x…0808  spotPx(uint32)       12480000, 16550000, 7168
+0x…080B  spotInfo(uint32)     spot market metadata
+0x…080C  tokenInfo(uint32)    HIP-1 token metadata, incl. evmContract + decimals
+```
+
+`oraclePx` is Hyperliquid's own oracle price and `spotPx` is the live spot mid. For an xStock
+this is the price **at the venue where the asset actually trades**, read from the chain rather
+than pushed by a publisher — which answers §253's manipulation-resistance concern differently
+and better than any third-party feed available here: there is no separate publisher to
+compromise, no staleness window of someone else's choosing, and no off-chain signing key.
+
+`USPYX` (V-02) has spot market 189 and reads `spotPx(189) = 620000000`, so the path is not
+theoretical.
+
+**Why this is PARTIAL and not VERIFIED.** Three things are unresolved and two of them are real:
+
+1. **It prices the wrong thing today.** §402's anchor is xStock/**USD**. `spotPx` is quoted in
+   the spot market's own quote token, which needs reading from `spotInfo` and converting. That
+   is mechanical, and it is not done.
+2. **The precompiles' own failure modes are unmeasured.** What `oraclePx` returns for an unknown
+   index, during a HyperCore halt, or for a delisted market has not been tested. The adapter
+   refuses rather than clamps, so a wrong answer becomes a refused launch rather than a
+   mispriced market — but "refuses correctly" has to be demonstrated, not assumed.
+3. **It is moot while V-02 stands.** There is no linked xStock to price. A feed decision made
+   before the asset question is settled would be a decision about a market that cannot exist.
+
+**Deliberately not adopted yet.** §253 attaches criteria to this choice and the adapter already
+refuses every launch until one is made. Wiring a precompile in now would turn a documented
+refusal into a working path to a market whose quote asset V-02 says does not qualify.
 
 **The mechanism is built; only the feed is open.** `ReferencePriceAdapter`
 exists, is tested against stale, zero, negative, out-of-band, unreadable and
@@ -844,3 +935,37 @@ depends on a specific opt-in mechanism must confirm it first-hand before it ship
 eksternal mengharuskan retryable workflow: deterministic escrow, permissionless
 `finalizeGraduation()`, no retry caller privilege." The block lane is that external
 dependency. Carried into D-016 rather than decided here; this row records the constraint.
+
+---
+
+## V-21 — The ticker `SENT` is already taken on Hyperliquid · **VERIFIED · surfaced**
+
+```text
+UNKNOWN:            (not previously asked)
+WHY IT MATTERS:     branding, HyperCore listing, and every place a user types a ticker
+CURRENT ASSUMPTION: (none needed — measured)
+HOW TO VERIFY:      read HyperCore tokenInfo for the token named SENT
+BLOCKS:             nothing in code. Named because it is cheaper to know now.
+OWNER:              owner
+STATUS:             VERIFIED (PRIMARY), Day 8
+```
+
+Found while reading `tokenInfo` for V-02, not looked for:
+
+```text
+HyperCore token index 186   name "SENT"
+  evmContract   0xed912f61368be50835ad7696f67d106b0cd08fe2
+  name()        "Sentient AI"
+  symbol()      "SENT"
+  decimals      18
+  totalSupply   1,200,000,000
+  spot market   135    spotPx(135) = 12
+```
+
+An unrelated project already holds `SENT` as a HIP-1 token on HyperCore, with a linked EVM
+contract and a live spot market. This protocol does not issue a token, so nothing here breaks —
+but the name collides on the chain this product launches on, in the venue its own quote assets
+would trade in.
+
+Recorded rather than acted on. It is a naming decision, and the only thing worse than making it
+late is making it silently.
