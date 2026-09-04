@@ -1038,6 +1038,33 @@ a Hyperliquid L1 action, not an EVM call, so nothing above measures it. What is 
 that the two lanes exist, what they cap at, and how often each is produced. Any design that
 depends on a specific opt-in mechanism must confirm it first-hand before it ships.
 
+**It applies to DEPLOYMENT too, and that was nearly missed.**
+
+The lane is a property of the chain, not of graduation, so it constrains every
+transaction — including the ones that put the protocol on-chain. Measured with
+`script/GasProbe.s.sol`:
+
+```text
+WrappedXStockFactory      1,552,649    fits
+XStockRegistry            1,385,239    fits
+LaunchpadFactory (+2)     7,360,896    2.45x the ceiling  <-- needs the large lane
+ReferencePriceAdapter       691,542    fits
+                         ----------
+total                    10,990,326
+```
+
+`LaunchpadFactory`'s constructor also deploys `FeeVault` and `HolderRewardVault`,
+so one transaction pays for three contracts. **The deployer account must be opted
+into the large lane before it starts**, and that is a Hyperliquid L1 action rather
+than anything the script can do — with a failure mode of a transaction that never
+mines rather than one that reverts.
+
+*Measured with a SCRIPT, not a test.* The first attempt used `forge test` and
+reported 3,228 gas for a 22KB deployment: the test VM does not meter the
+code-deposit cost, so every figure came back three orders of magnitude low and the
+assertions passed on nonsense. A gas measurement taken in `forge test` is not a
+gas measurement.
+
 **Response:** §16 and §95.6 already prescribe one, for exactly this case - "jika dependency
 eksternal mengharuskan retryable workflow: deterministic escrow, permissionless
 `finalizeGraduation()`, no retry caller privilege." The block lane is that external

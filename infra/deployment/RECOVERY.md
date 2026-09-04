@@ -319,3 +319,87 @@ curl -s "$API/v1/markets/$TOKEN" | jq '{quoteAsset, quoteSymbol, quoteUnderlying
 `quoteUnderlying` must be the xStock. If it is `null`, the indexer missed
 `WrappedAssetRegistered` — reindex from the registration block rather than
 patching the row.
+
+---
+
+## Deploying, in order
+
+The sequence, with the two steps that fail silently if taken out of order.
+
+### Before anything: the deployer needs the large block lane
+
+Measured with `forge script script/GasProbe.s.sol:GasProbe`:
+
+```text
+WrappedXStockFactory      1,552,649    fits the default lane
+XStockRegistry            1,385,239    fits
+LaunchpadFactory (+2)     7,360,896    2.45x the 3,000,000 ceiling
+ReferencePriceAdapter       691,542    fits
+```
+
+`LaunchpadFactory`'s constructor also deploys `FeeVault` and `HolderRewardVault`,
+so that one transaction pays for three contracts and **cannot be included in a
+default-lane block** (V-20).
+
+**Opt the deployer account into the large lane first.** It is a Hyperliquid L1
+action, not an EVM call, and nothing in this repository can perform it. The
+failure mode if you skip it is a transaction that never mines — no revert, no
+error, just a hash that stays pending — which is the worst symptom to debug
+mid-deployment.
+
+Re-run `GasProbe` before trusting these numbers. They move whenever the contracts
+do, and the instruction above is only correct while the factory is over the
+ceiling.
+
+### The accounts, and why they are separate
+
+| Account | Type | Why |
+|---|---|---|
+| Governance | **Safe, ≥ 2-of-3** | controls every parameter, and has a path to the reward vault. `Deploy.s.sol` refuses anything weaker on mainnet. |
+| Treasury | Safe | receives fees, controls nothing. Any contract is accepted. |
+| Deployer | **EOA** | must sign transactions directly. A Safe has no private key and cannot be a deployer. |
+
+The deployer holds nothing afterwards — every authority goes to Governance through
+constructors, in the same transaction. Its key is used once, on an
+internet-connected machine, and that is a different risk profile from a key that
+controls the protocol for its lifetime.
+
+### The deploy
+
+```bash
+export GOVERNANCE=0x...          # the Safe
+export TREASURY=0x...            # a different Safe
+export LAUNCH_FEE=...            # wei; changeable later via governance
+export DEPLOYER_PRIVATE_KEY=0x...
+
+forge script script/Deploy.s.sol:Deploy \
+  --rpc-url "$RPC_URL" --broadcast --slow
+```
+
+`--slow` matters here: it waits for each transaction to confirm before sending the
+next. The registry binds the wrapper factory's address immutably and the factory
+binds the registry's, so a nonce-ordering surprise produces contracts pointing at
+addresses that do not exist yet.
+
+Dry-run first by omitting `--broadcast` and `--rpc-url`. The script prints both
+what it deployed and what is still missing, and the second half is the one to
+read.
+
+### What refuses you, and what it means
+
+| Message | Meaning |
+|---|---|
+| `governance threshold must be at least 2` | the Safe is 1-of-N. One stolen key controls the protocol; one lost key freezes it forever. |
+| `governance needs more owners than its threshold` | 2-of-2. Survives theft, not loss. |
+| `governance is not a Safe` | the address is a contract whose authority structure cannot be read. |
+| `governance and treasury must differ` | protocol authority and fee withdrawal collapsed into one signer set. |
+| `mainnet governance must be a contract` | governance is on an EOA. |
+
+None of these should be worked around. Each names a failure that cannot be
+recovered from after markets are live.
+
+### After it succeeds
+
+The deployment log lists four steps that are NOT done, and a launch is refused
+until at least two of them are. Read it rather than the address list — a log that
+ends in addresses reads as "finished" and this one is not.
