@@ -35,6 +35,7 @@ import type {
   AccountResponse,
   PlatformStatsResponse,
   HealthResponse,
+  PendingGraduationsResponse,
 } from "@sent/api/handlers";
 import type { IntentKind, IntentRow } from "@sent/sdk";
 import type { FreshnessEnvelope } from "@sent/realtime";
@@ -50,6 +51,7 @@ export type {
   AccountResponse,
   PlatformStatsResponse,
   HealthResponse,
+  PendingGraduationsResponse,
   IntentKind,
   IntentRow,
 };
@@ -494,6 +496,26 @@ export function getCreator(
   options?: RequestOptions,
 ): Promise<ApiResult<CreatorResponse>> {
   return request<CreatorResponse>(`/creators/${address}`, options, anyObject);
+}
+
+/**
+ * Markets whose curve has closed and whose pool has not been minted (§16, V-20).
+ *
+ * The API's own note on this endpoint says who wants it: "the keeper reads it,
+ * the operator alerts on it, and a UI can offer the finalise to whoever is
+ * looking at a stalled market. All three want the same list." Two of the three
+ * were using it.
+ *
+ * It carries `waitingBlocks`, which is the only place that number exists —
+ * `MarketDetail` has no graduation timestamp, so without this a finalise panel
+ * cannot say whether the market has been waiting a minute or a week. That
+ * difference is the whole decision: one is waiting for a block lane, the other
+ * has been forgotten.
+ */
+export function getPendingGraduations(
+  options?: RequestOptions,
+): Promise<ApiResult<PendingGraduationsResponse>> {
+  return request<PendingGraduationsResponse>("/graduations/pending", options, anyObject);
 }
 
 export function getHealth(options?: RequestOptions): Promise<ApiResult<HealthResponse>> {

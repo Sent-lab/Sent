@@ -52,6 +52,28 @@
   line-height: 1.5;
 }
 
+/*
+ * How long it has been waiting.
+ *
+ * Two weights for the same fact. Under the threshold it is context and reads
+ * like the rest of the prose; past it, it is the reason the reader is being
+ * asked to act, and it takes the warning colour §42 reserves for exactly that.
+ */
+.waiting {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.stalled {
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
 .review {
   min-height: 3rem;
 }

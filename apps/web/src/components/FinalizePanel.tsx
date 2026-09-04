@@ -43,11 +43,12 @@
  * would overstate the pool by a factor of a trillion.
  */
 
-import { useMemo, useState, type JSX } from "react";
+import { useEffect, useMemo, useState, type JSX } from "react";
 
 import { buildFinalizeGraduationIntent, toRawForPayout } from "@sent/sdk";
 import { TOTAL_SUPPLY } from "@sent/economics";
 
+import { getPendingGraduations, isOk } from "../lib/api.ts";
 import { useWallet, CHAIN_ID } from "../lib/wallet.ts";
 import { IntentReview } from "./IntentReview.tsx";
 
@@ -75,6 +76,50 @@ export function FinalizePanel({
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [waiting, setWaiting] = useState<{ blocks: bigint; stalled: boolean } | null>(null);
+
+  /*
+   * HOW LONG HAS THIS BEEN WAITING (§16, V-20)
+   * ------------------------------------------
+   * `MarketDetail` has no graduation timestamp, so the page cannot tell a
+   * market that entered GRADUATING a minute ago from one that entered a week
+   * ago. That difference is the entire decision this panel asks someone to
+   * make: a few hundred blocks is waiting for the large block lane, which is
+   * produced about once in 120 blocks; thousands means nobody finalised.
+   *
+   * `/graduations/pending` already carries it, and its own documentation names
+   * this exact reader — "a UI can offer the finalise to whoever is looking at a
+   * stalled market". It was serving the keeper and the operator and nothing
+   * else.
+   *
+   * Failure here is silent on purpose. The finalise works without knowing the
+   * age, so a reconnecting endpoint must not take the button away — it just
+   * takes the sentence away.
+   */
+  useEffect(() => {
+    const controller = new AbortController();
+
+    void (async () => {
+      const result = await getPendingGraduations({ signal: controller.signal }).catch(() => null);
+      if (controller.signal.aborted || result === null || !isOk(result)) return;
+
+      const row = result.data.pending.find(
+        (entry) => entry.market.toLowerCase() === market.toLowerCase(),
+      );
+
+      if (row === undefined) {
+        setWaiting(null);
+        return;
+      }
+
+      const blocks = parseDecimal(row.waitingBlocks);
+      // Whether this counts as stalled is the API's judgement, not a comparison
+      // repeated here against a copy of its threshold.
+      setWaiting(blocks === null ? null : { blocks, stalled: row.stalled });
+    })();
+
+    return () => controller.abort();
+  }, [market]);
 
   const intent = useMemo(() => {
     const dist = parseDecimal(distributed);
@@ -99,8 +144,10 @@ export function FinalizePanel({
       quoteAmount: toRawForPayout(collateral, quoteDecimals),
       quoteDecimals,
       quoteSymbol,
+      // Review only, and omitted rather than guessed when the read failed.
+      ...(waiting !== null ? { waitingBlocks: waiting.blocks } : {}),
     });
-  }, [curveCollateral, distributed, market, quoteDecimals, quoteSymbol, symbol]);
+  }, [curveCollateral, distributed, market, quoteDecimals, quoteSymbol, symbol, waiting]);
 
   const wire = useMemo(
     () =>
@@ -168,6 +215,22 @@ export function FinalizePanel({
         This costs real money and returns nothing. A user who finds that out
         from a gas estimate they cannot interpret has been surprised by us.
       */}
+      {/*
+        Said only when it is true.
+
+        A market a few hundred blocks in is waiting for a lane, and telling that
+        user something is wrong would be raising an alarm about a system working
+        as designed (§42). Past the threshold the API itself calls a fault, the
+        sentence changes from context to a reason to act.
+      */}
+      {waiting !== null && (
+        <p className={waiting.stalled ? styles.stalled : styles.waiting}>
+          {waiting.stalled
+            ? `Waiting ${waiting.blocks.toString()} blocks — long enough that nobody has finalised it. This is the case this button exists for.`
+            : `Waiting ${waiting.blocks.toString()} blocks. The large block lane is produced about once in 120, so a few hundred is normal.`}
+        </p>
+      )}
+
       <p className={styles.cost}>
         It costs about 5.4M gas and pays the sender nothing. That is over HyperEVM&apos;s
         default 3M block limit, so the transaction only gets included if your address is

@@ -24,7 +24,7 @@
 
 import { notFound } from "next/navigation";
 
-import { getMarket, getTape, isOk } from "../../../lib/api.ts";
+import { getMarket, getTape, isOk, API_BASE } from "../../../lib/api.ts";
 import {
   formatCompact,
   formatQuoteCompact,
@@ -41,19 +41,76 @@ import { WrapPanel } from "../../../components/WrapPanel.tsx";
 
 import styles from "./terminal.module.css";
 import type { JSX } from "react";
+import type { Metadata } from "next";
 
 export const revalidate = 0;
 
+/**
+ * WHAT A LINK TO THIS MARKET LOOKS LIKE WHEN SOMEBODY PASTES IT (§117)
+ * ---------------------------------------------------------------------
+ * This returned a bare `title` and nothing else, so a market link pasted into
+ * X, Telegram or Discord unfurled as one line of text. The API has generated a
+ * 1200×630 card per market this whole time and served it at
+ * `/markets/:token/preview.svg`; nothing referenced it, so nothing ever saw it.
+ *
+ * The description is built from what the market IS rather than from marketing
+ * copy: the pair, the supply and the fee are the three facts someone deciding
+ * whether to open the link actually wants, and they are LOCKED values so they
+ * cannot go stale.
+ *
+ * THE IMAGE IS SVG, AND THAT IS THE OPEN HALF
+ * -------------------------------------------
+ * X, Discord and Telegram do not render SVG in an unfurl. Slack does, and every
+ * other crawler that cannot simply omits the image and shows the text card —
+ * which is strictly better than the bare title it showed before. So this is
+ * pointed at the SVG, with `og:image:type` declared so a crawler skips it
+ * cleanly instead of guessing at the bytes.
+ *
+ * Rasterising to PNG needs a native dependency — resvg, sharp, a headless
+ * browser — and which one depends on a runtime §434 has not fixed. That is a
+ * deployment decision, not a code one, and inventing it here would be picking
+ * for someone else. When a PNG endpoint lands, the only change is the URL and
+ * the type on the two lines below.
+ */
 export async function generateMetadata({
   params,
 }: {
   params: Promise<{ token: string }>;
-}): Promise<{ title: string }> {
+}): Promise<Metadata> {
   const { token } = await params;
   const result = await getMarket(token).catch(() => null);
 
   if (result === null || !isOk(result)) return { title: "Market" };
-  return { title: `${result.data.symbol} — ${result.data.name}` };
+
+  const market = result.data;
+  const title = `${market.symbol} — ${market.name}`;
+  const description =
+    `${market.symbol} is quoted against ${market.quoteSymbol} on SENT. ` +
+    `Fixed supply of one billion, no creator allocation, and liquidity that ` +
+    `locks permanently when the market graduates.`;
+
+  const image = `${API_BASE}/markets/${market.token}/preview.svg`;
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      siteName: "SENT",
+      type: "website",
+      images: [{ url: image, width: 1200, height: 630, type: "image/svg+xml", alt: title }],
+    },
+    twitter: {
+      // `summary_large_image` even though the image is SVG: the card type also
+      // decides the text layout, and a crawler that drops the image still lays
+      // the rest out correctly.
+      card: "summary_large_image",
+      title,
+      description,
+      images: [image],
+    },
+  };
 }
 
 export default async function TerminalPage({

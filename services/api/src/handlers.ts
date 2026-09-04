@@ -1642,6 +1642,16 @@ export interface PendingGraduationsResponse {
     readonly symbol: string;
     readonly graduatingAtBlock: string;
     readonly waitingBlocks: string;
+    /**
+     * Whether THIS market has waited past the threshold.
+     *
+     * Served rather than left for the caller to derive. A client that compared
+     * `waitingBlocks` itself would need `STALLED_AFTER_BLOCKS`, and the only
+     * ways to get it are to import this module into a browser bundle or to
+     * copy the number — one drags a server module into the client, the other
+     * is a second definition of a threshold that must have one (§1064).
+     */
+    readonly stalled: boolean;
   }[];
   /** True when at least one market has been waiting long enough to be a fault. */
   readonly stalled: boolean;
@@ -1668,6 +1678,7 @@ export function handlePendingGraduations(
       symbol: r.symbol,
       graduatingAtBlock: r.graduatingAtBlock.toString(),
       waitingBlocks: r.waitingBlocks.toString(),
+      stalled: r.waitingBlocks > STALLED_AFTER_BLOCKS,
     })),
     stalled: rows.some((r) => r.waitingBlocks > STALLED_AFTER_BLOCKS),
   });
