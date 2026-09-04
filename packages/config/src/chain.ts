@@ -109,7 +109,36 @@ export const LIQUIDITY_LOCK: `0x${string}` | null = null;
  * mismatch between the two is a deployment error, and `assertProductionConfigReady`
  * cannot detect it — only reading `XStockRegistry.WRAPPER_FACTORY()` can.
  */
-export const WRAPPER_FACTORY: `0x${string}` | null = null;
+export const WRAPPER_FACTORY: `0x${string}` | null =
+  "0xc7b674f6Ec9de46852A25897305292a3d1E18d63";
+
+/**
+ * The deployed core, on HyperEVM mainnet.
+ *
+ * Deployed Day 9. Every address below was read BACK from the chain rather than
+ * copied from the deployment log — a log records what a script believed it did,
+ * and the two have no reason to agree if anything went wrong in between.
+ *
+ * Verified at deployment:
+ *
+ *   registry.governance()        the governance Safe
+ *   registry.WRAPPER_FACTORY()   WRAPPER_FACTORY above, bound immutably
+ *   factory.REGISTRY()           REGISTRY below
+ *   factory.governance()         the governance Safe
+ *   factory.treasury()           the treasury Safe
+ *   factory.launchFee()          40000000000000000  (0.04 HYPE)
+ *
+ * `router` and `referencePrice` on the factory are still zero, and the
+ * allowlist is still empty. That is the state the deployment log describes as
+ * NOT DONE, and a launch is refused until it changes — see
+ * `assertProductionConfigReady`.
+ */
+export const XSTOCK_REGISTRY: `0x${string}` = "0xA54BC1b31d17a6B9F76d6De1BE43B8efb8843c2B";
+export const LAUNCHPAD_FACTORY: `0x${string}` = "0xcEa3AcF9b70cE9807a99bcBdF0F93A437518Eaeb";
+export const FEE_VAULT: `0x${string}` = "0xDB4cF53967e29AB3dc38cbDc47C6ceDB4d862020";
+export const HOLDER_REWARD_VAULT: `0x${string}` = "0xF7dce0CC413D6d7F855A742A02545253Bbb0cB92";
+export const REFERENCE_PRICE_ADAPTER: `0x${string}` =
+  "0x772AEDd551E38de727248e2925F53aAc80BE2b32";
 
 /**
  * Fee tiers enabled on the HyperSwap V3 factory.
@@ -151,10 +180,31 @@ export interface XStockEntry {
   readonly verified: boolean;
 }
 
-/** Platform accounts (§555). All open pending the key ceremony (C-08, V-13). */
+/**
+ * Platform accounts (§555).
+ *
+ * Governance and Treasury exist and are verified on-chain. The rest of the
+ * six-account structure does not, and each absence blocks something specific
+ * rather than being a formality:
+ *
+ *   guardianSafe    the ONLY brake on governance reaching the reward vault.
+ *                   `addAttestor` and `setQuorum` are both `onlyGovernance`, so
+ *                   without an independent guardian the 6-hour ACTIVATION_DELAY
+ *                   has nobody to act inside it. §601 forbids it sharing
+ *                   governance's signers, and that is the point of it.
+ *
+ *   opsRelayer      the graduation keeper. Needs the large block lane, like the
+ *                   deployer did.
+ *
+ *   founderProfit   founder revenue. Blocks nothing technical.
+ *
+ * `deployer` is deliberately still null. It signed the deployment and holds no
+ * authority afterwards — recording it here would suggest it is part of the
+ * running system, and it is not.
+ */
 export const PLATFORM_ACCOUNTS = {
-  governanceSafe: null,
-  treasurySafe: null,
+  governanceSafe: "0x791fb66Ac5ff91eE7D3F1697f85c4D8b646D1e22",
+  treasurySafe: "0xEd7709178EF1De028E965B4107f56b5AecBE92A2",
   founderProfitSafe: null,
   guardianSafe: null,
   deployer: null,
@@ -230,6 +280,21 @@ export function assertProductionConfigReady(): void {
   if (WRAPPER_FACTORY === null) {
     problems.push(
       "no wrapper factory deployed (D-017) — every xStock rebases, so nothing can be listed",
+    );
+  }
+
+  /*
+   * The guardian, checked separately from the other platform accounts.
+   *
+   * It is the only thing standing between a compromised governance Safe and the
+   * reward vault: `addAttestor` and `setQuorum` are both `onlyGovernance`, so
+   * the holder of that key can make itself the sole attestor and claim the vault
+   * after ACTIVATION_DELAY. The guardian's cancel is the brake, and it is not a
+   * brake at all if governance can also set the guardian to itself.
+   */
+  if (PLATFORM_ACCOUNTS.guardianSafe === null) {
+    problems.push(
+      "no guardian Safe (C-08, §588) — nothing can cancel a bad Stockback commitment",
     );
   }
   if (PLATFORM_ACCOUNTS.governanceSafe === null) problems.push("platform accounts unset (C-08)");

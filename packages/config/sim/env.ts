@@ -24,6 +24,7 @@ import {
   REFERENCE_PRICE_FEEDS,
   GRADUATION_ROUTER,
   WRAPPER_FACTORY,
+  PLATFORM_ACCOUNTS,
 } from "../src/chain.ts";
 
 let failures = 0;
@@ -334,27 +335,47 @@ section("Production readiness is still gated (§279)");
    * governance COULD list. The refusal has to say that rather than leaving an
    * operator to conclude the allowlist is merely unfinished.
    */
-  check("no wrapper factory is deployed yet (D-017)", WRAPPER_FACTORY === null);
+  /*
+   * The wrapper factory IS deployed now, and this check used to assert the
+   * opposite — correctly, until Day 9.
+   *
+   * Rewritten rather than deleted, because "the factory exists" is worth
+   * pinning: it is bound immutably into the registry, so a config that names a
+   * different one is a config describing a registry that does not exist.
+   */
+  check("the wrapper factory is deployed (D-017)", WRAPPER_FACTORY !== null);
+  check(
+    "and it is the one the registry is bound to",
+    WRAPPER_FACTORY === "0xc7b674f6Ec9de46852A25897305292a3d1E18d63",
+  );
 
-  let namesWrapper = false;
+  /*
+   * The guardian is the one that replaced it as a blocker, and it is a heavier
+   * one than it looks. `addAttestor` and `setQuorum` are both onlyGovernance,
+   * so a compromised governance key can make itself the sole Stockback attestor
+   * and drain the reward vault after ACTIVATION_DELAY. The guardian's cancel is
+   * the only brake, and governance can also set the guardian — so an absent
+   * guardian is not a missing formality, it is an unopposed path to user money.
+   */
+  check("no guardian Safe yet (C-08, §588)", PLATFORM_ACCOUNTS.guardianSafe === null);
+
+  let namesGuardian = false;
   try {
     assertProductionConfigReady();
   } catch (error) {
-    namesWrapper = error instanceof Error && error.message.includes("wrapper factory");
+    namesGuardian = error instanceof Error && error.message.includes("guardian Safe");
   }
 
-  check("and the refusal names the wrapper factory", namesWrapper);
+  check("and the refusal names it", namesGuardian);
 
-  let saysWhy = false;
-  try {
-    assertProductionConfigReady();
-  } catch (error) {
-    saysWhy = error instanceof Error && error.message.includes("every xStock rebases");
-  }
-
-  // The reason, not only the fact. "Allowlist empty" invites someone to go fill
-  // it; "every xStock rebases, so nothing can be listed" says why they cannot.
-  check("and says why nothing can be listed without it", saysWhy);
+  // Governance and treasury are live and verified on-chain. Asserted because
+  // the whole point of the deployment guard was that these are not placeholders.
+  check("governance is recorded", PLATFORM_ACCOUNTS.governanceSafe !== null);
+  check("treasury is recorded", PLATFORM_ACCOUNTS.treasurySafe !== null);
+  check(
+    "and the deployer is deliberately NOT recorded",
+    PLATFORM_ACCOUNTS.deployer === null,
+  );
 }
 
 console.log(failures === 0 ? "\nconfig: all checks passed" : `\nconfig: ${failures} FAILED`);

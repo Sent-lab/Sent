@@ -716,3 +716,70 @@ protocol. Viable as a first market; not viable as the mechanism.
 **Still open, and it is not an engineering question:** whether to launch on Backed's `wSPYx`
 first — small, someone else's contract, proves the whole path with real money at low stakes —
 and open the rest once this wrapper is audited.
+
+---
+
+## D-018 — Deployed to HyperEVM mainnet
+
+**Class:** RECORD (§178.4 release gate, partial)
+**Date:** Day 9
+
+```text
+XStockRegistry          0xA54BC1b31d17a6B9F76d6De1BE43B8efb8843c2B
+LaunchpadFactory        0xcEa3AcF9b70cE9807a99bcBdF0F93A437518Eaeb
+  FeeVault              0xDB4cF53967e29AB3dc38cbDc47C6ceDB4d862020
+  HolderRewardVault     0xF7dce0CC413D6d7F855A742A02545253Bbb0cB92
+ReferencePriceAdapter   0x772AEDd551E38de727248e2925F53aAc80BE2b32
+WrappedXStockFactory    0xc7b674f6Ec9de46852A25897305292a3d1E18d63
+
+governance   0x791fb66Ac5ff91eE7D3F1697f85c4D8b646D1e22   Safe 1.4.1, 2-of-3
+treasury     0xEd7709178EF1De028E965B4107f56b5AecBE92A2   Safe 1.4.1
+launch fee   40000000000000000                            0.04 HYPE (~$3.38)
+
+13,014,016 gas, 0.0013 HYPE
+```
+
+**Every address above was read BACK from the chain, not copied from the deploy
+log.** A log records what a script believed it did; the two have no reason to
+agree if anything went wrong in between. `registry.WRAPPER_FACTORY()`,
+`factory.REGISTRY()`, both `governance()` calls, `treasury()` and `launchFee()`
+were all queried afterwards and matched.
+
+**Three things the deployment guards proved, on the real chain rather than in a
+mock.** `_assertGovernanceQuorum` read `getThreshold()` = 2 and `getOwners()` = 3
+off the live Safe and let it through — the guard added the same day, against the
+arrangement it was written for. The refusals for a 1-of-1 and a 2-of-2 were
+therefore not theoretical when they mattered.
+
+**What the deployment does NOT include, and why each is deliberate.**
+
+`factory.router()` and `factory.referencePrice()` are both zero, and the
+allowlist is empty. A launch is refused outright. That is §279 working: the
+router's three HyperSwap addresses are immutable in its constructor and V-06 has
+no first-party confirmation, and the anchor feed is V-11 — Pyth's equity feeds on
+this chain are 63–561 days stale.
+
+**What the block lanes cost, in order.** The deployment met V-20 three separate
+times, and only the first was expected:
+
+1. `LaunchpadFactory` needs 7,360,896 gas, so the deployer needed the large-lane
+   opt-in — a HyperCore action, which itself required the deployer to first
+   become a Core user by receiving a Core asset. Neither is an EVM call.
+2. Foundry reads the block gas limit from the tip block, which is a small-lane
+   block ~99% of the time, so the simulation died at exactly 3,000,000 before
+   broadcasting anything. Hence `[profile.deploy]`.
+3. `launch()` itself was 3,068,481 — over the ceiling for **every creator**, not
+   just for us. Fixed the same day by dropping `optimizer_runs` to 400, at a cost
+   of 51 gas per trade.
+
+The third was found only because the owner asked what a launch costs before
+setting the fee. It was 2% over: the margin that gets estimated rather than
+measured, and estimated it would have shipped.
+
+**Still open, and the guardian is now the sharpest of them.** `addAttestor` and
+`setQuorum` are both `onlyGovernance`, so a compromised governance key can make
+itself the sole Stockback attestor and claim the reward vault after
+`ACTIVATION_DELAY`. The Guardian's cancel is the only brake — and `setGuardian`
+is `onlyGovernance` too, so it is not a brake at all until a Guardian Safe exists
+with signers governance does not control. `assertProductionConfigReady` now
+refuses without one.
