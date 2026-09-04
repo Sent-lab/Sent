@@ -373,8 +373,20 @@ export TREASURY=0x...            # a different Safe
 export LAUNCH_FEE=...            # wei; changeable later via governance
 export DEPLOYER_PRIVATE_KEY=...  # the 0x prefix is optional
 
-forge script script/Deploy.s.sol:Deploy   --rpc-url "$RPC_URL" --broadcast --slow
+forge script script/Deploy.s.sol:Deploy   --rpc-url "$RPC_URL" --legacy --broadcast --slow
 ```
+
+**`--legacy` is required too.** Foundry estimates EIP-1559 fees by calling
+`eth_feeHistory` over a range the public HyperEVM RPC refuses:
+
+```text
+Failed to get EIP-1559 fees; ... error code -32602: invalid block range
+```
+
+The method works for small ranges, so this is the RPC's limit rather than a
+missing feature - the same shape as its 1000-block cap on `eth_getLogs`.
+`--legacy` skips the estimation and uses a flat gas price, which is what this
+chain charges anyway: 0.1 gwei, giving ~0.0013 HYPE for the whole deployment.
 
 **`FOUNDRY_PROFILE=deploy` is required, and skipping it fails confusingly.**
 
