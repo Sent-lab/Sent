@@ -84,3 +84,23 @@ fail_on_revert = false
 [profile.fork]
 block_gas_limit = 30000000
 isolate = false
+
+# Deployment, and why it needs its own profile rather than borrowing `fork`.
+#
+# One deployment transaction - LaunchpadFactory, which also builds FeeVault and
+# HolderRewardVault - costs 7,360,896 gas. HyperEVM's default block lane caps at
+# 3,000,000, and Foundry reads that limit from the chain's tip block, which is a
+# small block ~99% of the time. So a simulation against the real RPC dies with
+# OutOfGas at exactly 3,000,000 before it can tell you anything.
+#
+# `--block-gas-limit` does not help: under `isolate` Foundry models each
+# top-level call as a real transaction and keeps the chain's own ceiling. That
+# is correct behaviour and it is why the fork tests trust it.
+#
+# So the simulation is run with isolate off and the LARGE lane's ceiling. The
+# deployer must genuinely be opted into that lane (infra/deployment/big-blocks.py)
+# - this profile lets the simulation proceed, it does not make a small-lane
+# account able to send the transaction.
+[profile.deploy]
+block_gas_limit = 30000000
+isolate = false
