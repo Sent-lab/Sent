@@ -647,3 +647,72 @@ and brick graduation permanently. That turns a griefing vector into a kill switc
 the Hyperliquid L1, not a transaction field. The protocol cannot require it of a buyer who
 merely happened to be the one whose order crossed the endpoint, and a launchpad whose final
 buy silently fails for everyone who has not opted in is not shippable.
+
+---
+
+## D-017 — The quote asset is a share wrapper, not the xStock itself
+
+**Class:** ESCALATION RESOLVED (§420 multiplier gate, V-03)
+**Date:** Day 8
+**Rests on:** V-02, V-03, V-22
+
+**Decision:** markets pair against `WrappedXStock`, a non-rebasing share receipt over an
+xStock, rather than against the xStock directly. `RebaseDetector` continues to refuse raw
+rebasing assets, and the wrapper is what the registry lists.
+
+**Reason: a Uniswap V3 pool cannot hold a rebasing token, and graduation is permanent.**
+
+This was almost decided the wrong way. The obvious fix to a rebasing quote asset is to book
+collateral in SHARES — the rebase-invariant unit these tokens already expose — and `LaunchMarket`
+could be taught to do that. It would be correct, and it would not be enough.
+
+At graduation the quote asset is minted into a V3 position locked forever (§17). V3 computes
+payouts from internal liquidity accounting rather than from balances, and it has **no `skim()`**
+— V2 has one, V3 does not:
+
+| The multiplier | What the pool does |
+|---|---|
+| rises | balance grows, accounting does not. The surplus is unreachable by anyone, and the position is permanent, so it is unreachable **forever**. |
+| falls | the pool holds less than its liquidity promises. Swaps that would pay out more than the remaining balance revert. The permanent position is broken. |
+
+**The first case is every dividend, every quarter.** Fixing only this protocol's books would
+have moved the loss from a place we could see to a place nobody can reach.
+
+**What the wrapper is.** It holds shares and mints exactly one token per share, so a dividend
+arrives as a rising redemption rate instead of as a balance that moves on its own. A V3 pool
+then sees an ordinary token whose price drifts, which is what V3 is built for — and the locked
+position **appreciates** with the dividend instead of burying it.
+
+The invariant is `totalSupply() <= UNDERLYING.sharesOf(address(this))`, maintained exactly in
+both directions by measuring the shares that actually moved rather than predicting them. The
+underlying does its own rounding between balances and shares, and a prediction that rounds the
+wrong way by one wei per deposit mints tokens no share backs.
+
+**No keys, and that is load-bearing rather than stylistic.** This contract would hold every
+market's collateral. No owner, no pause, no upgrade, no fee, no rescue, no way to change the
+underlying — absent rather than gated, the same discipline as `PermanentLiquidityLock`, asserted
+against the ABI by test.
+
+**Rejected: shares-based accounting alone (V-03's own suggestion).** Correct for the pre-grad
+curve, silent about the pool. It is recorded in V-03 because it remains the right answer for
+anything that never graduates, and it is not the answer here.
+
+**Rejected: restricting to ETFs where reverse splits are implausible.** It addresses the rarer
+half of the problem and leaves the quarterly half untouched. SPYx and QQQx pay dividends.
+
+**Rejected: launching against Backed's own `wSPYx`.** It exists, it is non-rebasing, and it
+would have avoided writing a contract. But it covers one asset out of ten, holds ~934 units
+against a suite worth over $100M, and is an upgradeable proxy under an admin unrelated to this
+protocol. Viable as a first market; not viable as the mechanism.
+
+**What this costs, and it is not nothing.**
+
+- A new contract holding all collateral. It becomes the highest-value contract in the system
+  and the most important line item in an audit.
+- Liquidity fragments against `wSPYx` for the one asset where Backed already has a wrapper.
+- Wrapping an instrument adjacent to a security has consequences this decision does not address
+  and is not competent to (V-18).
+
+**Still open, and it is not an engineering question:** whether to launch on Backed's `wSPYx`
+first — small, someone else's contract, proves the whole path with real money at low stakes —
+and open the rest once this wrapper is audited.

@@ -266,9 +266,14 @@ in practice for the ETFs (SPYx, QQQx), and entirely real for individual equities
 and shares are the rebase-invariant unit: `balanceOf = sharesOf × multiplier`. A market that
 booked collateral in SHARES rather than balance units would be neutral to the multiplier in both
 directions — every holder's claim scales with it, dividends accrue to whoever holds the claim,
-and a reverse split cannot make it insolvent. That is an accounting change, not a workaround,
-and it is the shape any real solution here takes. It is **not implemented**; recorded so the
-option is not lost.
+and a reverse split cannot make it insolvent. That is an accounting change, not a workaround.
+
+**It is also not sufficient, and D-017 explains why.** Shares fix the pre-graduation curve and
+say nothing about the Uniswap V3 position graduation locks forever — V3 pays out from internal
+liquidity accounting and has no `skim()`, so a rising multiplier buries every dividend in the
+pool permanently and a falling one breaks it. The quote asset has to be non-rebasing end to
+end, which is what `WrappedXStock` provides. Shares remain the right answer for anything that
+never graduates.
 
 The `wSPYx` wrapper at `0xe7e553cd128f0011777323a0b44a7b96ea1cb540` is the other half of the
 picture: an ERC-4626 over SPYx whose `convertToAssets(1e18)` returns the same 1.0057145603. It
