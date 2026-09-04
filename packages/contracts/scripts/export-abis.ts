@@ -28,6 +28,8 @@ const EXPORTED = [
   "PermanentLiquidityLock",
   "HolderRewardVault",
   "XStockRegistry",
+  "WrappedXStock",
+  "WrappedXStockFactory",
 ] as const;
 
 interface Artifact {

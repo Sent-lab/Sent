@@ -9,3 +9,5 @@ export { graduationRouterAbi } from "./GraduationRouter.abi.ts";
 export { permanentLiquidityLockAbi } from "./PermanentLiquidityLock.abi.ts";
 export { holderRewardVaultAbi } from "./HolderRewardVault.abi.ts";
 export { xStockRegistryAbi } from "./XStockRegistry.abi.ts";
+export { wrappedXStockAbi } from "./WrappedXStock.abi.ts";
+export { wrappedXStockFactoryAbi } from "./WrappedXStockFactory.abi.ts";
