@@ -65,9 +65,22 @@ export interface FreshnessBadgeProps {
   readonly compact?: boolean;
 }
 
+/**
+ * The copy for a state, or the honest fallback for one we do not recognise.
+ *
+ * `COPY[state]` on a state this build has never heard of yields `undefined`,
+ * and the next line reads `.label` off it — a crash in the component whose job
+ * is to say how trustworthy the data is. A producer that ships a sixth state
+ * before this bundle is redeployed is an ordinary rolling deploy, not a bug, so
+ * it resolves to the most cautious state rather than taking the page down.
+ */
+function copyFor(state: string): { label: string; detail: string } {
+  return COPY[state as FreshnessState] ?? COPY.STALE;
+}
+
 export function FreshnessBadge({ envelope, compact = false }: FreshnessBadgeProps): JSX.Element {
   const state = envelope.state;
-  const copy = COPY[state];
+  const copy = copyFor(state);
 
   return (
     <span
@@ -99,7 +112,7 @@ export function FreshnessNotice({ envelope }: { envelope: FreshnessEnvelope }): 
   return (
     <div className={`${styles.notice} ${styles[state.toLowerCase()]}`} role="status">
       <span className={styles.dot} aria-hidden="true" />
-      <span>{COPY[state].detail}</span>
+      <span>{copyFor(state).detail}</span>
     </div>
   );
 }

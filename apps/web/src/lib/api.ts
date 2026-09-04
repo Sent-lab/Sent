@@ -37,6 +37,7 @@ import type {
   HealthResponse,
 } from "@sent/api/handlers";
 import type { IntentKind, IntentRow } from "@sent/sdk";
+import type { FreshnessEnvelope } from "@sent/realtime";
 
 export type {
   ApiResult,
@@ -115,6 +116,224 @@ export class ApiUnreachable extends Error {
   }
 }
 
+/**
+ * A BODY THAT PARSED IS NOT YET AN ANSWER (§87, §211, §694)
+ * ---------------------------------------------------------
+ * `JSON.parse` succeeding says the bytes were JSON. It says nothing about the
+ * shape, and `body as ApiResult<T>` is a compile-time assertion the runtime
+ * never checks — so every field the UI reads is trusted on the strength of a
+ * cast.
+ *
+ * That is not hypothetical. `/markets` once returned a bare array and now
+ * returns a page; a cached body of the old shape passed `ok === true`, reached
+ * `data.items.length`, and took the whole homepage down with a 500. TypeScript
+ * was correct about the contract, and the contract was not what arrived.
+ *
+ * A stale cache, a rolling deploy where API and web are briefly different
+ * versions, a proxy that returns its own error JSON, a captive portal — all
+ * produce well-formed JSON that is not this API's answer. Each becomes a typed
+ * error result here, which the UI already knows how to render, instead of an
+ * exception thrown from inside a component tree.
+ *
+ * The guards are DELIBERATELY SHALLOW. They check the structure a caller
+ * indexes into — that `items` is an array, that an intent has calldata and a
+ * review — and not every leaf field. A full schema validator over every
+ * response would be a second definition of types that already exist, and the
+ * second definition is the one that goes stale. What is checked here is what,
+ * if absent, would throw.
+ */
+
+/** Checks the shape of `data` a caller is about to index into. */
+type DataGuard = (data: unknown) => boolean;
+
+const FRESHNESS_STATES: ReadonlySet<string> = new Set([
+  "LIVE",
+  "SYNCING",
+  "DELAYED",
+  "RECONNECTING",
+  "STALE",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isFreshness(value: unknown): value is FreshnessEnvelope {
+  return (
+    isRecord(value) &&
+    typeof value["state"] === "string" &&
+    FRESHNESS_STATES.has(value["state"]) &&
+    typeof value["headBlock"] === "string" &&
+    typeof value["lagBlocks"] === "number" &&
+    typeof value["serverTime"] === "number"
+  );
+}
+
+/**
+ * The envelope shown when a response carried no usable one.
+ *
+ * RECONNECTING rather than LIVE or a zeroed LIVE: we genuinely do not have an
+ * answer, and that is the state §211 has for exactly this. `headBlock` is "0"
+ * because inventing a plausible height would be the specific lie the envelope
+ * exists to prevent.
+ */
+function disconnected(): FreshnessEnvelope {
+  return {
+    state: "RECONNECTING",
+    headBlock: "0",
+    lagBlocks: 0,
+    serverTime: Math.floor(Date.now() / 1000),
+  };
+}
+
+/**
+ * How far behind `serverTime` may be before the envelope stops being believed.
+ *
+ * Generous on purpose. This is compared against whichever clock is doing the
+ * reading — the app server on an SSR pass, the USER'S clock on a browser fetch —
+ * and a browser clock being a few minutes out is ordinary. A tight threshold
+ * would paint STALE over live data for anyone whose laptop never synced, which
+ * is a worse failure than the one it guards against.
+ */
+const ENVELOPE_MAX_AGE_SECONDS = 600;
+
+/**
+ * A cached body carries a cached envelope, and a cached envelope lies.
+ *
+ * Next's data cache, a CDN, and a browser cache all replay a response that was
+ * true when it was produced. `state: "SYNCING"` from twenty minutes ago renders
+ * as "Syncing. Values settle within seconds." — which is precisely the claim
+ * §211 exists to prevent, and the UI has no way to know it is reading a replay.
+ *
+ * The producer still owns classification: this only ever DOWNGRADES, and only
+ * on the one fact the producer cannot know and the consumer can — how long the
+ * answer took to arrive.
+ */
+function aged(freshness: FreshnessEnvelope): FreshnessEnvelope {
+  if (freshness.state === "STALE") return freshness;
+
+  const age = Math.floor(Date.now() / 1000) - freshness.serverTime;
+  if (age <= ENVELOPE_MAX_AGE_SECONDS) return freshness;
+
+  return { ...freshness, state: "STALE" };
+}
+
+/**
+ * A response that did not match the contract, expressed as an ordinary error.
+ *
+ * The user-facing copy is the transport-failure copy, because from where they
+ * are standing the two are the same event: the data is not available and their
+ * position is untouched. The DEVELOPER-facing detail goes to the console —
+ * a contract drift that is invisible in logs is found by users first.
+ */
+function malformed<T>(path: string, detail: string, freshness: unknown): ApiResult<T> {
+  console.warn(`[api] ${path}: ${detail}`);
+
+  return {
+    ok: false,
+    code: "MALFORMED_RESPONSE",
+    message:
+      "Market data is reconnecting. Your funds and on-chain position are unchanged.",
+    retryable: true,
+    freshness: isFreshness(freshness) ? aged(freshness) : disconnected(),
+  };
+}
+
+/**
+ * Read one response body and admit it only if it is this API's contract.
+ *
+ * Shared by `request` and `quote` rather than written twice: two copies of a
+ * validation rule is one copy that gets updated and one that does not.
+ */
+async function receive<T>(
+  path: string,
+  response: Response,
+  guard: DataGuard | undefined,
+): Promise<ApiResult<T>> {
+  // 4xx and 5xx still carry a typed body — including /health at 503, which is a
+  // meaningful answer rather than a failure. Parsing it is how the UI shows
+  // DELAYED rather than a blank screen.
+  const body: unknown = await response.json().catch(() => null);
+
+  if (body === null) {
+    throw new ApiUnreachable(new Error(`${response.status} with no JSON body`));
+  }
+
+  if (!isRecord(body) || typeof body["ok"] !== "boolean") {
+    // JSON, but not ours: a proxy error page, a login redirect rendered as
+    // JSON, or a body from a different version of this service.
+    return malformed<T>(path, "response is not an API envelope", undefined);
+  }
+
+  const freshness = body["freshness"];
+
+  if (body["ok"] === false) {
+    if (typeof body["code"] !== "string" || typeof body["message"] !== "string") {
+      return malformed<T>(path, "error body has no code/message", freshness);
+    }
+
+    return {
+      ok: false,
+      code: body["code"],
+      message: body["message"],
+      retryable: body["retryable"] === true,
+      freshness: isFreshness(freshness) ? aged(freshness) : disconnected(),
+    };
+  }
+
+  if (!isFreshness(freshness)) {
+    // §211 is not optional and cannot be reconstructed here. A success rendered
+    // without a freshness envelope is a number with no stated age, which is the
+    // one thing the envelope exists to make impossible.
+    return malformed<T>(path, "success carries no freshness envelope", undefined);
+  }
+
+  const data = body["data"];
+
+  if (data === undefined) {
+    return malformed<T>(path, "success carries no data", freshness);
+  }
+
+  if (guard !== undefined && !guard(data)) {
+    return malformed<T>(path, "data does not match the expected shape", freshness);
+  }
+
+  return { ok: true, data: data as T, freshness: aged(freshness) };
+}
+
+// --- guards, one per shape a caller indexes into ---------------------------
+
+const pageOfItems: DataGuard = (data) => isRecord(data) && Array.isArray(data["items"]);
+const listOfRows: DataGuard = (data) => Array.isArray(data);
+const anyObject: DataGuard = (data) => isRecord(data);
+const candleSet: DataGuard = (data) => isRecord(data) && Array.isArray(data["candles"]);
+
+/**
+ * An intent is held to a higher bar than the read endpoints.
+ *
+ * §694: what the user reviews is what they sign. An intent that reached the
+ * wallet with `data` missing would prompt for a signature on a transaction the
+ * review panel could not describe — so calldata and review rows are both
+ * required before this is allowed to be a success at all.
+ */
+const signableIntent: DataGuard = (data) => {
+  if (!isRecord(data)) return false;
+
+  const to = data["to"];
+  const calldata = data["data"];
+  const review = data["review"];
+
+  return (
+    typeof to === "string" &&
+    to.startsWith("0x") &&
+    typeof calldata === "string" &&
+    calldata.startsWith("0x") &&
+    typeof data["value"] === "string" &&
+    isRecord(review) &&
+    Array.isArray(review["rows"])
+  );
+};
+
 interface RequestOptions {
   readonly signal?: AbortSignal;
   /** Server components render fresh; the browser may reuse briefly. */
@@ -124,6 +343,7 @@ interface RequestOptions {
 async function request<T>(
   path: string,
   options: RequestOptions = {},
+  guard?: DataGuard,
 ): Promise<ApiResult<T>> {
   let response: Response;
 
@@ -141,16 +361,7 @@ async function request<T>(
     throw new ApiUnreachable(error);
   }
 
-  // 4xx and 5xx still carry a typed body — including /health at 503, which is a
-  // meaningful answer rather than a failure. Parsing it is how the UI shows
-  // DELAYED rather than a blank screen.
-  const body = (await response.json().catch(() => null)) as ApiResult<T> | null;
-
-  if (body === null) {
-    throw new ApiUnreachable(new Error(`${response.status} with no JSON body`));
-  }
-
-  return body;
+  return receive<T>(path, response, guard);
 }
 
 // ---------------------------------------------------------------------------
@@ -196,27 +407,27 @@ export function listMarkets(
   if (query.query !== undefined && query.query.trim() !== "") params.set("q", query.query);
 
   const qs = params.toString();
-  return request<ExplorePage>(`/markets${qs === "" ? "" : `?${qs}`}`, options);
+  return request<ExplorePage>(`/markets${qs === "" ? "" : `?${qs}`}`, options, pageOfItems);
 }
 
 export function getAccount(
   address: string,
   options?: RequestOptions,
 ): Promise<ApiResult<AccountResponse>> {
-  return request<AccountResponse>(`/accounts/${address}`, options);
+  return request<AccountResponse>(`/accounts/${address}`, options, anyObject);
 }
 
 export function getPlatformStats(
   options?: RequestOptions,
 ): Promise<ApiResult<PlatformStatsResponse>> {
-  return request<PlatformStatsResponse>("/platform/stats", options);
+  return request<PlatformStatsResponse>("/platform/stats", options, anyObject);
 }
 
 export function getMarket(
   token: string,
   options?: RequestOptions,
 ): Promise<ApiResult<MarketDetail>> {
-  return request<MarketDetail>(`/markets/${token}`, options);
+  return request<MarketDetail>(`/markets/${token}`, options, anyObject);
 }
 
 export function getTape(
@@ -224,7 +435,7 @@ export function getTape(
   limit = 50,
   options?: RequestOptions,
 ): Promise<ApiResult<TapeItem[]>> {
-  return request<TapeItem[]>(`/markets/${token}/trades?limit=${limit}`, options);
+  return request<TapeItem[]>(`/markets/${token}/trades?limit=${limit}`, options, listOfRows);
 }
 
 export interface CandleItem {
@@ -260,6 +471,7 @@ export function getCandles(
   return request<CandleResponse>(
     `/markets/${token}/candles?interval=${intervalSeconds}&limit=${limit}`,
     options,
+    candleSet,
   );
 }
 
@@ -268,18 +480,18 @@ export function getStockback(
   account: string,
   options?: RequestOptions,
 ): Promise<ApiResult<StockbackResponse>> {
-  return request<StockbackResponse>(`/markets/${token}/stockback/${account}`, options);
+  return request<StockbackResponse>(`/markets/${token}/stockback/${account}`, options, anyObject);
 }
 
 export function getCreator(
   address: string,
   options?: RequestOptions,
 ): Promise<ApiResult<CreatorResponse>> {
-  return request<CreatorResponse>(`/creators/${address}`, options);
+  return request<CreatorResponse>(`/creators/${address}`, options, anyObject);
 }
 
 export function getHealth(options?: RequestOptions): Promise<ApiResult<HealthResponse>> {
-  return request<HealthResponse>("/health", options);
+  return request<HealthResponse>("/health", options, anyObject);
 }
 
 export interface QuoteRequestBody {
@@ -317,12 +529,7 @@ export async function quote(
     throw new ApiUnreachable(error);
   }
 
-  const parsed = (await response.json().catch(() => null)) as ApiResult<WireIntent> | null;
-  if (parsed === null) {
-    throw new ApiUnreachable(new Error(`${response.status} with no JSON body`));
-  }
-
-  return parsed;
+  return receive<WireIntent>("/quote", response, signableIntent);
 }
 
 /** Narrowing helper, so callers do not test `ok` by hand at every call site. */
