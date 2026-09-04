@@ -43,7 +43,9 @@ export type IntentKind =
   | "CLAIM_CREATOR_FEES"
   | "CLAIM_STOCKBACK"
   | "LAUNCH"
-  | "FINALIZE_GRADUATION";
+  | "FINALIZE_GRADUATION"
+  | "WRAP_QUOTE"
+  | "UNWRAP_QUOTE";
 
 /**
  * What the user is shown before signing.
@@ -1072,6 +1074,164 @@ export function buildFinalizeGraduationIntent(
       kind: "FINALIZE_GRADUATION",
       summary: `Finalise ${tokenSymbol}'s graduation`,
       rows,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// WRAP_QUOTE / UNWRAP_QUOTE (D-017)
+// ---------------------------------------------------------------------------
+
+const WRAPPER_ABI = [
+  {
+    type: "function",
+    name: "wrap",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "assets", type: "uint256" }],
+    outputs: [{ name: "minted", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "unwrap",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "shares", type: "uint256" }],
+    outputs: [{ name: "assets", type: "uint256" }],
+  },
+] as const;
+
+export interface BuildWrapParams {
+  readonly chainId: number;
+  /** The `WrappedXStock` contract. */
+  readonly wrapper: `0x${string}`;
+  /** Raw amount of the underlying xStock to deposit. */
+  readonly assets: bigint;
+  /** What the wrapper expects to mint. From `previewWrap`, on-chain. */
+  readonly expectedShares: bigint;
+  readonly decimals: number;
+  /** e.g. "TSLAx" */
+  readonly underlyingSymbol: string;
+  /** e.g. "wTSLAx" */
+  readonly wrapperSymbol: string;
+}
+
+/**
+ * Build a WRAP.
+ *
+ * WHY A USER EVER SEES THIS
+ * -------------------------
+ * Markets are quoted in a wrapper, not in the xStock itself, because a Uniswap
+ * V3 position cannot hold a rebasing token and graduation locks one forever
+ * (D-017). Someone holding TSLAx therefore has one step before they can trade:
+ * approve, wrap, then approve the market.
+ *
+ * That step is real friction and the review says so plainly rather than
+ * pretending it is a formality. A user who does not understand why they are
+ * signing an extra transaction is a user who assumes something went wrong.
+ *
+ * THE FIGURE IS LABELLED AN ESTIMATE, DELIBERATELY
+ * ------------------------------------------------
+ * The wrapper mints what actually arrives — it measures the shares the transfer
+ * moved rather than predicting them, because the underlying does its own
+ * rounding between balances and shares. So `expectedShares` can differ from the
+ * mint by a wei, and a review that presented it as exact would be asserting
+ * something the chain is entitled to contradict.
+ */
+export function buildWrapIntent(params: BuildWrapParams): TransactionIntent {
+  const { chainId, wrapper, assets, expectedShares, decimals, underlyingSymbol, wrapperSymbol } =
+    params;
+
+  if (assets <= 0n) throw new Error("buildWrapIntent: amount must be positive");
+
+  const data = encodeFunctionData({ abi: WRAPPER_ABI, functionName: "wrap", args: [assets] });
+
+  return {
+    kind: "WRAP_QUOTE",
+    chainId,
+    to: wrapper,
+    data,
+    value: 0n,
+    review: {
+      kind: "WRAP_QUOTE",
+      summary: `Wrap ${formatUnits(assets, decimals)} ${underlyingSymbol} into ${wrapperSymbol}`,
+      rows: [
+        {
+          label: "You deposit",
+          value: `${formatUnits(assets, decimals)} ${underlyingSymbol}`,
+          primary: true,
+        },
+        {
+          label: "You receive (estimate)",
+          value: `about ${formatUnits(expectedShares, decimals)} ${wrapperSymbol}`,
+          primary: true,
+        },
+        {
+          label: "Why",
+          value:
+            `${underlyingSymbol} balances change on dividends and splits. ` +
+            `${wrapperSymbol} does not, which is what markets here are quoted in.`,
+        },
+        {
+          label: "Reversible",
+          value: `Unwrap at any time. Nobody can stop you — the wrapper has no owner and no pause.`,
+        },
+      ],
+    },
+  };
+}
+
+export interface BuildUnwrapParams {
+  readonly chainId: number;
+  readonly wrapper: `0x${string}`;
+  /** Wrapper tokens to burn. */
+  readonly shares: bigint;
+  /** Underlying returned. From `convertToAssets`, on-chain. */
+  readonly expectedAssets: bigint;
+  readonly decimals: number;
+  readonly underlyingSymbol: string;
+  readonly wrapperSymbol: string;
+}
+
+/**
+ * Build an UNWRAP.
+ *
+ * @remarks
+ * `expectedAssets` is exact rather than an estimate, which is the opposite of
+ * `wrap` and worth stating: the contract computes the payout from the same
+ * `convertToAssets` a caller reads, so quote and fill cannot disagree (§315).
+ *
+ * It can still move between reading and signing — a dividend landing in that
+ * window raises it. Which is why the row says "at the current rate" instead of
+ * presenting a number that looks fixed.
+ */
+export function buildUnwrapIntent(params: BuildUnwrapParams): TransactionIntent {
+  const { chainId, wrapper, shares, expectedAssets, decimals, underlyingSymbol, wrapperSymbol } =
+    params;
+
+  if (shares <= 0n) throw new Error("buildUnwrapIntent: amount must be positive");
+
+  const data = encodeFunctionData({ abi: WRAPPER_ABI, functionName: "unwrap", args: [shares] });
+
+  return {
+    kind: "UNWRAP_QUOTE",
+    chainId,
+    to: wrapper,
+    data,
+    value: 0n,
+    review: {
+      kind: "UNWRAP_QUOTE",
+      summary: `Unwrap ${formatUnits(shares, decimals)} ${wrapperSymbol} back to ${underlyingSymbol}`,
+      rows: [
+        {
+          label: "You burn",
+          value: `${formatUnits(shares, decimals)} ${wrapperSymbol}`,
+          primary: true,
+        },
+        {
+          label: "You receive",
+          value: `${formatUnits(expectedAssets, decimals)} ${underlyingSymbol} at the current rate`,
+          primary: true,
+        },
+      ],
     },
   };
 }

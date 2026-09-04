@@ -86,7 +86,7 @@ contract GuardPathsTest is Test {
     MockAggregator feed;
 
     function setUp() public {
-        registry = new XStockRegistry(governance);
+        registry = new XStockRegistry(governance, address(0));
         quote = new GuardQuote(18);
         router = new GuardRouter();
 
@@ -171,7 +171,7 @@ contract GuardPathsTest is Test {
     }
 
     function test_launchStopsWithoutARouter() public {
-        XStockRegistry r2 = new XStockRegistry(governance);
+        XStockRegistry r2 = new XStockRegistry(governance, address(0));
         vm.prank(deployer);
         LaunchpadFactory bare = new LaunchpadFactory(governance, treasury, address(r2), FEE);
 

@@ -56,7 +56,7 @@ contract MetadataTest is Test {
     string constant CID = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
 
     function setUp() public {
-        registry = new XStockRegistry(governance);
+        registry = new XStockRegistry(governance, address(0));
         quote = new MQuote();
         router = new MRouter();
 

@@ -60,7 +60,7 @@ contract PostGradFeesTest is Test {
     uint256 constant XSTOCK_USD = 100e18;
 
     function setUp() public {
-        registry = new XStockRegistry(governance);
+        registry = new XStockRegistry(governance, address(0));
         quote = new PQuote();
 
         factory = new LaunchpadFactory(governance, treasury, address(registry), 0);

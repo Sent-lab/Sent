@@ -23,6 +23,7 @@ import {
   XSTOCK_ALLOWLIST,
   REFERENCE_PRICE_FEEDS,
   GRADUATION_ROUTER,
+  WRAPPER_FACTORY,
 } from "../src/chain.ts";
 
 let failures = 0;
@@ -322,6 +323,38 @@ section("Production readiness is still gated (§279)");
   // different action: those are a research task, this is a deployment that
   // cannot happen until they land.
   check("and the refusal says markets cannot graduate", namesGraduation);
+
+  /*
+   * The wrapper factory (D-017).
+   *
+   * Worth its own check because an empty allowlist and a missing factory look
+   * identical from outside — nothing launches either way — and are fixed by
+   * different people. Every xStock on HyperEVM rebases (V-03), and the registry
+   * refuses those structurally, so without a factory there is nothing
+   * governance COULD list. The refusal has to say that rather than leaving an
+   * operator to conclude the allowlist is merely unfinished.
+   */
+  check("no wrapper factory is deployed yet (D-017)", WRAPPER_FACTORY === null);
+
+  let namesWrapper = false;
+  try {
+    assertProductionConfigReady();
+  } catch (error) {
+    namesWrapper = error instanceof Error && error.message.includes("wrapper factory");
+  }
+
+  check("and the refusal names the wrapper factory", namesWrapper);
+
+  let saysWhy = false;
+  try {
+    assertProductionConfigReady();
+  } catch (error) {
+    saysWhy = error instanceof Error && error.message.includes("every xStock rebases");
+  }
+
+  // The reason, not only the fact. "Allowlist empty" invites someone to go fill
+  // it; "every xStock rebases, so nothing can be listed" says why they cannot.
+  check("and says why nothing can be listed without it", saysWhy);
 }
 
 console.log(failures === 0 ? "\nconfig: all checks passed" : `\nconfig: ${failures} FAILED`);

@@ -6,6 +6,7 @@ import {console2} from "forge-std/console2.sol";
 
 import {LaunchpadFactory} from "../src/LaunchpadFactory.sol";
 import {XStockRegistry} from "../src/XStockRegistry.sol";
+import {WrappedXStockFactory} from "../src/WrappedXStockFactory.sol";
 import {ReferencePriceAdapter} from "../src/ReferencePriceAdapter.sol";
 import {FeeVault} from "../src/FeeVault.sol";
 import {HolderRewardVault} from "../src/HolderRewardVault.sol";
@@ -44,7 +45,12 @@ contract Deploy is Script {
 
     function run()
         external
-        returns (XStockRegistry registry, LaunchpadFactory factory, ReferencePriceAdapter referencePrice)
+        returns (
+            XStockRegistry registry,
+            LaunchpadFactory factory,
+            ReferencePriceAdapter referencePrice,
+            WrappedXStockFactory wrappers
+        )
     {
         Config memory config = _loadConfig();
 
@@ -54,7 +60,23 @@ contract Deploy is Script {
 
         vm.startBroadcast(deployerKey);
 
-        registry = new XStockRegistry(config.governance);
+        /*
+         * The wrapper factory goes first, because the registry binds to it
+         * immutably.
+         *
+         * Deployed unconditionally and with no configuration, which is safe for
+         * the same reason the registry can trust it: it takes no constructor
+         * arguments, holds nothing, has no owner and no keys, and its only job
+         * is to deploy one fixed bytecode at a derivable address. There is
+         * nothing here to get wrong later and nothing to point at the wrong
+         * thing.
+         *
+         * It creates no wrappers by itself. Which assets get wrapped is a §420
+         * decision, taken afterwards, by governance.
+         */
+        wrappers = new WrappedXStockFactory();
+
+        registry = new XStockRegistry(config.governance, address(wrappers));
         factory = new LaunchpadFactory(config.governance, config.treasury, address(registry), config.launchFee);
 
         /*

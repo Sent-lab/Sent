@@ -35,6 +35,12 @@ pragma solidity 0.8.28;
 /// positions, which §559 forbids.
 import {RebaseDetector} from "./lib/RebaseDetector.sol";
 
+/// @dev The one thing this registry asks a wrapper factory. Declared narrowly so
+///      a mistake here cannot reach anything else on it.
+interface IWrapperFactory {
+    function wrapperOf(address underlying) external view returns (address);
+}
+
 contract XStockRegistry {
     /// @notice The eight §420 gates. An asset is usable only when ALL are true.
     /// @dev Stored as explicit named flags rather than a bitmask so that a
@@ -69,6 +75,17 @@ contract XStockRegistry {
         uint64 verifiedAt;
         /// @dev True once registered. Distinguishes "absent" from "revoked".
         bool exists;
+        /**
+         * @dev The rebasing xStock this asset wraps, or zero if it wraps nothing.
+         *
+         *      Recorded because a listed wrapper is one step removed from the
+         *      thing §420's `canonicalRepresentation` gate is actually about. An
+         *      operator attesting "this is the canonical Tesla xStock" needs the
+         *      registry to say which underlying that attestation was made
+         *      against, and a UI showing "quoted in wTSLAx" needs to be able to
+         *      show what wTSLAx is.
+         */
+        address wrappedUnderlying;
     }
 
     /// @notice Governance Safe (§557). Parameters only — it holds no funds and has
@@ -102,14 +119,48 @@ contract XStockRegistry {
     error AlreadyEnabled();
     error NotEnabled();
 
+    /**
+     * @notice The wrapper factory whose deployments may be listed, or zero.
+     *
+     * @dev IMMUTABLE, and that is the whole security property.
+     *
+     *      A wrapper is a contract that custodies the quote asset. Asking it
+     *      "what do you wrap?" and believing the answer is no check at all — a
+     *      malicious wrapper returns whatever address makes it look legitimate.
+     *      The only thing that cannot be faked is PROVENANCE: the factory
+     *      deploys one fixed bytecode via CREATE2 and records it, so a wrapper
+     *      the factory names is a wrapper whose code is known.
+     *
+     *      Settable-once would be an admin path to listing arbitrary custody
+     *      contracts, which is the exact thing this prevents.
+     */
+    address public immutable WRAPPER_FACTORY;
+
+    error NoWrapperFactory();
+    error NotFromWrapperFactory(address wrapper, address expected);
+    error WrapperUnderlyingMismatch(address wrapper, address claimed, address actual);
+
+    event WrappedAssetRegistered(
+        address indexed wrapper, address indexed underlying, uint32 coreTokenIndex, uint8 decimals
+    );
+
     modifier onlyGovernance() {
         if (msg.sender != governance) revert NotGovernance();
         _;
     }
 
-    constructor(address governance_) {
+    /**
+     * @param governance_    the governance Safe (§557).
+     * @param wrapperFactory the `WrappedXStockFactory` whose deployments may be
+     *                       listed. May be zero, which simply means no wrapper
+     *                       can ever be registered here — a registry that lists
+     *                       only directly-usable assets, refusing rather than
+     *                       improvising.
+     */
+    constructor(address governance_, address wrapperFactory) {
         if (governance_ == address(0)) revert ZeroAddress();
         governance = governance_;
+        WRAPPER_FACTORY = wrapperFactory;
     }
 
     // -----------------------------------------------------------------------
@@ -149,6 +200,82 @@ contract XStockRegistry {
         _registered.push(token);
 
         emit AssetRegistered(token, coreTokenIndex, decimals_);
+    }
+
+    /**
+     * @notice Register a wrapper, bound to the xStock it wraps.
+     *
+     * @dev The path that exists because §420's gates are about the UNDERLYING
+     *      while the listed asset is the wrapper (D-017).
+     *
+     *      Two checks, and only one of them is worth anything on its own:
+     *
+     *      1. The factory names this wrapper for this underlying. **This is the
+     *         real check.** The factory deploys one fixed bytecode by CREATE2
+     *         and records it, so a wrapper it names has code we know — and a
+     *         lookalike that merely claims the right underlying cannot appear
+     *         here at all.
+     *
+     *      2. The wrapper agrees. This is redundant given (1) and is kept
+     *         because it costs one staticcall and turns a factory-mapping bug
+     *         into a revert rather than a listing.
+     *
+     *      A wrapper called "Wrapped Tesla xStock" holding something else is the
+     *      cheapest attack on a user who reads before signing, and governance
+     *      ticking `canonicalRepresentation` is a human check against it.
+     *      Provenance is not.
+     *
+     *      `expectedUnderlying` is passed rather than read so the transaction —
+     *      and the event — record which asset was actually attested to, instead
+     *      of whatever the wrapper happened to say at the time.
+     */
+    function registerWrappedAsset(
+        address wrapper,
+        address expectedUnderlying,
+        uint8 decimals_,
+        uint32 coreTokenIndex,
+        uint8 evmExtraWeiDecimals
+    ) external onlyGovernance {
+        if (wrapper == address(0) || expectedUnderlying == address(0)) revert ZeroAddress();
+        if (WRAPPER_FACTORY == address(0)) revert NoWrapperFactory();
+        if (_assets[wrapper].exists) revert AlreadyRegistered();
+
+        address named = IWrapperFactory(WRAPPER_FACTORY).wrapperOf(expectedUnderlying);
+        if (named != wrapper) revert NotFromWrapperFactory(wrapper, named);
+
+        address actual = IWrappedAsset(wrapper).UNDERLYING();
+        if (actual != expectedUnderlying) {
+            revert WrapperUnderlyingMismatch(wrapper, expectedUnderlying, actual);
+        }
+
+        // The wrapper itself must not rebase — that is the entire point of it.
+        // Checked here as well as in `registerAsset` so no registration path
+        // skips it, rather than assuming the wrapper is fine because it is a
+        // wrapper.
+        if (RebaseDetector.isRebasing(wrapper)) {
+            (, uint256 m) = RebaseDetector.multiplierHasMoved(wrapper);
+            revert AssetRebases(wrapper, m);
+        }
+
+        Asset storage a = _assets[wrapper];
+        a.token = wrapper;
+        a.decimals = decimals_;
+        a.coreTokenIndex = coreTokenIndex;
+        a.evmExtraWeiDecimals = evmExtraWeiDecimals;
+        a.wrappedUnderlying = expectedUnderlying;
+        a.exists = true;
+
+        _registered.push(wrapper);
+
+        emit AssetRegistered(wrapper, coreTokenIndex, decimals_);
+        emit WrappedAssetRegistered(wrapper, expectedUnderlying, coreTokenIndex, decimals_);
+    }
+
+    /// @notice What a listed asset wraps, or zero if it wraps nothing.
+    /// @dev Read by the API so a review can say "quoted in wTSLAx (Tesla xStock)"
+    ///      rather than showing a symbol the user has to take on trust.
+    function underlyingOf(address token) external view returns (address) {
+        return _assets[token].wrappedUnderlying;
     }
 
     /// @notice Record the outcome of the §420 verification gates.
@@ -270,4 +397,9 @@ contract XStockRegistry {
         return g.canonicalRepresentation && g.transferBehaviour && g.multiplierBehaviour && g.priceSource
             && g.haltSource && g.hyperSwapCompatible && g.normalizedAccountingTested && g.legalReviewed;
     }
+}
+
+/// @dev The one function this registry calls on a wrapper.
+interface IWrappedAsset {
+    function UNDERLYING() external view returns (address);
 }

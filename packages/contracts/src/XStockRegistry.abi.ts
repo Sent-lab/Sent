@@ -10,9 +10,27 @@ export const xStockRegistryAbi = [
         "name": "governance_",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "wrapperFactory",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "WRAPPER_FACTORY",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -142,6 +160,11 @@ export const xStockRegistryAbi = [
             "name": "exists",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "wrappedUnderlying",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
@@ -199,6 +222,39 @@ export const xStockRegistryAbi = [
     "inputs": [
       {
         "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "decimals_",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "coreTokenIndex",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "evmExtraWeiDecimals",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "registerWrappedAsset",
+    "inputs": [
+      {
+        "name": "wrapper",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expectedUnderlying",
         "type": "address",
         "internalType": "address"
       },
@@ -325,6 +381,25 @@ export const xStockRegistryAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "underlyingOf",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "event",
@@ -476,6 +551,37 @@ export const xStockRegistryAbi = [
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "WrappedAssetRegistered",
+    "inputs": [
+      {
+        "name": "wrapper",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "underlying",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "coreTokenIndex",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "decimals",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AlreadyEnabled",
     "inputs": []
@@ -508,8 +614,29 @@ export const xStockRegistryAbi = [
   },
   {
     "type": "error",
+    "name": "NoWrapperFactory",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotEnabled",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotFromWrapperFactory",
+    "inputs": [
+      {
+        "name": "wrapper",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -520,6 +647,27 @@ export const xStockRegistryAbi = [
     "type": "error",
     "name": "UnknownAsset",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WrapperUnderlyingMismatch",
+    "inputs": [
+      {
+        "name": "wrapper",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "claimed",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "actual",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

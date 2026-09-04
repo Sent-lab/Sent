@@ -7,6 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {WrappedXStock} from "../src/WrappedXStock.sol";
 import {WrappedXStockFactory} from "../src/WrappedXStockFactory.sol";
+import {XStockRegistry} from "../src/XStockRegistry.sol";
 
 /**
  * @dev Backed's rebasing token, copied in shape rather than invented.
@@ -372,5 +373,154 @@ contract WrappedXStockTest is Test {
         }
 
         _assertSolvent();
+    }
+}
+
+/**
+ * @notice Listing a wrapper, and refusing one that only looks like it.
+ *
+ * §420's gates are attestations about the UNDERLYING, while the asset a market
+ * actually pairs against is the wrapper (D-017). That gap is where a lookalike
+ * gets in, and a boolean governance ticks does not close it.
+ */
+contract WrapperRegistrationTest is Test {
+    RebasingXStock xstock;
+    WrappedXStockFactory factory;
+    WrappedXStock wrapper;
+    XStockRegistry registry;
+
+    address governance = makeAddr("governanceSafe");
+
+    function setUp() public {
+        xstock = new RebasingXStock();
+        factory = new WrappedXStockFactory();
+        wrapper = WrappedXStock(factory.create(address(xstock)));
+        registry = new XStockRegistry(governance, address(factory));
+    }
+
+    function _allGates() internal pure returns (XStockRegistry.Gates memory) {
+        return XStockRegistry.Gates({
+            canonicalRepresentation: true,
+            transferBehaviour: true,
+            multiplierBehaviour: true,
+            priceSource: true,
+            haltSource: true,
+            hyperSwapCompatible: true,
+            normalizedAccountingTested: true,
+            legalReviewed: true
+        });
+    }
+
+    function test_aWrapperFromTheFactoryGoesAllTheWayThrough() public {
+        vm.startPrank(governance);
+        registry.registerWrappedAsset(address(wrapper), address(xstock), 18, 1385, 0);
+        registry.setGates(address(wrapper), _allGates());
+        registry.enableAsset(address(wrapper));
+        vm.stopPrank();
+
+        assertTrue(registry.isLaunchable(address(wrapper)), "the wrapper is a usable quote asset");
+        assertEq(
+            registry.underlyingOf(address(wrapper)),
+            address(xstock),
+            "and the registry records what it wraps"
+        );
+    }
+
+    /**
+     * @dev THE ATTACK THIS PATH EXISTS FOR.
+     *
+     *      A contract that reports the right underlying, the right name and the
+     *      right symbol, and is not the wrapper. Asking it what it wraps is not
+     *      a check — it answers whatever makes it look legitimate. Only
+     *      provenance settles it.
+     */
+    function test_aLookalikeWrapperIsRefused() public {
+        LookalikeWrapper fake = new LookalikeWrapper(address(xstock));
+
+        // It passes every question you could ask it directly.
+        assertEq(fake.UNDERLYING(), address(xstock));
+        assertEq(fake.symbol(), wrapper.symbol());
+        assertEq(fake.name(), wrapper.name());
+
+        vm.prank(governance);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                XStockRegistry.NotFromWrapperFactory.selector, address(fake), address(wrapper)
+            )
+        );
+        registry.registerWrappedAsset(address(fake), address(xstock), 18, 1385, 0);
+
+        assertFalse(registry.isLaunchable(address(fake)));
+    }
+
+    /// @dev And it cannot be smuggled in through the ordinary path either — that
+    ///      one records no underlying, so nothing claims it is a Tesla wrapper.
+    function test_theOrdinaryPathRecordsNoUnderlying() public {
+        LookalikeWrapper fake = new LookalikeWrapper(address(xstock));
+
+        vm.prank(governance);
+        registry.registerAsset(address(fake), 18, 1385, 0);
+
+        assertEq(
+            registry.underlyingOf(address(fake)),
+            address(0),
+            "registerAsset never asserts a wrapping relationship"
+        );
+    }
+
+    /// @dev A real wrapper listed against the wrong underlying. The factory
+    ///      names a different wrapper for that asset, so it stops at provenance.
+    function test_aWrapperListedAgainstTheWrongUnderlyingIsRefused() public {
+        RebasingXStock other = new RebasingXStock();
+        factory.create(address(other));
+
+        vm.prank(governance);
+        vm.expectRevert();
+        registry.registerWrappedAsset(address(wrapper), address(other), 18, 1385, 0);
+    }
+
+    /// @dev A registry with no factory cannot list wrappers at all. Refusing is
+    ///      the correct behaviour: the alternative is trusting an address nobody
+    ///      bound at construction.
+    function test_aRegistryWithNoFactoryRefusesWrappersEntirely() public {
+        XStockRegistry bare = new XStockRegistry(governance, address(0));
+
+        vm.prank(governance);
+        vm.expectRevert(XStockRegistry.NoWrapperFactory.selector);
+        bare.registerWrappedAsset(address(wrapper), address(xstock), 18, 1385, 0);
+    }
+
+    /// @dev The underlying is still refused by the ordinary path, so listing the
+    ///      wrapper is not a way to smuggle the rebasing asset in beside it.
+    function test_theRawXStockIsStillRefused() public {
+        vm.prank(governance);
+        vm.expectRevert(
+            abi.encodeWithSelector(XStockRegistry.AssetRebases.selector, address(xstock), 1e18)
+        );
+        registry.registerAsset(address(xstock), 18, 1385, 0);
+    }
+
+    function test_theSameWrapperCannotBeListedTwice() public {
+        vm.startPrank(governance);
+        registry.registerWrappedAsset(address(wrapper), address(xstock), 18, 1385, 0);
+
+        vm.expectRevert(XStockRegistry.AlreadyRegistered.selector);
+        registry.registerWrappedAsset(address(wrapper), address(xstock), 18, 1385, 0);
+        vm.stopPrank();
+    }
+
+    function test_onlyGovernanceCanListAWrapper() public {
+        vm.prank(makeAddr("attacker"));
+        vm.expectRevert(XStockRegistry.NotGovernance.selector);
+        registry.registerWrappedAsset(address(wrapper), address(xstock), 18, 1385, 0);
+    }
+}
+
+/// @dev Right answers, wrong provenance.
+contract LookalikeWrapper is ERC20 {
+    address public immutable UNDERLYING;
+
+    constructor(address underlying) ERC20("Wrapped Tesla xStock", "wTSLAx") {
+        UNDERLYING = underlying;
     }
 }

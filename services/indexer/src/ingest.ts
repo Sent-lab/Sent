@@ -1404,6 +1404,27 @@ export class Indexer {
 
     const a = decoded.args as Record<string, unknown>;
     const { blockNumber } = this.positionOf(log);
+
+    /*
+     * Handled BEFORE the `token` guard below, because this event does not have
+     * a `token` field — it has `wrapper` and `underlying` (D-017).
+     *
+     * The guard would have dropped it silently, which is the failure shape this
+     * repository keeps finding: an event with no handler looks exactly like an
+     * event that never fired. A market would then be quoted in "wTSLAx" with
+     * nothing anywhere able to say what that wraps.
+     */
+    if (decoded.eventName === "WrappedAssetRegistered") {
+      return upsertXStockAsset(tx, {
+        asset: String(a.wrapper).toLowerCase(),
+        decimals: Number(a.decimals),
+        coreTokenIndex: BigInt(a.coreTokenIndex as number | bigint),
+        evmExtraWeiDecimals: 0,
+        lastBlock: blockNumber,
+        wrappedUnderlying: String(a.underlying).toLowerCase(),
+      });
+    }
+
     const asset = a.token === undefined ? null : String(a.token).toLowerCase();
     if (asset === null) return;
 

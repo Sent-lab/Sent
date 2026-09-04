@@ -86,7 +86,7 @@ contract RebaseDetectorTest is Test {
     PlainQuoteToken plain;
 
     function setUp() public {
-        registry = new XStockRegistry(governance);
+        registry = new XStockRegistry(governance, address(0));
         rebasing = new RebasingXStock();
         plain = new PlainQuoteToken();
     }

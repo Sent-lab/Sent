@@ -129,7 +129,7 @@ contract DeployTest is Test {
         address governance = address(new NotASafe());
         address treasury = address(new NotASafe());
 
-        XStockRegistry registry = new XStockRegistry(governance);
+        XStockRegistry registry = new XStockRegistry(governance, address(0));
         LaunchpadFactory factory = new LaunchpadFactory(governance, treasury, address(registry), 0);
 
         assertTrue(address(factory.FEE_VAULT()) != address(0), "fee vault not created");
@@ -150,7 +150,7 @@ contract DeployTest is Test {
         address governance = address(new NotASafe());
         address treasury = address(new NotASafe());
 
-        XStockRegistry registry = new XStockRegistry(governance);
+        XStockRegistry registry = new XStockRegistry(governance, address(0));
         LaunchpadFactory factory = new LaunchpadFactory(governance, treasury, address(registry), 0);
 
         assertEq(factory.router(), address(0), "router must start unset");

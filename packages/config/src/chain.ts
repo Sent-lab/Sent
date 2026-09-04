@@ -97,6 +97,21 @@ export const GRADUATION_ROUTER: `0x${string}` | null = null;
 export const LIQUIDITY_LOCK: `0x${string}` | null = null;
 
 /**
+ * The `WrappedXStockFactory` every listed quote asset must come from (D-017).
+ *
+ * Markets are quoted in a non-rebasing wrapper rather than in an xStock
+ * directly, because a Uniswap V3 position cannot hold a rebasing token and
+ * graduation locks one forever. This is the factory whose provenance the
+ * registry checks.
+ *
+ * It is bound IMMUTABLY into the registry at deployment, so this constant is a
+ * record of what was bound rather than something the runtime configures. A
+ * mismatch between the two is a deployment error, and `assertProductionConfigReady`
+ * cannot detect it — only reading `XStockRegistry.WRAPPER_FACTORY()` can.
+ */
+export const WRAPPER_FACTORY: `0x${string}` | null = null;
+
+/**
  * Fee tiers enabled on the HyperSwap V3 factory.
  * VERIFIED Day 1 (V-07, PRIMARY: factory.feeAmountTickSpacing per tier).
  *
@@ -202,6 +217,21 @@ export function assertProductionConfigReady(): void {
     problems.push("no graduation router deployed (V-06, V-09) — markets cannot graduate");
   }
   if (XSTOCK_ALLOWLIST.length === 0) problems.push("xStock allowlist empty (V-02/V-03/V-05)");
+
+  /*
+   * The wrapper factory, checked separately from the allowlist above.
+   *
+   * An empty allowlist and a missing factory look the same from the outside —
+   * nothing is launchable either way — and are fixed by different people doing
+   * different things. Without the factory there is nothing governance COULD
+   * list, because every xStock rebases and the registry refuses those
+   * structurally (D-017, V-03).
+   */
+  if (WRAPPER_FACTORY === null) {
+    problems.push(
+      "no wrapper factory deployed (D-017) — every xStock rebases, so nothing can be listed",
+    );
+  }
   if (PLATFORM_ACCOUNTS.governanceSafe === null) problems.push("platform accounts unset (C-08)");
 
   /*

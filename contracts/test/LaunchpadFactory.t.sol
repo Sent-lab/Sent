@@ -62,7 +62,7 @@ contract LaunchpadFactoryTest is Test {
     uint256 constant XSTOCK_USD = 137.42e18;
 
     function setUp() public {
-        registry = new XStockRegistry(governance);
+        registry = new XStockRegistry(governance, address(0));
         quote = new FQuote();
         router = new StubRouter();
 

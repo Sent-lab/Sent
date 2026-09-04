@@ -200,7 +200,7 @@ contract XStockRegistryTest is Test {
     address nvdax = makeAddr("NVDAx");
 
     function setUp() public {
-        registry = new XStockRegistry(governance);
+        registry = new XStockRegistry(governance, address(0));
     }
 
     function _allGates() internal pure returns (XStockRegistry.Gates memory) {

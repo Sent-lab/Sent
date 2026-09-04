@@ -2332,6 +2332,14 @@ export interface XStockAsset {
   readonly launchable: boolean;
   readonly verifiedAt: number | null;
   readonly lastBlock: bigint;
+  /**
+   * The rebasing xStock this asset wraps, or null when it wraps nothing.
+   *
+   * Mirrors `XStockRegistry.underlyingOf`. Non-null means the asset a market
+   * pairs against is a wrapper (D-017), and that §420's `canonical` gate was
+   * attested about THIS address rather than about the listed one.
+   */
+  readonly wrappedUnderlying: `0x${string}` | null;
 }
 
 /**
@@ -2355,23 +2363,33 @@ export async function upsertXStockAsset(
     coreTokenIndex: bigint;
     evmExtraWeiDecimals: number;
     lastBlock: bigint;
+    /** The xStock this asset wraps, or null when it wraps nothing (D-017). */
+    wrappedUnderlying?: string | null;
   },
 ): Promise<void> {
   await db.query(
     `INSERT INTO xstock_assets (
-       asset, decimals, core_token_index, evm_extra_wei_decimals, last_block
-     ) VALUES ($1,$2,$3,$4,$5)
+       asset, decimals, core_token_index, evm_extra_wei_decimals, last_block,
+       wrapped_underlying
+     ) VALUES ($1,$2,$3,$4,$5,$6)
      ON CONFLICT (asset) DO UPDATE SET
        decimals = EXCLUDED.decimals,
        core_token_index = EXCLUDED.core_token_index,
        evm_extra_wei_decimals = EXCLUDED.evm_extra_wei_decimals,
-       last_block = EXCLUDED.last_block`,
+       last_block = EXCLUDED.last_block,
+       -- COALESCE, not assignment. AssetRegistered fires for both
+       -- registration paths and carries no underlying; only
+       -- WrappedAssetRegistered knows one. A plain upsert arriving second
+       -- would erase the wrapping relationship, and the UI would quietly go
+       -- back to showing a symbol the user has to take on trust.
+       wrapped_underlying = COALESCE(EXCLUDED.wrapped_underlying, xstock_assets.wrapped_underlying)`,
     [
       toBytes(a.asset),
       a.decimals,
       a.coreTokenIndex.toString(),
       a.evmExtraWeiDecimals,
       a.lastBlock.toString(),
+      a.wrappedUnderlying ? toBytes(a.wrappedUnderlying) : null,
     ],
   );
 }
@@ -2426,7 +2444,7 @@ export async function listXStockAssets(db: Db, onlyLaunchable = false): Promise<
     `SELECT asset, decimals, core_token_index, evm_extra_wei_decimals,
             gate_canonical, gate_transfer, gate_multiplier, gate_price_source,
             gate_halt_source, gate_hyperswap, gate_accounting, gate_legal,
-            enabled_for_new_launches, verified_at, last_block
+            enabled_for_new_launches, verified_at, last_block, wrapped_underlying
      FROM xstock_assets
      ${onlyLaunchable ? "WHERE enabled_for_new_launches" : ""}
      ORDER BY asset`,
@@ -2437,6 +2455,7 @@ export async function listXStockAssets(db: Db, onlyLaunchable = false): Promise<
     decimals: Number(r.decimals),
     coreTokenIndex: big(r.core_token_index, "core_token_index"),
     evmExtraWeiDecimals: Number(r.evm_extra_wei_decimals),
+    wrappedUnderlying: r.wrapped_underlying == null ? null : addr(r.wrapped_underlying, "wrapped_underlying"),
     gates: {
       canonical: r.gate_canonical === true,
       transfer: r.gate_transfer === true,
