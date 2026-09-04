@@ -51,9 +51,13 @@ USAGE
     # check only — no signing, no key needed
     python infra/deployment/big-blocks.py --check 0xYourAddress
 
-    # opt in
+    # opt in. --for is the address you EXPECT the key to belong to; the
+    # script refuses if it does not, so a mispasted key stops here.
     export HL_PRIVATE_KEY=0x...
-    python infra/deployment/big-blocks.py --enable
+    python infra/deployment/big-blocks.py --enable --for 0xYourDeployer
+
+The key may be given with or without the `0x` prefix. MetaMask exports it
+without one, which is not a sign anything is wrong.
 
     # opt back out, once the large transactions are done
     python infra/deployment/big-blocks.py --disable
@@ -123,7 +127,7 @@ def check(address: str) -> int:
     return 1
 
 
-def set_flag(enable: bool) -> int:
+def set_flag(enable: bool, expected: str) -> int:
     key = os.environ.get("HL_PRIVATE_KEY", "").strip()
 
     if not key:
@@ -142,10 +146,43 @@ def set_flag(enable: bool) -> int:
         print("    pip install hyperliquid-python-sdk", file=sys.stderr)
         return 2
 
-    account = eth_account.Account.from_key(key)
+    """
+    Accepts the key with or without `0x`. MetaMask exports it without, and a
+    script that rejected that would send the reader looking for a fault in
+    their wallet rather than in the instructions.
+    """
+    bare = key[2:] if key.lower().startswith("0x") else key
+
+    if len(bare) != 64 or any(c not in "0123456789abcdefABCDEF" for c in bare):
+        print("HL_PRIVATE_KEY does not look like a private key.", file=sys.stderr)
+        print("Expected 64 hex characters, with or without a 0x prefix.", file=sys.stderr)
+        print(f"Got {len(bare)} characters. The value itself is not shown.", file=sys.stderr)
+        return 2
+
+    account = eth_account.Account.from_key("0x" + bare)
     address = account.address
 
-    print(f"address        {address}")
+    # Flushed, because the next thing written may go to stderr. Unflushed
+    # stdout arrives after it, and an error message that reads out of order is
+    # read by someone who is already worried.
+    print(f"address        {address}", flush=True)
+
+    """
+    The key is checked against the address it is supposed to be.
+
+    Without this, pasting the governance key instead of the deployer key
+    succeeds silently and puts the WRONG account on the slow lane — a mistake
+    that is invisible until a transaction from the right account fails to mine,
+    which is exactly the symptom this whole script exists to prevent.
+    """
+    if address.lower() != expected.lower():
+        print(file=sys.stderr)
+        print("This key does not belong to the address you named.", file=sys.stderr)
+        print(f"  --for      {expected}", file=sys.stderr)
+        print(f"  the key is {address}", file=sys.stderr)
+        print(file=sys.stderr)
+        print("Nothing was sent. Check which account you copied from.", file=sys.stderr)
+        return 2
 
     if not is_core_user(address):
         print()
@@ -178,13 +215,25 @@ def main() -> int:
     group.add_argument("--check", metavar="ADDRESS", help="report readiness, sign nothing")
     group.add_argument("--enable", action="store_true", help="opt into the large lane")
     group.add_argument("--disable", action="store_true", help="opt back out")
+    parser.add_argument(
+        "--for",
+        dest="expected",
+        metavar="ADDRESS",
+        help="the address the key must belong to; refuses on a mismatch",
+    )
 
     args = parser.parse_args()
 
     if args.check:
         return check(args.check)
 
-    return set_flag(args.enable)
+    if not args.expected:
+        print("--for is required with --enable/--disable.", file=sys.stderr)
+        print("Name the address you expect the key to belong to, so a", file=sys.stderr)
+        print("mispasted key is refused instead of switching the wrong account.", file=sys.stderr)
+        return 2
+
+    return set_flag(args.enable, args.expected)
 
 
 if __name__ == "__main__":
