@@ -30,6 +30,7 @@ const EXPORTED = [
   "XStockRegistry",
   "WrappedXStock",
   "WrappedXStockFactory",
+  "PythAggregatorShim",
 ] as const;
 
 interface Artifact {

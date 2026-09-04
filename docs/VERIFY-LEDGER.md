@@ -46,6 +46,10 @@ Last updated: Day 8.
 - **V-05** — they are also pausable and upgradeable behind proxies.
 - **V-22** — no xStock has a HyperSwap pool at any fee tier. Holders exist; an EVM-side market
   between them does not.
+- **V-11** — the launch anchor's mechanism is built and fork-tested against the real Pyth on
+  HyperEVM. What is missing is the FEED: Pyth's equity prices there are 63–561 days stale, its
+  24/7 variants were never published, and its public update API now returns 401. Nothing else
+  on this chain prices an xStock — no HyperSwap pool, no HyperCore spot, no equity perp.
 
 §2 LOCKS every market to an official xStock, and the assets are there. What is not resolved is
 how the accounting meets a rebasing quote asset. `RebaseDetector` currently refuses the entire
@@ -665,7 +669,8 @@ HOW TO VERIFY:      identify available feeds on HyperEVM and review their securi
 BLOCKS:             the launch flow. Every launch reverts with ReferencePriceNotSet
                     until governance configures a feed and points the factory at it.
 OWNER:              Stream A
-STATUS:             PARTIAL — a native candidate is measured and live; the choice is open
+STATUS:             PARTIAL — the mechanism is built and fork-tested; the FEED is not
+                    published on this chain and the update API needs a key
 ```
 
 **A candidate exists, on-chain, with no third party in it (PRIMARY, Day 8).**
@@ -702,9 +707,55 @@ theoretical.
 3. **It is moot while V-02 stands.** There is no linked xStock to price. A feed decision made
    before the asset question is settled would be a decision about a market that cannot exist.
 
+---
+
+**Day 8, continued: the field is narrower than it looked, and it is now measured.**
+
+The HyperCore precompiles above turned out **not** to price an xStock. `spotPx` reads a HIP-1
+spot market, and xStocks are EVM-native with no HIP-1 linkage (V-02) — so there is nothing for
+it to read. `oraclePx` prices perps, and a scan of all 233 perp assets on Hyperliquid found no
+equity: the only equity-shaped ticker is `SPX` at index 171, which reads ~$0.60 and is the
+SPX6900 memecoin.
+
+Combined with V-22 — **no xStock has a HyperSwap pool** — that leaves HyperEVM with no venue
+price for any of these assets at all.
+
+**Pyth is the only source that exists on this chain, and it is really there:**
+
+```text
+Pyth v1.4.6   0xe9d69CdD6Fe41e7B621B4A688C5D1a68cB5c8ADc
+getValidTimePeriod()  60 seconds
+
+crypto feeds, LIVE          HYPE   183s old        BTC  2,101s old
+equity feeds, ABANDONED     TSLA    63 days old    NVDA    71 days    SPY  561 days
+equity 24/7 variants        never published here — the call reverts
+```
+
+The equity prices are **present and wrong**, which is worse than absent: `getPriceUnsafe` would
+return a two-month-old TSLA without complaint, and §402 fixes `p0` for a market's entire life.
+
+**The mechanism is now built and fork-tested.** `PythAggregatorShim` presents one Pyth feed as
+a Chainlink round, so `ReferencePriceAdapter` consumes it unchanged and every §135 refusal it
+already implements — stale, zero, negative, out-of-band, unreadable, wrong decimals — applies to
+a Pyth source with nothing rewritten. It reads through `getPriceNoOlderThan`, so an abandoned
+feed **reverts rather than answering**, and `test/fork/PythFork.t.sol` asserts exactly that
+against the live contract.
+
+**What is left is not code, and it is not a research question either.** Someone has to publish
+equity prices to HyperEVM's Pyth. Pyth is pull-based by design, so the intended pattern is that
+the launch transaction carries the signed update — `updatePriceFeeds` then read, in one call.
+Two obstacles, both operational:
+
+1. **Nobody publishes equities here today.** Crypto feeds are maintained; equities are not.
+2. **Pyth's public price-update API now requires authentication.** Every update endpoint tried
+   (`hermes.pyth.network/v2/updates`, `/api/latest_price_feeds`, `benchmarks.pyth.network`)
+   returned **401**. Only the feed-metadata endpoint answers anonymously. Fetching a signed
+   update needs a key or a paid endpoint.
+
 **Deliberately not adopted yet.** §253 attaches criteria to this choice and the adapter already
-refuses every launch until one is made. Wiring a precompile in now would turn a documented
-refusal into a working path to a market whose quote asset V-02 says does not qualify.
+refuses every launch until one is made. The shim is deployed by nobody and configured for
+nothing; wiring a feed in is a governance action taken once the two obstacles above are
+resolved, not a code change.
 
 **The mechanism is built; only the feed is open.** `ReferencePriceAdapter`
 exists, is tested against stale, zero, negative, out-of-band, unreadable and

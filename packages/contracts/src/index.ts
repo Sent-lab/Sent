@@ -11,3 +11,4 @@ export { holderRewardVaultAbi } from "./HolderRewardVault.abi.ts";
 export { xStockRegistryAbi } from "./XStockRegistry.abi.ts";
 export { wrappedXStockAbi } from "./WrappedXStock.abi.ts";
 export { wrappedXStockFactoryAbi } from "./WrappedXStockFactory.abi.ts";
+export { pythAggregatorShimAbi } from "./PythAggregatorShim.abi.ts";
