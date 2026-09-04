@@ -60,3 +60,8 @@ apps/web/next-env.d.ts
 
 # TypeScript incremental build state. Machine-local, changes on every check.
 *.tsbuildinfo
+
+# Working files from on-chain measurement sessions. Raw dumps of token lists,
+# storage reads and old ledger text - useful while investigating, never repo
+# content, and the kind of thing that gets committed by an "add -A" reflex.
+scratch_*
