@@ -65,7 +65,7 @@ section("Prices beyond floating point still map correctly");
   const low = 1_000_000_000_000_000_000_000n;
   const high = 1_000_000_000_000_000_000_001n;
 
-  const scale = buildScale([bar(0, low, high, low, high)], 18);
+  const scale = buildScale([bar(0, low, high, low, high)]);
   check("a scale is built", scale !== null);
 
   if (scale !== null) {
@@ -78,7 +78,7 @@ section("Prices beyond floating point still map correctly");
 {
   // A full-width uint256 must not overflow or produce NaN anywhere.
   const huge = 2n ** 200n;
-  const scale = buildScale([bar(0, huge / 2n, huge, 1n, huge / 3n)], 18);
+  const scale = buildScale([bar(0, huge / 2n, huge, 1n, huge / 3n)]);
 
   check("an enormous range builds", scale !== null);
   if (scale !== null) {
@@ -97,7 +97,7 @@ section("The plot stays inside its box");
     bar(120, 115n, 160n, 100n, 155n),
   ];
 
-  const scale = buildScale(candles, 18);
+  const scale = buildScale(candles);
   check("built", scale !== null);
 
   if (scale !== null) {
@@ -118,11 +118,11 @@ section("The plot stays inside its box");
 section("Degenerate inputs do not divide by zero");
 
 {
-  check("no candles yields no scale", buildScale([], 18) === null);
+  check("no candles yields no scale", buildScale([]) === null);
 
   // A market that has not moved has zero range. Without padding this divides by
   // zero and every bar becomes NaN.
-  const flat = buildScale([bar(0, 100n, 100n, 100n, 100n)], 18);
+  const flat = buildScale([bar(0, 100n, 100n, 100n, 100n)]);
   check("a completely flat market builds", flat !== null);
 
   if (flat !== null) {
@@ -135,7 +135,7 @@ section("Degenerate inputs do not divide by zero");
 
   // A market at zero — nothing has traded above zero — must not underflow when
   // the padding is subtracted.
-  const zero = buildScale([bar(0, 0n, 0n, 0n, 0n)], 18);
+  const zero = buildScale([bar(0, 0n, 0n, 0n, 0n)]);
   check("a zero-priced market builds", zero !== null);
   if (zero !== null) check("without a negative coordinate", zero.y(0n) >= 0);
 }
@@ -144,7 +144,7 @@ section("Volume scales independently of price");
 
 {
   const candles = [bar(0, 100n, 110n, 90n, 105n, 0n), bar(60, 105n, 115n, 100n, 110n, 500n)];
-  const scale = buildScale(candles, 18);
+  const scale = buildScale(candles);
 
   if (scale !== null) {
     check("the largest volume fills the band", Math.abs(scale.volumeHeight(500n) - VOL_H) < 0.01);
@@ -153,7 +153,7 @@ section("Volume scales independently of price");
   }
 
   // Every bar having zero volume must not divide by zero.
-  const silent = buildScale([bar(0, 100n, 110n, 90n, 105n, 0n)], 18);
+  const silent = buildScale([bar(0, 100n, 110n, 90n, 105n, 0n)]);
   if (silent !== null) {
     check("an all-zero volume band is flat, not NaN", silent.volumeHeight(0n) === 0);
   }
@@ -162,7 +162,7 @@ section("Volume scales independently of price");
 section("Bars fill the plot without overlapping");
 
 {
-  const scale = buildScale([bar(0, 1n, 2n, 1n, 2n)], 18);
+  const scale = buildScale([bar(0, 1n, 2n, 1n, 2n)]);
 
   if (scale !== null) {
     const plotW = VIEW_W - PAD_L - PAD_R;
@@ -206,11 +206,34 @@ section("Bars fill the plot without overlapping");
 
 section("Axis labels come from the integers, not the pixels");
 
+/*
+ * THE AXIS READS THE QUOTE SCALE, AND THIS FILE USED TO ASSERT OTHERWISE
+ * ----------------------------------------------------------------------
+ * These checks used to be written against the market's own decimals, with a
+ * comment claiming that eighteen would render a price "a trillion times too
+ * small". It is the other way round, and the curve's own arithmetic settles it
+ * rather than any reading of the code:
+ *
+ *   p0FromReferenceMarketCap($2,000, $500 xStock)  ->  4_000_000_000
+ *
+ *   read as WAD   -> 1B tokens are worth 4 xStock  = $2,000   (§18's anchor)
+ *   read as RAW/6 -> 1B tokens are worth 8e12      = $2e15
+ *
+ * §18 anchors every launch at $2,000, so p0 is wad quote per TOKEN. Every
+ * quote-denominated figure downstream inherits that: `Bought` and `Sold` emit
+ * `grossNormalized`, the fees and `curveCollateral` normalized, and the indexer
+ * stores what it is given.
+ *
+ * The earlier belief came from a real observation — a price rendering as
+ * "0.000000" — and the wrong diagnosis. The value genuinely is that small; the
+ * fault was six decimal places, not the scale. Multiplying by 10^12 made the
+ * number look plausible, which is the worst way for this to be wrong.
+ */
 {
-  // Six decimals, like a real xStock. Labels formatted at eighteen would be a
-  // trillion times too small — the bug already fixed on the explore cards.
-  const scale = buildScale([bar(0, 1_000_000n, 2_000_000n, 500_000n, 1_500_000n)], 6);
-  check("built at six decimals", scale !== null);
+  // A realistic launch: p0 = 4e9 wad = 4e-9 quote per token.
+  const p0 = 4_000_000_000n;
+  const scale = buildScale([bar(0, p0, p0 * 2n, p0 / 2n, (p0 * 3n) / 2n)]);
+  check("a launch-scale price builds a scale", scale !== null);
 
   if (scale !== null) {
     check("six ticks", scale.ticks.length === 6);
@@ -223,9 +246,19 @@ section("Axis labels come from the integers, not the pixels");
       scale.ticks.every((t, i) => i === 0 || t.y < scale.ticks[i - 1]!.y),
     );
 
-    // At six decimals, 2_000_000 raw is 2.0 — not 0.000000000002.
+    /*
+     * The check that would have caught the original bug.
+     *
+     * 8e9 at the quote scale is 0.000000008. Read at a six-decimal asset's
+     * scale it would be 8000 — a label starting with "8" and no leading zero,
+     * which is exactly what the old assertion demanded.
+     */
     const top = scale.ticks[scale.ticks.length - 1];
-    check("the top label reads at the market's own scale", top?.label.startsWith("2") === true);
+    check("the top label is a fraction, not thousands", top?.label.startsWith("0.") === true);
+    check(
+      "and it resolves the leading zeros instead of flooring to 0.000000",
+      /^0\.0*[1-9]/.test(top?.label ?? ""),
+    );
 
     // Every label must have the same decimal count, or the axis will not align.
     const decimals = scale.ticks.map((t) => t.label.split(".")[1]?.length ?? 0);
@@ -235,9 +268,10 @@ section("Axis labels come from the integers, not the pixels");
 
 {
   // A market-cap axis runs to fifteen digits. `378684037160000` is not a number
-  // anyone parses off an axis (§41).
-  const big = 378_684_037_160_000n * 10n ** 6n;
-  const scale = buildScale([bar(0, big, big * 2n, big, big * 2n)], 6);
+  // anyone parses off an axis (§41). At the quote scale that is a value of
+  // 378_684_037_160_000 * WAD.
+  const big = 378_684_037_160_000n * 10n ** 18n;
+  const scale = buildScale([bar(0, big, big * 2n, big, big * 2n)]);
 
   if (scale !== null) {
     const label = scale.ticks[scale.ticks.length - 1]?.label ?? "";
@@ -245,7 +279,7 @@ section("Axis labels come from the integers, not the pixels");
     check("and short enough to read", label.length <= 10);
 
     // Small values keep their exact figure, which is more useful when it fits.
-    const small = buildScale([bar(0, 1_000_000n, 2_000_000n, 1_000_000n, 2_000_000n)], 6);
+    const small = buildScale([bar(0, 1n * 10n ** 18n, 2n * 10n ** 18n, 1n * 10n ** 18n, 2n * 10n ** 18n)]);
     const smallLabel = small?.ticks[small.ticks.length - 1]?.label ?? "";
     check("a small axis value stays exact", !/[KMBT]$/.test(smallLabel));
 

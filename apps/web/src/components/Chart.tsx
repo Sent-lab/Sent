@@ -33,7 +33,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { JSX } from "react";
 
-import { formatFixed, formatCompact, placesFor } from "../lib/format.ts";
+import { formatQuoteCompact, formatQuoteFixed } from "../lib/format.ts";
 import {
   buildScale,
   TIMEFRAMES,
@@ -130,7 +130,7 @@ export function Chart({
     [visible, mode],
   );
 
-  const scale = useMemo(() => buildScale(shown, quoteDecimals), [shown, quoteDecimals]);
+  const scale = useMemo(() => buildScale(shown), [shown]);
 
   /**
    * Map a pointer position to a bar index.
@@ -412,10 +412,7 @@ export function Chart({
                   x={VIEW_W - PAD_R + 6}
                   y={scale.y(BigInt(last.c)) + 3}
                 >
-                  {formatFixed(BigInt(last.c), quoteDecimals, {
-                    places: placesFor(BigInt(last.c), quoteDecimals),
-                    pad: true,
-                  })}
+                  {formatQuoteFixed(BigInt(last.c))}
                 </text>
               </g>
             )}
@@ -435,7 +432,7 @@ export function Chart({
               <Row label="H" value={price(active.h, quoteDecimals)} />
               <Row label="L" value={price(active.l, quoteDecimals)} />
               <Row label="C" value={price(active.c, quoteDecimals)} />
-              <Row label="Vol" value={`${formatCompact(BigInt(active.v), quoteDecimals)} ${quoteSymbol}`} />
+              <Row label="Vol" value={`${formatQuoteCompact(BigInt(active.v))} ${quoteSymbol}`} />
               <Row label="Trades" value={String(active.n)} />
             </dl>
           </div>
@@ -456,7 +453,7 @@ function Row({ label, value }: { label: string; value: string }): JSX.Element {
 
 function price(raw: string, decimals: number): string {
   const value = BigInt(raw);
-  return formatFixed(value, decimals, { places: placesFor(value, decimals), pad: true });
+  return formatQuoteFixed(value);
 }
 
 /**

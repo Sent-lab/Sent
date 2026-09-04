@@ -24,7 +24,12 @@
 import { useMemo } from "react";
 import type { JSX } from "react";
 
-import { formatCompact, formatRelativeTime, truncateAddress, truncateHash } from "../lib/format.ts";
+import {
+  formatQuoteCompact,
+  formatRelativeTime,
+  truncateAddress,
+  truncateHash,
+} from "../lib/format.ts";
 import { useLive, marketChannel } from "../lib/live.ts";
 
 import styles from "./LiveTape.module.css";
@@ -155,5 +160,5 @@ export function LiveTape({ market, quoteDecimals, initial }: LiveTapeProps): JSX
  * and must not render as "0" — a zero is a number a user would believe.
  */
 function safe(value: string, decimals: number): string {
-  return /^-?\d+$/.test(value) ? formatCompact(BigInt(value), decimals) : "—";
+  return /^-?\d+$/.test(value) ? formatQuoteCompact(BigInt(value)) : "—";
 }

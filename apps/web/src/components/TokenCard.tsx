@@ -22,7 +22,7 @@
 import Link from "next/link";
 
 import type { ExploreItem } from "../lib/api.ts";
-import { formatAmount, formatCompact, truncateAddress } from "../lib/format.ts";
+import { formatCompact, formatQuote, truncateAddress } from "../lib/format.ts";
 import { GraduationProgress, type MarketStatus } from "./GraduationProgress.tsx";
 
 import styles from "./TokenCard.module.css";
@@ -72,7 +72,7 @@ export function TokenCard({ item }: TokenCardProps): JSX.Element {
           label="Price"
           // Magnitude-aware: a fixed six places renders a sub-cent price as
           // "0.000000", which §41 is explicit is not a price.
-          value={price === null ? "—" : formatAmount(price, quoteDecimals)}
+          value={price === null ? "—" : formatQuote(price)}
         />
         <Metric
           label="Holders"

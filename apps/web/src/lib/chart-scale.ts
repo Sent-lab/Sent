@@ -15,7 +15,7 @@
  * formatted from the BigInt.
  */
 
-import { formatCompact, formatFixed, placesFor } from "./format.ts";
+import { formatFixed, formatQuoteCompact, quotePlaces, QUOTE_SCALE } from "./format.ts";
 
 /** One OHLCV bar, exactly as the API sends it: every quantity a decimal string. */
 export interface Candle {
@@ -69,12 +69,26 @@ const WAD = 10n ** 18n;
  * `1.24M` for exactly this reason, and an axis is the densest place on the
  * screen. Below that threshold the exact figure fits and is more useful.
  */
-function axisLabel(value: bigint, decimals: number, places: number): string {
-  const whole = value / 10n ** BigInt(decimals);
+/**
+ * Ceiling on tick precision.
+ *
+ * It used to be six, which was right for a price read at a six-decimal asset's
+ * own scale and is useless at the quote scale. A token whose entire 1B supply
+ * anchors to $2,000 launches near 4e-9 of the quote asset: at six places every
+ * tick on the price axis reads `0.000000`, which §41 says is not a price.
+ *
+ * Twelve is where the leading zeros of a realistic launch price run out.
+ * `placesFor` already widens for them and stops; this only stops a pathological
+ * value from producing a label too long to sit beside the plot.
+ */
+const MAX_AXIS_PLACES = 12;
+
+function axisLabel(value: bigint, places: number): string {
+  const whole = value / 10n ** BigInt(QUOTE_SCALE);
 
   return whole.toString().length > 6
-    ? formatCompact(value, decimals)
-    : formatFixed(value, decimals, { places, pad: true, grouped: true });
+    ? formatQuoteCompact(value)
+    : formatFixed(value, QUOTE_SCALE, { places, pad: true, grouped: true });
 }
 
 export function marketCapOf(price: bigint): bigint {
@@ -190,7 +204,7 @@ export interface Scale {
  * to go. Nothing that a user reads as a number passes through that conversion:
  * every label is formatted from the BigInt directly.
  */
-export function buildScale(candles: readonly Candle[], quoteDecimals: number): Scale | null {
+export function buildScale(candles: readonly Candle[]): Scale | null {
   if (candles.length === 0) return null;
 
   let low = BigInt(candles[0]!.l);
@@ -233,16 +247,21 @@ export function buildScale(candles: readonly Candle[], quoteDecimals: number): S
   // Precision from the axis MAXIMUM, applied to every tick. Choosing per tick
   // would give each label a different decimal count and the axis would fail to
   // line up; choosing from the minimum would round the top of the range flat.
-  const places = Math.min(placesFor(high, quoteDecimals), 6);
+  const places = Math.min(quotePlaces(high), MAX_AXIS_PLACES);
 
   for (let i = 0; i <= TICK_COUNT; i++) {
     const value = low + (range * BigInt(i)) / BigInt(TICK_COUNT);
     ticks.push({
       value,
       y: y(value),
-      // Formatted from the BigInt at the market's OWN decimals, never from the
-      // pixel position and never at an assumed eighteen.
-      label: axisLabel(value, quoteDecimals, places),
+      // Formatted from the BigInt, never from the pixel position.
+      //
+      // At the QUOTE SCALE, not the asset's own decimals. Candle OHLC are
+      // `priceAfter` values, which the market emits normalized — reading them
+      // at a six-decimal xStock's decimals put the whole axis out by 10^12
+      // while `marketCapOf` a few lines below already divided by WAD. One file,
+      // two beliefs about the same number.
+      label: axisLabel(value, places),
     });
   }
 

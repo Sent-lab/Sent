@@ -30,6 +30,70 @@
  * layout shift is §80 and it is mandatory.
  */
 
+/**
+ * THE SCALE OF A QUOTE VALUE THAT CAME OFF THE CHAIN (§12, §424)
+ * --------------------------------------------------------------
+ * Every quote-denominated figure the API serves is NORMALIZED to eighteen
+ * places, not raw. `LaunchMarket` normalizes on the way in and holds
+ * `curveCollateral` normalized; `Bought` and `Sold` emit `grossNormalized`,
+ * `f.net`, the fees and `curveCollateral` — all normalized; `p0` is "wad quote
+ * per TOKEN" by construction in `referencePriceToP0`; and the indexer stores
+ * what it is given.
+ *
+ * These were being formatted with the quote asset's OWN decimals, which is the
+ * number the API also serves and which is right for a different job. On an
+ * eighteen-decimal quote the two coincide and everything looked correct. On a
+ * six-decimal xStock — which is what every real market is paired against — it
+ * divides by 10^6 instead of 10^18 and renders every price, every collateral
+ * figure and every candle a TRILLION times too large. `LaunchMarket.sol` warns
+ * about this exact coincidence in its own comment.
+ *
+ * WHAT `quoteDecimals` IS STILL FOR
+ * ---------------------------------
+ * Raw amounts. What a user types into the trade panel is raw, because that is
+ * what `buy()` takes and what their wallet holds; the SDK normalizes it before
+ * computing fees and renders the results back in raw units. So the wire field
+ * is not wrong and is not going away — it answers "how do I read a balance",
+ * not "how do I read the projection".
+ *
+ * Two functions rather than a constant passed by hand at each call site: a
+ * number a caller supplies is a number a caller can get wrong, and this one was
+ * wrong in seven places at once.
+ */
+const QUOTE_SCALE = 18;
+
+/**
+ * Format a chain-derived quote value, precision following its magnitude.
+ *
+ * For prices, collateral, fees and notionals — anything that reached the client
+ * through the projection. Never for a raw balance or a user's own input.
+ */
+export function formatQuote(value: bigint): string {
+  return formatAmount(value, QUOTE_SCALE);
+}
+
+/** The same values, abbreviated for a metric tile (§41). */
+export function formatQuoteCompact(value: bigint): string {
+  return formatCompact(value, QUOTE_SCALE);
+}
+
+/** The same values at a stable glyph count, for anything that ticks (§80). */
+export function formatQuoteFixed(value: bigint, options: { grouped?: boolean } = {}): string {
+  return formatFixed(value, QUOTE_SCALE, {
+    places: placesFor(value, QUOTE_SCALE),
+    pad: true,
+    ...options,
+  });
+}
+
+/** Decimal places a quote value of this magnitude deserves. */
+export function quotePlaces(value: bigint): number {
+  return placesFor(value, QUOTE_SCALE);
+}
+
+/** The scale itself, for the few callers that must pass it onward. */
+export { QUOTE_SCALE };
+
 /** Grouping separator inserted every three digits of the integer part. */
 const GROUP = ",";
 

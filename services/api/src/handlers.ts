@@ -64,7 +64,12 @@ export interface MarketRow {
   readonly distributed: bigint;
   readonly curveCollateral: bigint;
   readonly qG: bigint;
-  /** Launch price in quote wei. Carries the §18 USD anchor implicitly. */
+  /**
+   * Launch price: WAD quote per TOKEN, not raw quote units.
+   *
+   * Carries the §18 USD anchor implicitly — see the note on `quoteDecimals`
+   * above for why the distinction is not cosmetic.
+   */
   readonly p0: bigint;
   /** Graduation price, 25 × p0. */
   readonly pg: bigint;
@@ -466,9 +471,29 @@ export interface ExploreItem {
   /**
    * Quote decimals, from the REGISTRY (§699), never read from the token.
    *
-   * Without this a client cannot format `price` at all: the value is in raw
-   * quote units, and assuming eighteen renders a six-decimal xStock's price a
-   * trillion times too small — a wrong number that looks like a plausible one.
+   * FOR RAW AMOUNTS. NOT FOR `price`.
+   * ---------------------------------
+   * This field says how to read a balance and how to parse what a user types,
+   * because `buy()` takes a raw amount and a wallet holds raw units.
+   *
+   * It is NOT the scale of the values in this response. Every quote-denominated
+   * figure the API serves is NORMALIZED to eighteen places, because that is how
+   * the market emits and stores them: `Bought` and `Sold` carry
+   * `grossNormalized`, the fees and `curveCollateral`, and `p0` is wad quote per
+   * TOKEN by construction.
+   *
+   * This comment used to say the opposite, and a client followed it. The curve's
+   * own arithmetic settles it:
+   *
+   *     p0FromReferenceMarketCap($2,000, a $500 xStock) = 4_000_000_000
+   *
+   *     as wad   -> 1B tokens are worth 4 xStock = $2,000   (§18's anchor)
+   *     as raw/6 -> 1B tokens are worth 8e12     = $2e15
+   *
+   * §18 anchors every launch at $2,000, so the value is wad. Reading it at a
+   * six-decimal xStock's own decimals multiplies every price on a client by
+   * 10^12 — a wrong number that looks like a plausible one, which is what the
+   * original wording was trying to warn about and got backwards.
    */
   readonly quoteDecimals: number;
   readonly status: string;
