@@ -1038,6 +1038,44 @@ a Hyperliquid L1 action, not an EVM call, so nothing above measures it. What is 
 that the two lanes exist, what they cap at, and how often each is produced. Any design that
 depends on a specific opt-in mechanism must confirm it first-hand before it ships.
 
+**And it applies to LAUNCHING, which was the dangerous one.**
+
+`launch()` deploys a `LaunchToken` and a `LaunchMarket` inside one transaction, so
+the creator pays 200 gas per byte of both. Measured with
+`script/LaunchGasProbe.s.sol`, at the optimizer setting this repository shipped
+with:
+
+```text
+launch(), minimal metadata      3,014,132    OVER
+launch(), typical metadata      3,062,062    OVER
+launch(), MAXIMUM metadata      3,068,481    OVER
+```
+
+Every one of them over the 3,000,000 ceiling — **including a launch with no
+metadata at all.** That is not an operations problem like the deployment or the
+graduation. It means every CREATOR would need a Hyperliquid L1 opt-in before
+using the product, and a launchpad whose core action requires an L1 action most
+users have never heard of is not a launchpad.
+
+It was 2% over, which is why it had to be measured rather than reasoned about.
+
+**Fixed by the optimizer, after checking what it cost.** Dropping `optimizer_runs`
+from 1000 to 400 shrinks `LaunchMarket` from 9,516 to 8,880 bytes:
+
+```text
+runs   launch() at MAX metadata      buy() warm
+1000              3,068,481  OVER       160,862
+ 400              2,893,462  fits       160,913
+```
+
+175,019 gas saved on every launch; **51 gas added to every trade** — 0.03%.
+Trades are far more frequent than launches, so the direction of that trade-off
+was measured rather than assumed before taking it. Headroom at maximum metadata
+is 106,562 gas.
+
+The probe now REVERTS if a launch stops fitting, rather than printing a number
+nobody reads.
+
 **It applies to DEPLOYMENT too, and that was nearly missed.**
 
 The lane is a property of the chain, not of graduation, so it constrains every

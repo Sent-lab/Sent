@@ -6,7 +6,27 @@ out = "out"
 libs = ["lib"]
 solc_version = "0.8.28"
 optimizer = true
-optimizer_runs = 1000
+# 400, not the usual 1000, and the reason is a hard constraint rather than taste.
+#
+# `launch()` deploys a LaunchToken and a LaunchMarket inside one transaction, so
+# the creator pays 200 gas per byte of both. At 1000 runs that came to 3,068,481
+# gas for the largest metadata a creator may submit - over HyperEVM's 3,000,000
+# default block lane (V-20).
+#
+# Over the ceiling means EVERY CREATOR needs the large-lane opt-in, which is a
+# Hyperliquid L1 action, not an EVM call. That is not friction to document; it is
+# the launchpad being unusable by the people it is for.
+#
+# Measured both sides before choosing (script/LaunchGasProbe.s.sol):
+#
+#     runs   launch() at MAX metadata     buy() warm
+#     1000              3,068,481  OVER      160,862
+#      400              2,893,462  fits      160,913
+#
+# 175,019 gas saved on every launch; 51 gas added to every trade. Trades are far
+# more frequent, so the direction of that trade-off was checked rather than
+# assumed - 51 gas is 0.03%, and it buys the product working at all.
+optimizer_runs = 400
 via_ir = true
 bytecode_hash = "none"
 # Lint runs in CI as an informational step, not as a build gate (D-008).
