@@ -142,6 +142,135 @@
   text-align: center;
 }
 
+/* --- Rows ----------------------------------------------------------------- */
+
+/*
+ * A holding, a reward or a claim.
+ *
+ * One row shape for all three, because they answer the same question in the
+ * same shape — what, how much — and giving each its own layout would make a
+ * page whose sections do not line up read as three pages stacked.
+ */
+.rows {
+  margin-top: var(--s-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.row:hover {
+  background: var(--surface-hover);
+}
+
+.rowMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rowSymbol {
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+/*
+ * The name is allowed to run out of room, and the SYMBOL never is.
+ *
+ * A truncated name is a cosmetic loss; a truncated symbol is the identity of
+ * the position, and half of one reads as a different token.
+ */
+.rowName {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowFigures {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.rowBalance {
+  margin-left: auto;
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.rowValue {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+.rowStatus {
+  flex-shrink: 0;
+  padding: 2px var(--s-2);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+
+/* Graduated is the state worth spotting in a list, so it is the one that is
+   coloured. The others are ordinary and stay quiet. */
+.rowStatus[data-status="GRADUATED"] {
+  border-color: var(--volt-deep);
+  color: var(--volt);
+}
+
+.rowStatus[data-status="GRADUATING"] {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.sectionCta {
+  margin-top: var(--s-3);
+  align-self: flex-start;
+  color: var(--volt);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.sectionCta:hover {
+  text-decoration: underline;
+}
+
+/* --- Page-level states ---------------------------------------------------- */
+
+.state {
+  padding: var(--s-5);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.error {
+  padding: var(--s-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  color: var(--warn);
+  font-size: var(--text-sm);
+}
+
 @media (max-width: 640px) {
   .page {
     padding-block: var(--s-8) var(--s-12);
