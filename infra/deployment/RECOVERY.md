@@ -367,14 +367,30 @@ controls the protocol for its lifetime.
 ### The deploy
 
 ```bash
+export FOUNDRY_PROFILE=deploy    # not optional - see below
 export GOVERNANCE=0x...          # the Safe
 export TREASURY=0x...            # a different Safe
 export LAUNCH_FEE=...            # wei; changeable later via governance
-export DEPLOYER_PRIVATE_KEY=0x...
+export DEPLOYER_PRIVATE_KEY=...  # the 0x prefix is optional
 
-forge script script/Deploy.s.sol:Deploy \
-  --rpc-url "$RPC_URL" --broadcast --slow
+forge script script/Deploy.s.sol:Deploy   --rpc-url "$RPC_URL" --broadcast --slow
 ```
+
+**`FOUNDRY_PROFILE=deploy` is required, and skipping it fails confusingly.**
+
+Foundry reads the block gas limit from the chain's tip block, which on HyperEVM
+is a small-lane block ~99% of the time. So the `LaunchpadFactory` deployment
+dies with `OutOfGas` at exactly 3,000,000 - before broadcasting anything, and
+with nothing in the error mentioning block lanes.
+
+`--block-gas-limit` does not override it. Under `isolate`, Foundry models each
+top-level call as a real transaction and keeps the chain's own ceiling. That is
+correct behaviour, and it is why the fork tests can trust isolate to tell the
+truth about what fits.
+
+The profile only lets the SIMULATION proceed. The deployer still has to be
+genuinely opted into the large lane, or the broadcast produces a transaction
+that never mines - a failure with no error message at all.
 
 `--slow` matters here: it waits for each transaction to confirm before sending the
 next. The registry binds the wrapper factory's address immutably and the factory
