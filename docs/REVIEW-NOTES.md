@@ -403,7 +403,11 @@ that silently repairs itself teaches nobody anything.
 These are not placeholders. They are recorded refusals, and each names the
 verification item blocking it:
 
-- `XStockAssetAdapter` multiplier semantics — V-03
+- `XStockAssetAdapter` multiplier semantics. **No longer pending** — V-03 closed,
+  and the answer was that every xStock has them. The adapter's refusal is now
+  permanent policy rather than a gap: markets pair against a non-rebasing wrapper
+  (D-017), which has no multiplier semantics to refuse, and the raw asset is
+  refused here and again at the registry by `RebaseDetector`.
 - The graduation router's **deployment** — V-06. The router, the permanent lock
   and `V3Math` are all built, and V-09 closed on Day 8 against the real
   HyperSwap `NonfungiblePositionManager`. What is not done is putting an address
@@ -412,7 +416,11 @@ verification item blocking it:
   the old lock still holds a real LP position that nothing can move. The
   addresses are located and mutually verified on-chain; first-party confirmation
   is the missing half, and `Deploy.s.sol` refuses rather than guessing.
-- The xStock allowlist, empty — V-02, V-03, V-05
+- The xStock allowlist, empty. **The blockers moved on Day 8.** V-02, V-03 and
+  V-05 all closed: the assets are there, over $100M of them, and they all rebase.
+  What now keeps the list empty is two deployments that have not happened —
+  `WrappedXStockFactory` (D-017), without which nothing can be listed at all, and
+  a launch-anchor feed (V-11). Neither is a research question any more.
 - Platform accounts, unset — C-08
 - `Logo.tsx` geometry, pending the official SVG export
 - PNG rasterisation of the share card. The card itself is built and tested
@@ -429,10 +437,13 @@ verification item blocking it:
 - `liveMarketCapUsd` (§403). Needs the live xStock/USD DISPLAY feed, V-12. The
   field is ABSENT from the response rather than zero: an absent field renders as
   nothing, a zero renders as a market worth nothing.
-- The launch-anchor feed itself (V-11). The adapter, its refusals and the
-  factory's dependency on it are built and tested; which aggregator to point at
-  is a decision with §253's criteria attached, and manipulation resistance rules
-  out the easy answer. Every launch is refused until it is made.
+- The launch-anchor feed itself (V-11). The adapter, its refusals, the factory's
+  dependency on it, and now `PythAggregatorShim` are all built and fork-tested.
+  **What is missing is no longer a decision — it is data.** Pyth is the only
+  price source that exists on this chain (no HyperSwap pool, no HyperCore spot,
+  no equity perp), and its equity feeds there are 63–561 days stale with the 24/7
+  variants never published. Somebody has to publish them, and Pyth's public
+  update API now returns 401. Every launch is refused until that changes.
 - `/account` **P&L** — holdings and portfolio value now ship; realised and
   unrealised P&L do not. They need a cost basis per account per market, which
   means folding every trade rather than reading a balance, and the trade history

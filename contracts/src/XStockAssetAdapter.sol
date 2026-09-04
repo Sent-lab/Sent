@@ -52,7 +52,14 @@ library XStockAssetAdapter {
         uint8 decimals;
         /// @dev True when the asset's value per unit is not constant — a rebasing
         ///      wrapper, a share-based accounting token, or one subject to a
-        ///      corporate-action multiplier. Unsupported until V-03 closes.
+        ///      corporate-action multiplier.
+        ///
+        ///      Refused permanently, not pending V-03. That row closed on Day 8
+        ///      and the answer was that EVERY xStock has these semantics, so
+        ///      markets pair against a non-rebasing wrapper instead (D-017). A
+        ///      wrapper's balance is constant, so it sets this false honestly;
+        ///      the raw asset is refused here and again at the registry by
+        ///      `RebaseDetector`, which checks the chain rather than a flag.
         bool hasMultiplierSemantics;
     }
 
