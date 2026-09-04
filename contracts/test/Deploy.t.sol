@@ -16,11 +16,32 @@ contract DeployHarness is Deploy {
     }
 }
 
-/// @dev Stands in for a Safe: any contract satisfies the code-length check, which
-///      is exactly the guard's stated scope. It rules out a hot EOA holding
-///      mainnet governance; it does not claim to prove the address is a Safe.
+/// @dev A contract that is not a Safe. Passes the code-length check and fails
+///      the quorum check, which is the whole point of having both.
 contract NotASafe {
     uint256 public x;
+}
+
+/// @dev A Safe, as far as the deploy guard can tell: it answers `getThreshold`
+///      and `getOwners`, which is what the guard reads.
+contract FakeSafe {
+    uint256 private _threshold;
+    address[] private _owners;
+
+    constructor(uint256 threshold_, uint256 ownerCount) {
+        _threshold = threshold_;
+        for (uint256 i = 0; i < ownerCount; i++) {
+            _owners.push(address(uint160(uint256(keccak256(abi.encode(address(this), i))))));
+        }
+    }
+
+    function getThreshold() external view returns (uint256) {
+        return _threshold;
+    }
+
+    function getOwners() external view returns (address[] memory) {
+        return _owners;
+    }
 }
 
 contract DeployTest is Test {
@@ -92,13 +113,97 @@ contract DeployTest is Test {
         harness.checkConfig(_config(shared, shared));
     }
 
-    function test_MainnetAcceptsTwoContracts() public {
+    // -----------------------------------------------------------------------
+    // The quorum guard (C-08, §601)
+    // -----------------------------------------------------------------------
+
+    /**
+     * @dev A 1-of-1 governance Safe is refused, and this is the test that
+     *      matters most in this file.
+     *
+     *      It is the arrangement where BOTH failure modes are live at once:
+     *      lose the key and every protocol parameter becomes unreachable
+     *      forever; leak it and the holder can make itself the only Stockback
+     *      attestor, sign any root, and drain the reward vault after
+     *      ACTIVATION_DELAY — removing the Guardian's brake first, because
+     *      setGuardian is onlyGovernance too.
+     *
+     *      It also passes every other guard in this script, which is why it
+     *      needs its own.
+     */
+    function test_MainnetRejectsOneOfOneGovernance() public {
+        address governance = address(new FakeSafe(1, 1));
+        address treasury = address(new FakeSafe(2, 3));
+
+        vm.chainId(HYPEREVM);
+        vm.expectRevert(bytes("Deploy: governance threshold must be at least 2 (C-08, S601)"));
+        harness.checkConfig(_config(governance, treasury));
+    }
+
+    /// @dev And 2-of-2 is refused too, which is the less obvious half.
+    ///
+    ///      It survives one stolen key and not one LOST key: with no spare
+    ///      owner, a single unreachable signer freezes the protocol permanently.
+    ///      Treating it as "good enough" would trade one unrecoverable failure
+    ///      for another.
+    function test_MainnetRejectsTwoOfTwoGovernance() public {
+        address governance = address(new FakeSafe(2, 2));
+        address treasury = address(new FakeSafe(2, 3));
+
+        vm.chainId(HYPEREVM);
+        vm.expectRevert(bytes("Deploy: governance needs more owners than its threshold (C-08, S601)"));
+        harness.checkConfig(_config(governance, treasury));
+    }
+
+    /// @dev 2-of-3 is the smallest arrangement that survives either failure.
+    function test_MainnetAcceptsTwoOfThreeGovernance() public {
+        address governance = address(new FakeSafe(2, 3));
+        address treasury = address(new FakeSafe(2, 3));
+
+        vm.chainId(HYPEREVM);
+        harness.checkConfig(_config(governance, treasury));
+    }
+
+    /// @dev A contract whose authority structure cannot be read is refused
+    ///      rather than waved through. This address controls every parameter in
+    ///      the protocol; "it is a contract and we could not tell what it does"
+    ///      is not a standard to deploy mainnet against.
+    function test_MainnetRejectsAContractThatIsNotASafe() public {
+        address governance = address(new NotASafe());
+        address treasury = address(new FakeSafe(2, 3));
+
+        vm.chainId(HYPEREVM);
+        vm.expectRevert(bytes("Deploy: governance is not a Safe (C-08)"));
+        harness.checkConfig(_config(governance, treasury));
+    }
+
+    /// @dev The quorum guard is mainnet-only, like the others. A local chain
+    ///      must stay usable without a ceremony.
+    function test_NonMainnetAllowsAOneOfOneSafe() public {
+        address governance = address(new FakeSafe(1, 1));
+
+        vm.chainId(SOME_TESTNET);
+        harness.checkConfig(_config(governance, EOA_TREASURY));
+    }
+
+    /// @dev Treasury may be any contract; governance may not.
+    ///
+    ///      The asymmetry is deliberate and worth pinning. Treasury receives
+    ///      money and controls nothing, so a multisig, a splitter or a vault all
+    ///      make sense there. Governance controls every parameter in the
+    ///      protocol and has a path to the reward vault, so its authority
+    ///      structure has to be legible before deployment.
+    ///
+    ///      This test asserted that ANY two contracts were accepted until the
+    ///      quorum guard landed. That premise is gone rather than weakened, and
+    ///      it is rewritten rather than deleted so the narrowing is visible.
+    function test_MainnetAcceptsAnyTreasuryContractButNotAnyGovernance() public {
         vm.chainId(HYPEREVM);
 
         // No revert expected. Explicit rather than implied, so a guard that
         // starts rejecting everything fails here instead of silently blocking
         // the deploy on the day it runs.
-        harness.checkConfig(_config(address(new NotASafe()), address(new NotASafe())));
+        harness.checkConfig(_config(address(new FakeSafe(2, 3)), address(new NotASafe())));
     }
 
     // -----------------------------------------------------------------------

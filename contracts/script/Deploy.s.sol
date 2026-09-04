@@ -153,6 +153,74 @@ contract Deploy is Script {
         // always a copy-paste: fee withdrawal and protocol authority collapse
         // into one signer set, and the separation the vaults assume is gone.
         require(config.governance != config.treasury, "Deploy: governance and treasury must differ");
+
+        _assertGovernanceQuorum(config.governance);
+    }
+
+    /**
+     * @dev Refuse a governance Safe that one key can control, or one key can
+     *      freeze.
+     *
+     *      The check above only proves governance is a CONTRACT, and says so. A
+     *      1-of-1 Safe passes it, and a 1-of-1 Safe is the specific arrangement
+     *      that makes both of the following true at once:
+     *
+     *      LOST  — every parameter in the protocol becomes unreachable. Assets
+     *              cannot be registered, the graduation router cannot be wired,
+     *              no price feed can be configured. The contracts point at that
+     *              address permanently; there is no recovery path and no
+     *              redeployment that keeps the same markets.
+     *
+     *      STOLEN — governance can reach user money. `addAttestor` and
+     *              `setQuorum` on `HolderRewardVault` are both `onlyGovernance`,
+     *              so a holder of that key can make itself the only attestor,
+     *              sign any Merkle root, wait out `ACTIVATION_DELAY`, and claim
+     *              the vault. The Guardian's cancel is the brake — and
+     *              `setGuardian` is `onlyGovernance` too, so the same key
+     *              removes it first.
+     *
+     *      Hence BOTH conditions, not one:
+     *
+     *        threshold >= 2      one stolen key is not enough
+     *        owners > threshold  one lost key does not freeze the protocol
+     *
+     *      2-of-2 satisfies the first and fails the second, which is why it is
+     *      rejected rather than treated as "good enough". 2-of-3 is the smallest
+     *      arrangement that survives either failure.
+     *
+     *      §601 asks for more than this — Governance, Treasury, Founder and
+     *      Guardian must not all share an identical quorum — and §602 asks for
+     *      independent failure domains, which no on-chain check can see. Three
+     *      keys on one laptop pass this and are not separation. This is a floor,
+     *      not a substitute for the ceremony.
+     */
+    function _assertGovernanceQuorum(address governance) internal view {
+        (bool okThreshold, bytes memory thresholdData) =
+            governance.staticcall(abi.encodeWithSignature("getThreshold()"));
+        (bool okOwners, bytes memory ownersData) =
+            governance.staticcall(abi.encodeWithSignature("getOwners()"));
+
+        /*
+         * A governance contract whose authority structure cannot be read is
+         * refused rather than waved through.
+         *
+         * §557 names a Safe specifically, and this address controls every
+         * parameter in the protocol. "It is a contract and we could not tell
+         * what it does" is not a standard to deploy mainnet against — and a
+         * deliberate change to something else (a timelock, a DAO) should be a
+         * deliberate change to this script, made by someone who read this.
+         */
+        require(okThreshold && thresholdData.length >= 32, "Deploy: governance is not a Safe (C-08)");
+        require(okOwners && ownersData.length >= 64, "Deploy: governance is not a Safe (C-08)");
+
+        uint256 threshold = abi.decode(thresholdData, (uint256));
+        address[] memory owners = abi.decode(ownersData, (address[]));
+
+        require(threshold >= 2, "Deploy: governance threshold must be at least 2 (C-08, S601)");
+        require(
+            owners.length > threshold,
+            "Deploy: governance needs more owners than its threshold (C-08, S601)"
+        );
     }
 
     /// @dev Prints what was deployed AND what is still missing.
