@@ -254,3 +254,68 @@ finalise into a mispriced pool.
 - **Do not wait for the keeper if a market is genuinely stalled.** The call is
   permissionless so that nobody has to wait for one particular process, and that
   includes you.
+
+---
+
+## Listing a quote asset (the wrapper flow)
+
+Not a recovery procedure — the ordinary path, written here because it is the one
+sequence where doing the steps out of order produces something that looks
+correct and is not.
+
+Markets are quoted in a wrapper, never in the xStock itself (D-017). The registry
+enforces that structurally: `RebaseDetector` refuses any rebasing asset whatever
+the §420 gates say, and **every xStock rebases**.
+
+### The order, and why it is this order
+
+```bash
+# 1. Create the wrapper. Permissionless, one per asset, address is derivable.
+cast send $WRAPPER_FACTORY "create(address)" $XSTOCK --rpc-url "$RPC_URL"
+
+# 2. Check it is the one you expected, BEFORE listing it.
+cast call $WRAPPER_FACTORY "predict(address)(address)" $XSTOCK --rpc-url "$RPC_URL"
+cast call $WRAPPER "UNDERLYING()(address)" --rpc-url "$RPC_URL"
+cast call $WRAPPER "symbol()(string)"      --rpc-url "$RPC_URL"
+
+# 3. Register it, naming the underlying explicitly. Governance only.
+#    The registry verifies PROVENANCE - that this factory named this wrapper for
+#    this underlying - so a lookalike cannot be listed even if it answers every
+#    question correctly.
+cast send $REGISTRY \
+  "registerWrappedAsset(address,address,uint8,uint32,uint8)" \
+  $WRAPPER $XSTOCK 18 $CORE_TOKEN_INDEX 0 --rpc-url "$RPC_URL"
+
+# 4. Attest the eight S420 gates, then enable. Both governance only.
+cast send $REGISTRY "setGates(address,(bool,bool,bool,bool,bool,bool,bool,bool))" ...
+cast send $REGISTRY "enableAsset(address)" $WRAPPER --rpc-url "$RPC_URL"
+```
+
+**Step 2 is not optional and cannot be automated away.** The registry's
+provenance check proves the wrapper's CODE is the known bytecode. It cannot
+prove you passed the right `$XSTOCK` — that is the human judgement §420's
+`canonicalRepresentation` gate exists for, and it is the one thing here nobody
+else checks for you.
+
+### What will refuse you, and what each refusal means
+
+| Revert | Meaning |
+|---|---|
+| `AssetRebases` | you tried to list the xStock itself. Wrap it first. |
+| `NotFromWrapperFactory` | the address is not this factory's wrapper for that underlying. Either the wrong wrapper, or a lookalike. **Do not work around this.** |
+| `WrapperUnderlyingMismatch` | the wrapper disagrees with the underlying you named. Treat as a factory-mapping bug and stop. |
+| `NoWrapperFactory` | the registry was deployed with no factory bound. It is immutable — the registry has to be redeployed. |
+| `AlreadyRegistered` | already listed. Check `underlyingOf` before assuming it is wrong. |
+
+### After listing
+
+Verify the projection agrees with the chain, because a UI that shows the wrapper
+symbol without its underlying is the failure this whole path exists to prevent:
+
+```bash
+curl -s "$API/v1/markets/$TOKEN" | jq '{quoteAsset, quoteSymbol, quoteUnderlying}'
+```
+
+`quoteUnderlying` must be the xStock. If it is `null`, the indexer missed
+`WrappedAssetRegistered` — reindex from the registration block rather than
+patching the row.

@@ -329,7 +329,19 @@ const MARKET_COLUMNS = `
   md.revision      AS metadata_revision,
   md.description   AS metadata_description,
   md.image_cid     AS metadata_image_cid,
-  md.links         AS metadata_links
+  md.links         AS metadata_links,
+  -- What the quote asset wraps, when it wraps anything (D-017).
+  --
+  -- Carried on every market row rather than fetched when a UI happens to ask,
+  -- for the same reason as the metadata above: a card that says "quoted in
+  -- wTSLAx" and needs a second request to say what wTSLAx is will render the
+  -- symbol alone, and asking a user to trust a symbol is exactly the gap a
+  -- lookalike wrapper lives in.
+  --
+  -- A LEFT JOIN: an asset that has not been indexed yet, or one that wraps
+  -- nothing, both give NULL, and an inner join would drop those markets from
+  -- every listing.
+  xa.wrapped_underlying AS quote_underlying
 `;
 
 interface MarketRow {
@@ -361,6 +373,7 @@ interface MarketRow {
   metadata_description: string | null;
   metadata_image_cid: string | null;
   metadata_links: unknown;
+  quote_underlying: unknown;
 }
 
 /**
@@ -379,7 +392,8 @@ function marketQuery(windowParam: string): string {
        JOIN market_state s ON s.market = m.market
        LEFT JOIN blocks gb ON gb.number = s.graduated_at_block
        ${WINDOW_JOIN.replace("$WINDOW_START", windowParam)}
-       ${METADATA_JOIN}`;
+       ${METADATA_JOIN}
+       LEFT JOIN xstock_assets xa ON xa.asset = m.quote_asset`;
 }
 
 /**
@@ -400,6 +414,13 @@ const METADATA_JOIN = `
 `;
 
 export interface MarketView extends MarketRecord, Omit<MarketStateRecord, "market"> {
+  /**
+   * The rebasing xStock the quote asset wraps, or null when it wraps nothing.
+   *
+   * Non-null means the symbol a user sees is one step removed from the equity
+   * they recognise (D-017), and the UI is expected to say so.
+   */
+  readonly quoteUnderlying: `0x${string}` | null;
   /** Notional traded in the last 24h, normalized. Zero for a quiet market. */
   readonly volume24h: bigint;
   readonly trades24h: number;
@@ -424,6 +445,8 @@ function toMarketView(row: MarketRow): MarketView {
     market: addr(row.market, "market"),
     creator: addr(row.creator, "creator"),
     quoteAsset: addr(row.quote_asset, "quote_asset"),
+    quoteUnderlying:
+      row.quote_underlying == null ? null : addr(row.quote_underlying, "quote_underlying"),
     quoteDecimals: row.quote_decimals,
     name: row.name,
     symbol: row.symbol,

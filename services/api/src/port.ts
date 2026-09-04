@@ -315,6 +315,7 @@ export class PostgresPort implements DataPort {
         quoteSymbol: this.symbolOf(h.quoteAsset),
         quoteDecimals: h.quoteDecimals,
         status: STATUS_NAMES[h.status] ?? "PRE_GRAD",
+        quoteUnderlying: null,
         balance: h.balance,
         price: h.price,
         value: h.value,
@@ -693,6 +694,7 @@ export class PostgresPort implements DataPort {
     market: `0x${string}`;
     creator: `0x${string}`;
     quoteAsset: `0x${string}`;
+    quoteUnderlying: `0x${string}` | null;
     quoteDecimals: number;
     name: string;
     symbol: string;
@@ -728,6 +730,7 @@ export class PostgresPort implements DataPort {
       name: v.name,
       symbol: v.symbol,
       status: STATUS_NAMES[v.status] ?? "PRE_GRAD",
+      quoteUnderlying: v.quoteUnderlying,
       distributed: v.distributed,
       curveCollateral: v.curveCollateral,
       qG: v.qG,

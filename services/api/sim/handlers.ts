@@ -1467,6 +1467,48 @@ console.log("\n--- 18. A market between its two graduation transactions --------
 }
 
 // ---------------------------------------------------------------------------
+console.log("\n--- 19. A wrapped quote asset says what it wraps ------------------------");
+
+{
+  /*
+   * Markets are quoted in a wrapper, so `quoteSymbol` is something like
+   * "wTSLAx" that a user has no reason to recognise (D-017).
+   *
+   * A client that renders only the symbol is asking for trust, and that is the
+   * gap a lookalike wrapper lives in - a contract called "Wrapped Tesla xStock"
+   * holding something else is the cheapest attack on someone who reads before
+   * signing. The API has to carry the underlying so the client CAN say what the
+   * symbol is a claim on.
+   */
+  const UNDERLYING = "0x8ad3c73f833d3f9a523ab01476625f269aeb7cf0";
+
+  class WrappedPort extends FakePort {
+    override getMarket(token: string): MarketRow | null {
+      const row = super.getMarket(token);
+      return row === null ? null : { ...row, quoteSymbol: "wTSLAx", quoteUnderlying: UNDERLYING };
+    }
+  }
+
+  const wrapped = handleMarket(new WrappedPort(), TOKEN);
+  if (!wrapped.ok) throw new Error("expected success");
+
+  check("the market carries what its quote asset wraps", wrapped.data.quoteUnderlying === UNDERLYING);
+  check("alongside the wrapper symbol itself", wrapped.data.quoteSymbol === "wTSLAx");
+  check(
+    "and the wrapper address stays the quote asset",
+    wrapped.data.quoteAsset !== wrapped.data.quoteUnderlying,
+  );
+
+  // An unwrapped asset must report null rather than repeating itself. A client
+  // showing "wraps 0x..." for a token that wraps nothing would be inventing a
+  // relationship, which is worse than showing none.
+  const plain = handleMarket(new FakePort(), TOKEN);
+  if (!plain.ok) throw new Error("expected success");
+
+  check("an asset that wraps nothing reports null", plain.data.quoteUnderlying === null);
+}
+
+// ---------------------------------------------------------------------------
 
 console.log("\n" + "=".repeat(74));
 if (failures.length === 0) {

@@ -48,6 +48,14 @@ export interface MarketRow {
   readonly market: string;
   readonly creator: string;
   readonly quoteAsset: string;
+  /**
+   * The rebasing xStock the quote asset wraps, or null when it wraps nothing.
+   *
+   * Markets are quoted in a non-rebasing wrapper (D-017), so `quoteSymbol` is
+   * a symbol like "wTSLAx" that a user has no reason to recognise. This is what
+   * lets a review say what it wraps instead of asking them to trust it.
+   */
+  readonly quoteUnderlying?: string | null;
   readonly quoteDecimals: number;
   readonly quoteSymbol: string;
   readonly name: string;
@@ -549,6 +557,8 @@ export interface MarketDetail {
   readonly symbol: string;
   readonly quoteAsset: string;
   readonly quoteSymbol: string;
+  /** What the quote asset wraps, or null when it wraps nothing (D-017). */
+  readonly quoteUnderlying: string | null;
   readonly quoteDecimals: number;
   readonly status: string;
   readonly price: Sourced;
@@ -668,6 +678,11 @@ export function handleMarket(port: DataPort, token: string): ApiResult<MarketDet
     symbol: row.symbol,
     quoteAsset: row.quoteAsset,
     quoteSymbol: row.quoteSymbol,
+    // Null unless the quote asset wraps something. A client that renders this
+    // when present is telling the user that "wTSLAx" is a claim on Tesla xStock
+    // at a specific address; one that ignores it shows a symbol and asks for
+    // trust, which is the gap a lookalike wrapper lives in (D-017).
+    quoteUnderlying: row.quoteUnderlying ?? null,
     quoteDecimals: row.quoteDecimals,
     status: row.status,
     price: sourced(row.price.toString(), "INDEXED", row.lastBlock, port.serverTime()),

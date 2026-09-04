@@ -297,6 +297,40 @@ A market in this state has **no venue**: its curve is permanently closed and its
 pool does not exist. Quotes against it are refused with
 `MARKET_AWAITING_FINALISATION`.
 
+### Quote assets are wrappers, and every market says what it wraps
+
+Markets are quoted in a **non-rebasing wrapper**, not in the xStock itself
+(D-017). A Uniswap V3 position cannot hold a rebasing token — it pays out from
+internal liquidity accounting and has no `skim()` — so a raw xStock in a
+permanently locked pool would bury every dividend it ever pays and break outright
+on a reverse split.
+
+The consequence for a client is small and not optional. `quoteSymbol` is
+something like `wTSLAx`, which a user has no reason to recognise, so every market
+response carries:
+
+```jsonc
+{
+  "quoteAsset":      "0x…",      // the wrapper — what the market actually holds
+  "quoteSymbol":     "wTSLAx",
+  "quoteUnderlying": "0x8aD3…",  // the xStock it wraps, or null
+  "quoteDecimals":   18
+}
+```
+
+**Render `quoteUnderlying` when it is present.** A contract called "Wrapped Tesla
+xStock" that holds something else is the cheapest attack on a user who reads
+before signing, and a client showing only the symbol is asking them to trust it.
+The registry verifies the wrapper's provenance against a fixed factory on-chain;
+this field is how that verification reaches the screen.
+
+`null` means the asset wraps nothing. Show nothing — inventing a relationship is
+worse than showing none.
+
+A holder of the underlying has one extra step before trading: approve, wrap, then
+approve the market. `buildWrapIntent` and `buildUnwrapIntent` in the SDK build
+both, and their reviews explain why the step exists.
+
 ## Accounts and creators
 
 ### `GET /v1/accounts/:address`
