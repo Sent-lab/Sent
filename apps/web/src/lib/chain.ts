@@ -89,6 +89,81 @@ const WRAPPER_ABI = [
   },
 ] as const;
 
+const FACTORY_ABI = [
+  {
+    type: "function",
+    name: "previewLaunchAddress",
+    stateMutability: "view",
+    inputs: [
+      { name: "creator", type: "address" },
+      { name: "userSalt", type: "bytes32" },
+      { name: "quoteAsset", type: "address" },
+      { name: "launchIntentHash", type: "bytes32" },
+      { name: "name", type: "string" },
+      { name: "symbol", type: "string" },
+    ],
+    outputs: [
+      { name: "token", type: "address" },
+      { name: "effectiveSalt", type: "bytes32" },
+    ],
+  },
+] as const;
+
+export interface PredictedLaunch {
+  readonly token: `0x${string}`;
+  readonly effectiveSalt: `0x${string}`;
+}
+
+/**
+ * The address a launch would produce, before signing anything (§412).
+ *
+ * The creator is INSIDE the salt, so this address is reachable only by them and
+ * only for this exact name, symbol, quote asset and metadata. Changing a
+ * character of the description moves it. That is why the preview is read here
+ * and passed back to the launch as `expectedToken`: the chain then refuses to
+ * deploy anywhere else, so what the creator was shown is what they get.
+ *
+ * Read from the factory rather than computed locally. Deriving CREATE2 in the
+ * client would mean shipping the token's creation code and keeping it in step
+ * with whatever is deployed — a second source for an address that must have
+ * exactly one.
+ */
+export async function previewLaunchAddress(
+  read: Reader,
+  factory: `0x${string}`,
+  args: {
+    creator: `0x${string}`;
+    userSalt: `0x${string}`;
+    quoteAsset: `0x${string}`;
+    launchIntentHash: `0x${string}`;
+    name: string;
+    symbol: string;
+  },
+): Promise<PredictedLaunch> {
+  const data = encodeFunctionData({
+    abi: FACTORY_ABI,
+    functionName: "previewLaunchAddress",
+    args: [
+      args.creator,
+      args.userSalt,
+      args.quoteAsset,
+      args.launchIntentHash,
+      args.name,
+      args.symbol,
+    ],
+  });
+
+  const result = await read({ to: factory, data });
+
+  const [token, effectiveSalt] = decodeFunctionResult({
+    abi: FACTORY_ABI,
+    functionName: "previewLaunchAddress",
+    data: result,
+  }) as [`0x${string}`, `0x${string}`];
+
+  return { token, effectiveSalt };
+}
+
 async function readUint(
   read: Reader,
   abi: typeof ERC20_ABI | typeof WRAPPER_ABI,

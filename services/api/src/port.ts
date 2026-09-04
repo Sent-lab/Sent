@@ -49,7 +49,12 @@ import {
   marketsAwaitingFinalisation,
   type ExploreSort,
 } from "@sent/database";
-import { launchMarketAbi, launchpadFactoryAbi, feeVaultAbi } from "@sent/contracts";
+import {
+  launchMarketAbi,
+  launchpadFactoryAbi,
+  feeVaultAbi,
+  xStockRegistryAbi,
+} from "@sent/contracts";
 import { matchesCommitment } from "@sent/sdk";
 
 import { BoundedCache, CACHE_LIMITS } from "./cache.ts";
@@ -69,6 +74,36 @@ import type {
   PulseRow,
   PendingGraduationRow,
 } from "./handlers.ts";
+
+export interface LaunchableAsset {
+  readonly token: `0x${string}`;
+  /** A label. The address beside it is the identity (§699, D-017). */
+  readonly symbol: string;
+  /** From the registry, never from the token. */
+  readonly decimals: number;
+  /** What this wraps, when it wraps something. */
+  readonly underlying: `0x${string}` | null;
+}
+
+export interface LaunchPreconditions {
+  readonly factory: `0x${string}`;
+  readonly launchable: readonly LaunchableAsset[];
+  /** Null when unset — a market launched now could never graduate. */
+  readonly router: `0x${string}` | null;
+  /** Native wei, sent as `value` with the launch. */
+  readonly launchFee: bigint;
+}
+
+/** One function, declared here so no wider ERC-20 ABI is in scope. */
+const ERC20_SYMBOL_ABI = [
+  {
+    type: "function",
+    name: "symbol",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "string" }],
+  },
+] as const;
 
 const STATUS_NAMES = ["PRE_GRAD", "GRADUATING", "GRADUATED"] as const;
 
@@ -153,6 +188,107 @@ export class PostgresPort implements DataPort {
   finalizedBlock(): bigint | undefined {
     const boundary = this.indexed - BigInt(this.config.confirmations);
     return boundary > 0n ? boundary : undefined;
+  }
+
+  /**
+   * What a launch needs before it can be offered (§219, §220).
+   *
+   * READ FROM THE CHAIN, NOT ASSUMED
+   * --------------------------------
+   * The create page used to carry a hand-written paragraph saying launching was
+   * unavailable because the registry was empty and the router unset. That was
+   * true when it was written and it is not a thing a page can know: both are
+   * governance actions that can land at any moment, and nobody would think to
+   * edit a paragraph when they do.
+   *
+   * So the page asks. If an asset is enabled and a router is set, the form
+   * offers a launch; if not, it says which of the two is missing, from the
+   * chain rather than from memory.
+   *
+   * A LAUNCH WITHOUT A ROUTER IS A MARKET THAT CANNOT GRADUATE
+   * ----------------------------------------------------------
+   * `_enterGraduating` reverts with `RouterNotSet` when the router is zero, and
+   * it is the BUY that crosses the endpoint which reverts. So the market would
+   * trade normally right up to the moment it was supposed to graduate and then
+   * refuse, permanently, for everyone. That is worth blocking in the UI rather
+   * than discovering at the endpoint.
+   */
+  async loadLaunchPreconditions(): Promise<LaunchPreconditions> {
+    const factory = this.config.factory;
+
+    /*
+     * The registry address comes from the FACTORY, not from configuration.
+     *
+     * It is the registry the factory actually consults when it decides whether
+     * a quote asset is launchable. A configured one could disagree, and the
+     * failure would be a page that lists an asset the launch then rejects.
+     */
+    const registry = (await this.client.readContract({
+      address: factory,
+      abi: launchpadFactoryAbi,
+      functionName: "REGISTRY",
+    })) as `0x${string}`;
+
+    const [assets, router, launchFee] = await Promise.all([
+      this.client.readContract({
+        address: registry,
+        abi: xStockRegistryAbi,
+        functionName: "launchableAssets",
+      }) as Promise<readonly `0x${string}`[]>,
+      this.client.readContract({
+        address: factory,
+        abi: launchpadFactoryAbi,
+        functionName: "router",
+      }) as Promise<`0x${string}`>,
+      this.client.readContract({
+        address: factory,
+        abi: launchpadFactoryAbi,
+        functionName: "launchFee",
+      }) as Promise<bigint>,
+    ]);
+
+    // Decimals come from the REGISTRY, never from the token (§699). The symbol
+    // is only a label and is read from the token, with the address alongside it
+    // everywhere it is shown — a symbol is the one field anyone can copy.
+    const detailed = await Promise.all(
+      assets.map(async (token) => {
+        // No cast: the ABI is typed, so the struct's real field names are
+        // enforced here rather than asserted. The field is `wrappedUnderlying`,
+        // which a hand-written cast to `underlying` had silently invented.
+        const asset = await this.client.readContract({
+          address: registry,
+          abi: xStockRegistryAbi,
+          functionName: "getAsset",
+          args: [token],
+        });
+
+        const symbol = await this.client
+          .readContract({
+            address: token,
+            abi: ERC20_SYMBOL_ABI,
+            functionName: "symbol",
+          })
+          .catch(() => "")
+          .then((v) => String(v));
+
+        return {
+          token,
+          symbol,
+          decimals: Number(asset.decimals),
+          underlying:
+            asset.wrappedUnderlying === "0x0000000000000000000000000000000000000000"
+              ? null
+              : asset.wrappedUnderlying,
+        };
+      }),
+    );
+
+    return {
+      factory,
+      launchable: detailed,
+      router: router === "0x0000000000000000000000000000000000000000" ? null : router,
+      launchFee,
+    };
   }
 
   chainConnected(): boolean {

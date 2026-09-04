@@ -45,6 +45,7 @@ import {
   handlePulse,
   handleHealth,
   handlePendingGraduations,
+  handleLaunchConfig,
   EXPLORE_SORTS,
   type ExploreOptions,
 } from "./handlers.ts";
@@ -313,6 +314,32 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
    * the finalise to whoever is looking at a stalled market. A permissionless
    * call that only one party's tooling can find is permissionless on paper.
    */
+  /*
+   * §219's precondition read.
+   *
+   * Not cached beyond the response header: an operator enabling an asset or
+   * setting the router expects the create page to notice, and a long cache here
+   * is the difference between "governance acted" and "governance acted and the
+   * product found out tomorrow".
+   */
+  scope.get("/launch/config", async (_request, reply) => {
+    try {
+      const config = await port.loadLaunchPreconditions();
+      return reply.code(200).send(handleLaunchConfig(port, config));
+    } catch (error) {
+      // The chain, not the database. Saying so matters: a creator seeing this
+      // should retry, not conclude the product is closed.
+      return reply.code(503).send({
+        ok: false,
+        code: "CHAIN_UNREACHABLE",
+        message:
+          "Could not read the launch registry from the chain. Nothing is wrong with your wallet — try again shortly.",
+        retryable: true,
+        freshness: handleHealth(port).freshness,
+      });
+    }
+  });
+
   scope.get("/graduations/pending", async (_request, reply) => {
     await port.loadPendingGraduations();
     const result = handlePendingGraduations(port);

@@ -36,6 +36,7 @@ import type {
   PlatformStatsResponse,
   HealthResponse,
   PendingGraduationsResponse,
+  LaunchConfigResponse,
 } from "@sent/api/handlers";
 import type { IntentKind, IntentRow } from "@sent/sdk";
 import type { FreshnessEnvelope } from "@sent/realtime";
@@ -52,6 +53,7 @@ export type {
   PlatformStatsResponse,
   HealthResponse,
   PendingGraduationsResponse,
+  LaunchConfigResponse,
   IntentKind,
   IntentRow,
 };
@@ -516,6 +518,20 @@ export function getPendingGraduations(
   options?: RequestOptions,
 ): Promise<ApiResult<PendingGraduationsResponse>> {
   return request<PendingGraduationsResponse>("/graduations/pending", options, anyObject);
+}
+
+/**
+ * What a launch needs before the form can offer one (§219).
+ *
+ * Read from the chain by the API rather than written into the page: whether an
+ * xStock is enabled and whether the graduation router is set are both
+ * governance actions, and a page carrying a hand-written explanation of their
+ * absence is wrong the moment governance acts.
+ */
+export function getLaunchConfig(
+  options?: RequestOptions,
+): Promise<ApiResult<LaunchConfigResponse>> {
+  return request<LaunchConfigResponse>("/launch/config", options, anyObject);
 }
 
 export function getHealth(options?: RequestOptions): Promise<ApiResult<HealthResponse>> {

@@ -37,6 +37,8 @@ import {
   type TransactionIntent,
 } from "@sent/sdk";
 import { computeFees, referenceMarketCapUsd, TOTAL_SUPPLY } from "@sent/economics";
+
+import type { LaunchPreconditions } from "./port.ts";
 import { isSafeUrl } from "@sent/sdk";
 
 // ---------------------------------------------------------------------------
@@ -1681,6 +1683,61 @@ export function handlePendingGraduations(
       stalled: r.waitingBlocks > STALLED_AFTER_BLOCKS,
     })),
     stalled: rows.some((r) => r.waitingBlocks > STALLED_AFTER_BLOCKS),
+  });
+}
+
+/**
+ * What a launch needs before the form can offer one (§219, §220).
+ *
+ * WHY THIS IS SERVED RATHER THAN WRITTEN INTO THE PAGE
+ * ----------------------------------------------------
+ * The create page carried a paragraph explaining that launching was unavailable
+ * because no xStock was registered and no graduation router was set. It was
+ * accurate when written, and it is not the kind of thing a page can know:
+ * both are governance actions that land whenever governance acts, and nobody
+ * edits a paragraph in a React component when a Safe transaction executes.
+ *
+ * A page that asks is right on both sides of that moment.
+ *
+ * `ready` IS TWO CONDITIONS, AND BOTH MATTER
+ * -------------------------------------------
+ * An enabled quote asset is the obvious one. The router is the one that would
+ * be missed: `_enterGraduating` reverts with `RouterNotSet` when it is zero, and
+ * the call that reverts is the BUY that crosses the endpoint. A market launched
+ * without a router trades normally right up to graduation and then refuses,
+ * permanently, for every holder. Blocking that here costs a creator nothing;
+ * discovering it at the endpoint costs everyone in the market.
+ */
+export interface LaunchConfigResponse {
+  readonly factory: string;
+  readonly launchable: readonly {
+    readonly token: string;
+    readonly symbol: string;
+    readonly decimals: number;
+    readonly underlying: string | null;
+  }[];
+  /** Null when unset. A market launched now could never graduate. */
+  readonly graduationRouter: string | null;
+  /** Native wei, sent as `value` with the launch. */
+  readonly launchFee: string;
+  readonly ready: boolean;
+}
+
+export function handleLaunchConfig(
+  port: DataPort,
+  config: LaunchPreconditions,
+): ApiResponse<LaunchConfigResponse> {
+  return ok(port, {
+    factory: config.factory,
+    launchable: config.launchable.map((a) => ({
+      token: a.token,
+      symbol: a.symbol,
+      decimals: a.decimals,
+      underlying: a.underlying,
+    })),
+    graduationRouter: config.router,
+    launchFee: config.launchFee.toString(),
+    ready: config.launchable.length > 0 && config.router !== null,
   });
 }
 

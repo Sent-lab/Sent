@@ -21,18 +21,44 @@
  * no progress bar — because none of those exist before a launch and inventing
  * plausible ones would be a mock-up of a market rather than a preview of one.
  *
- * LAUNCHING IS NOT WIRED
- * ----------------------
- * The registry is empty until V-02, V-03 and V-05 are verified, so there is no
- * xStock to pair against, and the graduation router is unset until V-06 and
- * V-09 — a market launched now could never graduate. The page says so instead
- * of offering a button that would produce a broken market.
+ * WHY THE PRECONDITIONS ARE READ AND NOT WRITTEN DOWN
+ * ---------------------------------------------------
+ * This page used to carry a paragraph saying launching was unavailable because
+ * no xStock was registered and the graduation router was unset. Both were true.
+ * Neither is something a page can know: they are governance actions, and nobody
+ * edits a React component when a Safe transaction executes.
+ *
+ * So the page asks `/launch/config`, which reads both from the chain. When an
+ * asset is enabled and a router is set, the form launches; when it is not, the
+ * page says which of the two is missing. It is right on both sides of the
+ * moment governance acts, without anyone remembering to change it.
+ *
+ * A LAUNCH WITHOUT A ROUTER IS A TRAP, NOT A LIMITATION
+ * -----------------------------------------------------
+ * `_enterGraduating` reverts with `RouterNotSet` when the router is zero, and
+ * the call that reverts is the BUY that crosses the endpoint. So the market
+ * would trade normally right up to graduation and then refuse, permanently, for
+ * every holder in it. That is worth refusing to create.
+ *
+ * §694 THROUGH THE WHOLE FLOW
+ * ---------------------------
+ * The address in the preview is read from the factory's own
+ * `previewLaunchAddress` and handed back to the launch as `expectedToken`, so
+ * the chain refuses to deploy anywhere else. The metadata hash is computed by
+ * the SDK and bound into the same salt. What the creator reviewed is what gets
+ * deployed, enforced on-chain rather than promised here.
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { JSX } from "react";
 
-import { truncateAddress } from "../../lib/format.ts";
+import { buildLaunchIntent, launchIntentHash, validateMetadata } from "@sent/sdk";
+
+import { getLaunchConfig, isOk, type LaunchConfigResponse } from "../../lib/api.ts";
+import { previewLaunchAddress } from "../../lib/chain.ts";
+import { formatFixed, truncateAddress } from "../../lib/format.ts";
+import { useWallet, CHAIN_ID } from "../../lib/wallet.ts";
+import { IntentReview } from "../../components/IntentReview.tsx";
 
 import styles from "./create.module.css";
 
@@ -54,12 +80,193 @@ const EMPTY: Draft = {
 };
 
 export default function CreatePage(): JSX.Element {
+  const wallet = useWallet();
+  const { read, address } = wallet;
+
   const [draft, setDraft] = useState<Draft>(EMPTY);
+  const [config, setConfig] = useState<LaunchConfigResponse | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [predicted, setPredicted] = useState<`0x${string}` | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [sent, setSent] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]): void =>
     setDraft((current) => ({ ...current, [key]: value }));
 
+  useEffect(() => {
+    const controller = new AbortController();
+
+    void (async () => {
+      const result = await getLaunchConfig({ signal: controller.signal }).catch(() => null);
+      if (controller.signal.aborted) return;
+
+      if (result === null || !isOk(result)) {
+        setConfigError(
+          result === null
+            ? "Could not reach the API to check what can be launched."
+            : result.message,
+        );
+        return;
+      }
+
+      setConfig(result.data);
+      setConfigError(null);
+
+      // Pre-select when there is exactly one choice. With several, the creator
+      // picks — the pair is an economic decision, not a default.
+      if (result.data.launchable.length === 1) {
+        set("quoteAsset", result.data.launchable[0]!.token);
+      }
+    })();
+
+    return () => controller.abort();
+  }, []);
+
+  const asset = useMemo(
+    () => config?.launchable.find((a) => a.token === draft.quoteAsset) ?? null,
+    [config, draft.quoteAsset],
+  );
+
+  /*
+   * The metadata, exactly as it will be hashed.
+   *
+   * Built here and used for BOTH the hash and the intent, so the commitment in
+   * the address and the content published alongside it cannot describe
+   * different things (§412).
+   */
+  const metadata = useMemo(
+    () => ({
+      description: "",
+      imageCid: "",
+      links: draft.website.trim() === "" ? [] : [{ label: "website", url: draft.website.trim() }],
+    }),
+    [draft.website],
+  );
+
+  /*
+   * A salt per draft, not per keystroke.
+   *
+   * §412 binds the creator into the effective salt, so this only has to be
+   * unique per launch rather than unguessable. It is regenerated when the page
+   * mounts; grinding one for a vanity prefix is not wired, which the form says
+   * rather than implies.
+   */
+  const [userSalt] = useState<`0x${string}`>(() => {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    return `0x${[...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")}` as const;
+  });
+
+  const metadataProblems = useMemo(() => validateMetadata(metadata), [metadata]);
   const problems = useMemo(() => validate(draft), [draft]);
+
+  const ready = config?.ready === true;
+  const complete =
+    problems.length === 0 &&
+    metadataProblems.length === 0 &&
+    draft.quoteAsset !== "" &&
+    asset !== null;
+
+  /*
+   * The address, read from the factory as the draft changes.
+   *
+   * Debounced: every keystroke in the name field moves it, and an eth_call per
+   * character would be a request storm for a value nobody reads mid-typing.
+   */
+  useEffect(() => {
+    if (!complete || address === null || config === null) {
+      setPredicted(null);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void previewLaunchAddress(read, config.factory as `0x${string}`, {
+        creator: address,
+        userSalt,
+        quoteAsset: draft.quoteAsset as `0x${string}`,
+        launchIntentHash: launchIntentHash(metadata),
+        name: draft.name,
+        symbol: draft.symbol,
+      })
+        .then((r) => {
+          if (!cancelled) setPredicted(r.token);
+        })
+        .catch(() => {
+          if (!cancelled) setPredicted(null);
+        });
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [complete, address, config, draft.name, draft.symbol, draft.quoteAsset, metadata, read, userSalt]);
+
+  const intent = useMemo(() => {
+    if (!ready || !complete || config === null || asset === null || predicted === null) {
+      return null;
+    }
+
+    return buildLaunchIntent({
+      chainId: CHAIN_ID,
+      factory: config.factory as `0x${string}`,
+      name: draft.name,
+      symbol: draft.symbol,
+      quoteAsset: asset.token as `0x${string}`,
+      quoteSymbol: asset.symbol,
+      userSalt,
+      launchIntentHash: launchIntentHash(metadata),
+      // Zero opts out of the anchor-tolerance check. The reference price the
+      // creator was shown is not served yet, and inventing one would arm a
+      // guard against a number nobody displayed.
+      reviewedUsdWad: 0n,
+      // The address they are looking at, enforced on-chain.
+      expectedToken: predicted,
+      metadata,
+      launchFee: BigInt(config.launchFee),
+    });
+  }, [ready, complete, config, asset, predicted, draft.name, draft.symbol, metadata, userSalt]);
+
+  const wire = useMemo(
+    () =>
+      intent === null
+        ? null
+        : {
+            kind: intent.kind,
+            chainId: intent.chainId,
+            to: intent.to,
+            data: intent.data,
+            value: intent.value.toString(),
+            review: {
+              kind: intent.review.kind,
+              summary: intent.review.summary,
+              rows: intent.review.rows,
+            },
+          },
+    [intent],
+  );
+
+  const submit = useCallback(async (): Promise<void> => {
+    if (wire === null) return;
+
+    setSubmitting(true);
+    setError(null);
+    setSent(null);
+
+    try {
+      setSent(await wallet.send(wire));
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The launch was not sent. Nothing was created.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }, [wallet, wire]);
 
   return (
     <div className={`${styles.page} container`} data-mode="experience">
@@ -86,8 +293,20 @@ export default function CreatePage(): JSX.Element {
         />
         <Term
           label="Launch cost"
-          value="Gas only"
-          detail="Plus the protocol launch fee if governance has set one."
+          value={
+            config === null
+              ? "Gas only"
+              : BigInt(config.launchFee) === 0n
+                ? "Gas only"
+                : `${formatFixed(BigInt(config.launchFee), 18, { places: 4 })} HYPE`
+          }
+          detail={
+            config === null
+              ? "Plus the protocol launch fee if governance has set one."
+              : BigInt(config.launchFee) === 0n
+                ? "Governance has not set a launch fee. You pay gas and nothing else."
+                : "The protocol launch fee, read from the factory, plus gas."
+          }
         />
       </section>
 
@@ -120,9 +339,23 @@ export default function CreatePage(): JSX.Element {
               className={styles.select}
               value={draft.quoteAsset}
               onChange={(event) => set("quoteAsset", event.target.value)}
-              disabled
+              disabled={config === null || config.launchable.length === 0}
             >
-              <option value="">No xStock is enabled yet</option>
+              {config === null ? (
+                <option value="">Checking the registry…</option>
+              ) : config.launchable.length === 0 ? (
+                <option value="">No xStock is enabled yet</option>
+              ) : (
+                <>
+                  <option value="">Choose an xStock</option>
+                  {config.launchable.map((a) => (
+                    <option key={a.token} value={a.token}>
+                      {a.symbol === "" ? truncateAddress(a.token) : a.symbol}
+                      {a.underlying !== null ? " (wrapper)" : ""}
+                    </option>
+                  ))}
+                </>
+              )}
             </select>
             {/*
               §219: the pair must be clearly official. The list comes from the
@@ -131,8 +364,17 @@ export default function CreatePage(): JSX.Element {
               exact attack §4 and §699 exist to prevent.
             */}
             <p className={styles.hint}>
-              Only assets governance has registered and enabled can be paired. The list is
-              empty until the xStock registry is populated.
+              Only assets governance has registered and enabled can be paired — the list is
+              read from the on-chain registry, never typed.{" "}
+              {asset !== null && (
+                <>
+                  {asset.symbol} is <span className="mono">{truncateAddress(asset.token)}</span>
+                  {asset.underlying !== null && (
+                    <> and wraps <span className="mono">{truncateAddress(asset.underlying)}</span></>
+                  )}
+                  .
+                </>
+              )}
             </p>
           </div>
 
@@ -145,14 +387,20 @@ export default function CreatePage(): JSX.Element {
             maxLength={200}
           />
 
-          <Field
-            label="Vanity prefix"
-            hint="Optional. Grinds the salt for an address starting with these characters."
-            value={draft.vanityPrefix}
-            onChange={(value) => set("vanityPrefix", value.replace(/[^0-9a-fA-F]/g, ""))}
-            placeholder="beef"
-            maxLength={6}
-          />
+          {/*
+            The vanity field is gone rather than inert.
+
+            It said it "grinds the salt for an address starting with these
+            characters" and nothing ground anything. A control that describes
+            work it does not do is worse than its absence: a creator would type
+            a prefix, get an unrelated address, and have no way to tell whether
+            the feature or their input was at fault.
+
+            Grinding needs CREATE2 computed locally, which needs the token's
+            creation code in the client, kept in step with what is deployed.
+            That is a real piece of work and it is not this one. The address is
+            derived and shown below either way, and enforced on-chain.
+          */}
 
           {problems.length > 0 && (
             <ul className={styles.problems}>
@@ -162,15 +410,77 @@ export default function CreatePage(): JSX.Element {
             </ul>
           )}
 
-          <button type="submit" className={styles.submit} disabled>
-            Launch
-          </button>
+          {/*
+            One button, and every disabled reason is stated somewhere the
+            creator can see. §42: a submit that is enabled and then rejects is
+            the shape this is written against.
+          */}
+          {!wallet.available ? (
+            <button type="button" className={styles.submit} disabled>
+              No wallet found
+            </button>
+          ) : address === null ? (
+            <button
+              type="button"
+              className={styles.submit}
+              onClick={() => void wallet.connect()}
+              disabled={wallet.connecting}
+            >
+              {wallet.connecting ? "Check your wallet" : "Connect wallet"}
+            </button>
+          ) : wallet.wrongChain ? (
+            <button
+              type="button"
+              className={styles.submit}
+              onClick={() => void wallet.switchChain()}
+            >
+              Switch network
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={styles.submit}
+              onClick={() => void submit()}
+              disabled={wire === null || submitting}
+            >
+              {submitting ? "Confirm in your wallet" : `Launch ${draft.symbol || "token"}`}
+            </button>
+          )}
 
-          <p className={styles.blocked}>
-            Launching is not enabled in this build. No xStock is registered yet, and the
-            graduation router is unset — a market launched now could trade but could never
-            graduate.
-          </p>
+          {/*
+            The reason, read rather than remembered.
+
+            Each branch names one missing precondition. "Not enabled in this
+            build" was the old copy and it was the least useful true thing that
+            could be said — it described the code, when what a creator needs is
+            what the chain is waiting for.
+          */}
+          {configError !== null ? (
+            <p className={styles.blocked}>{configError}</p>
+          ) : config === null ? (
+            <p className={styles.blocked}>Checking what can be launched…</p>
+          ) : config.launchable.length === 0 ? (
+            <p className={styles.blocked}>
+              No xStock is registered and enabled yet, so there is nothing to pair against.
+              Governance registers an asset and passes its §420 gates before it can be a
+              quote asset here.
+            </p>
+          ) : config.graduationRouter === null ? (
+            <p className={styles.blocked}>
+              The graduation router is not set. A market launched now would trade normally
+              and then refuse to graduate — permanently, for everyone holding it — so
+              launching is held until governance sets it.
+            </p>
+          ) : null}
+
+          {sent !== null && (
+            <p className={styles.hint}>
+              Sent. Your market appears on Explore as soon as the launch is indexed.
+            </p>
+          )}
+
+          {error !== null && <p className={styles.blocked}>{error}</p>}
+          {wallet.error !== null && <p className={styles.blocked}>{wallet.error}</p>}
         </form>
 
         <aside className={`${styles.previewPane} m-secondary`} aria-label="Preview">
@@ -202,8 +512,7 @@ export default function CreatePage(): JSX.Element {
 
             <div className={styles.previewFoot}>
               <span>
-                by{" "}
-                {truncateAddress("0x0000000000000000000000000000000000000000")}
+                by {address === null ? "your wallet, once connected" : truncateAddress(address)}
               </span>
             </div>
           </div>
@@ -223,12 +532,34 @@ export default function CreatePage(): JSX.Element {
             </div>
           </dl>
 
-          {draft.vanityPrefix !== "" && (
+          {/*
+            §412's whole point, made visible.
+
+            The address is read from the factory's own preview and passed back
+            to the launch as `expectedToken`, so the chain refuses to deploy
+            anywhere else. It moves if the name, ticker, pair or metadata
+            change — which is worth seeing happen rather than being told about.
+          */}
+          {predicted !== null && (
+            <div className={styles.previewFacts}>
+              <div>
+                <dt>Token address</dt>
+                <dd className="mono" title={predicted}>
+                  {truncateAddress(predicted)}
+                </dd>
+              </div>
+            </div>
+          )}
+
+          {predicted !== null && (
             <p className={styles.hint}>
-              The market address is derived from your address, your salt and the pair, so a
-              vanity prefix is ground off-chain before launching and costs nothing on-chain.
+              Derived from your address, your salt, the pair and the metadata — so it is
+              reachable only by you, and only for exactly this launch. Change any of them
+              and it moves.
             </p>
           )}
+
+          {wire !== null && <IntentReview intent={wire} pending={false} />}
         </aside>
       </div>
     </div>
