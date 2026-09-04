@@ -126,6 +126,23 @@ export default async function TerminalPage({
           <span className={styles.pair}>
             Paired with <strong>{market.quoteSymbol}</strong>
           </span>
+
+          {/*
+            D-017. A wrapped quote asset is named after what it wraps, and a
+            symbol is the one part of a token anybody can copy. Saying the
+            wrapper is a wrapper, and naming the address it holds, is what
+            separates a real wTSLAx from one that only spells the same — the
+            full address is on the details list below.
+          */}
+          {market.quoteUnderlying != null && (
+            <span className={styles.wrapped}>
+              {market.quoteSymbol} is a wrapper. It holds{" "}
+              <span className="mono" title={market.quoteUnderlying}>
+                {truncateAddress(market.quoteUnderlying)}
+              </span>
+              , and that address is the asset this market is actually quoted against.
+            </span>
+          )}
           <FreshnessBadge envelope={marketResult.freshness} />
         </div>
       </header>
@@ -238,6 +255,16 @@ export default async function TerminalPage({
               value={truncateAddress(market.quoteAsset)}
               full={market.quoteAsset}
             />
+            {/* Only when there is one. An absent row says "not a wrapper";
+                a row reading "—" would say "we did not check", and those are
+                different claims (§87). */}
+            {market.quoteUnderlying != null && (
+              <Detail
+                term="Wraps"
+                value={truncateAddress(market.quoteUnderlying)}
+                full={market.quoteUnderlying}
+              />
+            )}
             <Detail term="Supply" value="1,000,000,000" />
             <Detail term="Creator allocation" value="0%" />
             <Detail term="Core fee" value="1% — 65% creator, 35% platform" />

@@ -94,6 +94,26 @@
   font-weight: 600;
 }
 
+/*
+ * The wrapper disclosure (D-017).
+ *
+ * Not a warning colour. A wrapped quote asset is a normal, allowlisted thing —
+ * §42 keeps warning styling for what a user should worry about, and painting
+ * this amber would say the market is suspect when the point is the opposite:
+ * here is the address, so you do not have to trust the symbol.
+ */
+.wrapped {
+  max-width: 46ch;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  text-align: right;
+}
+
+.wrapped .mono {
+  color: var(--text);
+}
+
 /* --- Metrics -------------------------------------------------------------- */
 
 .metrics {

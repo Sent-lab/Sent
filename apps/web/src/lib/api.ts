@@ -87,15 +87,21 @@ export interface WireIntentReview {
   readonly fees?: Record<string, string>;
   readonly minimumReceived?: string;
   readonly crossesGraduation?: boolean;
-  readonly estimateIsPartial?: boolean;
-  /**
-   * True when the slippage bound covers only part of a crossing order's route.
-   *
-   * V-19, still open. The UI must render this differently rather than showing a
-   * bound that looks like it protects the whole trade.
-   */
-  readonly boundCoversPartialRoute?: boolean;
 }
+
+/*
+ * `estimateIsPartial` and `boundCoversPartialRoute` were declared here.
+ *
+ * They carried V-19: a crossing order ran on the curve and then on HyperSwap,
+ * `minimumReceived` bounded only the first leg, and the UI surfaced that rather
+ * than hiding it. D-016 removed the second leg — the curve leg IS the trade —
+ * so the estimate is whole and the bound covers all of it.
+ *
+ * The SDK deleted the flags instead of leaving them always-false, on the
+ * grounds that a branch which cannot be taken is never exercised and rots
+ * unnoticed. Declaring them here kept exactly that branch alive on the client,
+ * describing an open finding on a wire that can no longer report one.
+ */
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";

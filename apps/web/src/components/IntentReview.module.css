@@ -70,22 +70,6 @@
 
 /* §411 and V-19 notices. Distinct from an error: nothing has gone wrong, the
    figure simply does not mean what it would normally mean. */
-.partial {
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-  line-height: var(--leading-normal);
-  padding: var(--s-2);
-  border-left: 2px solid var(--border-strong);
-}
-
-.warning {
-  font-size: var(--text-xs);
-  color: var(--warn);
-  line-height: var(--leading-normal);
-  padding: var(--s-2);
-  border-left: 2px solid var(--warn);
-}
-
 .calldata {
   font-size: var(--text-xs);
 }

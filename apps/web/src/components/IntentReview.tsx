@@ -48,27 +48,6 @@ export function IntentReview({ intent, pending }: { intent: WireIntent; pending:
         ))}
       </dl>
 
-      {/*
-        §411 and V-19. A crossing order executes on the curve and then on
-        HyperSwap, and until the router can quote the second leg the estimate
-        covers only part of the route and the slippage bound protects only part
-        of it. Presenting either as a whole figure would be a lie of omission on
-        the one screen where it matters most.
-      */}
-      {review.estimateIsPartial === true && (
-        <p className={styles.partial}>
-          This order finishes the curve and continues into the pool. The estimate above
-          covers the curve portion only.
-        </p>
-      )}
-
-      {review.boundCoversPartialRoute === true && (
-        <p className={styles.warning}>
-          Your slippage limit applies to the curve portion of this order. The portion that
-          executes in the pool is not covered by it.
-        </p>
-      )}
-
       {/* The signed bytes, available rather than hidden. A user who wants to
           verify what they are about to sign should not have to open a console. */}
       <details className={styles.calldata}>
