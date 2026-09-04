@@ -182,6 +182,23 @@ canvas {
   max-width: 100%;
 }
 
+/*
+ * Everything the user reads sits above the field (§46).
+ *
+ * Stated once here rather than per component. The field is `z-index: 0` and
+ * fixed; without a stacking context of their own, page sections would render
+ * beneath it and the lattice would draw over the text — a failure that only
+ * appears on whichever surface forgot, which is exactly the kind of bug that
+ * ships.
+ */
+body > nav,
+body > main,
+body > header,
+body > footer {
+  position: relative;
+  z-index: 1;
+}
+
 button,
 input,
 select,
@@ -221,6 +238,10 @@ a {
 /*
  * §43 and §84: motion is a design element, not a requirement to endure.
  * Everything animated must survive this being on.
+ *
+ * The blanket rule below covers CSS. Anything driven by JavaScript has to check
+ * the query itself and stop — `Field.tsx` does, by never starting its loop.
+ * A `!important` here cannot reach a requestAnimationFrame.
  */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -231,6 +252,96 @@ a {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Motion primitives (§43, §47)                                               */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * THE INTERACTION BUDGET, AS CODE (§47).
+ *
+ * §47 sets a hierarchy — primary, secondary, ambient, static — and the rule
+ * that the more consequential a decision, the less motion surrounds it. Written
+ * as prose, that becomes advice nobody applies at 2am. Written as four tiers
+ * with fixed durations, choosing a tier IS applying it.
+ *
+ *   .m-primary    the one thing on the screen that should draw the eye
+ *   .m-secondary  supporting context, arriving after and more quietly
+ *   .m-ambient    barely perceptible; texture rather than event
+ *
+ * There is no `.m-static`. Static is the default, and giving it a class would
+ * imply motion is.
+ */
+.m-primary,
+.m-secondary,
+.m-ambient {
+  /*
+   * Start hidden, and reveal on `[data-revealed]`.
+   *
+   * The initial state is `translateY` plus opacity rather than a scale: scaling
+   * text resamples the glyphs mid-flight and it reads as cheap on a dark ground.
+   */
+  opacity: 0;
+  transform: translate3d(0, var(--reveal-shift, 14px), 0);
+  transition:
+    opacity var(--reveal-dur, 620ms) var(--ease-out) var(--reveal-delay, 0ms),
+    transform var(--reveal-dur, 620ms) var(--ease-out) var(--reveal-delay, 0ms);
+}
+
+.m-primary {
+  --reveal-shift: 22px;
+  --reveal-dur: 720ms;
+}
+
+.m-secondary {
+  --reveal-shift: 14px;
+  --reveal-dur: 560ms;
+}
+
+.m-ambient {
+  --reveal-shift: 6px;
+  --reveal-dur: 900ms;
+}
+
+[data-revealed="true"].m-primary,
+[data-revealed="true"].m-secondary,
+[data-revealed="true"].m-ambient {
+  opacity: 1;
+  transform: none;
+}
+
+/*
+ * Trading mode compresses the whole range (§39.2, §215).
+ *
+ * Not disabled — a terminal where nothing acknowledges a change feels broken.
+ * Shortened to the point where motion registers as feedback and never as an
+ * animation the user waits through.
+ */
+[data-mode="trading"] .m-primary,
+[data-mode="trading"] .m-secondary,
+[data-mode="trading"] .m-ambient {
+  --reveal-dur: 220ms;
+  --reveal-shift: 6px;
+}
+
+/*
+ * Reveal must never gate content.
+ *
+ * §44 is explicit that a user may not be made to "watch an animation" before
+ * using the site. If JavaScript never runs — disabled, failed, still loading —
+ * `[data-revealed]` is never set and everything above would stay at opacity 0.
+ * A page that is blank without JS is not a styling bug, it is an outage.
+ *
+ * So the hidden state is applied only once the reveal system is alive, and it
+ * announces itself on the root element.
+ */
+html:not([data-motion="on"]) .m-primary,
+html:not([data-motion="on"]) .m-secondary,
+html:not([data-motion="on"]) .m-ambient {
+  opacity: 1;
+  transform: none;
+  transition: none;
 }
 
 /* ------------------------------------------------------------------------- */

@@ -1,0 +1,76 @@
+/*
+ * The field sits behind everything and is never in flow (§46: no layout shift).
+ *
+ * `fixed` rather than a tall absolute element: the canvas is exactly one
+ * viewport, and the sense of travelling through the lattice comes from the
+ * camera moving in the simulation, not from the element scrolling. That also
+ * means its cost does not grow with page length.
+ */
+
+.wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+
+  /*
+   * Its own compositing layer, so a repaint here never invalidates page
+   * content. `contain: strict` tells the browser nothing inside can affect
+   * layout outside — which is the containment version of §46's no-layout-shift
+   * rule, enforced by the engine rather than by our care.
+   */
+  contain: strict;
+  will-change: transform;
+}
+
+.canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/*
+ * A radial fade toward the edges.
+ *
+ * The lattice is densest at the centre where the projection converges, and
+ * without this the corners collect visible clutter exactly where navigation and
+ * page chrome live. Darkening the frame also gives content a ground to sit on
+ * without putting a panel behind it.
+ */
+.vignette {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse 120% 80% at 50% 45%,
+      transparent 0%,
+      rgba(5, 6, 7, 0.55) 62%,
+      var(--bg) 100%
+    );
+}
+
+/*
+ * Content must stay readable over the field at all times (§46).
+ *
+ * The canvas never exceeds ~6% luminance over the ground, so this is belt and
+ * braces rather than the mechanism — but a future change that brightens the
+ * field should meet resistance here rather than silently costing contrast.
+ */
+@media (prefers-contrast: more) {
+  .canvas {
+    opacity: 0.35;
+  }
+}
+
+/*
+ * Reduced motion still gets the composition.
+ *
+ * The component already draws exactly one frame and never starts the loop, so
+ * there is nothing to disable here. The rule exists so that a reader checking
+ * "does this respect reduced motion" finds the answer in both files.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .wrap {
+    will-change: auto;
+  }
+}

@@ -10,6 +10,8 @@
 import type { Metadata, Viewport } from "next";
 
 import { Nav } from "../components/Nav.tsx";
+import { Field } from "../components/Field.tsx";
+import { Reveal } from "../components/Reveal.tsx";
 
 import "./globals.css";
 import type { JSX } from "react";
@@ -63,6 +65,28 @@ export default function RootLayout({
         <a href="#main" className="sr-only">
           Skip to content
         </a>
+
+        {/*
+          The animated background (§46), mounted once at the root.
+          
+          Once, not per page: it is a space the whole product sits inside, and
+          remounting it on every route would restart the camera and make
+          navigation feel like a cut rather than a move. It reads trading mode
+          off the DOM itself, so it calms down on the terminal without this
+          layout knowing which route is active.
+        */}
+        <Field />
+
+        {/*
+          Arms the reveal system (§43, §47). Renders nothing.
+
+          Deliberately mounted AFTER Field and before the content it governs:
+          the CSS keeps every `.m-*` element visible until this sets
+          `data-motion` on the root, so a failed or slow bundle leaves a
+          complete, readable page rather than a blank one.
+        */}
+        <Reveal />
+
         <Nav />
         <main id="main">{children}</main>
       </body>
