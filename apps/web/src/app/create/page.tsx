@@ -52,7 +52,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { JSX } from "react";
 
-import { buildLaunchIntent, launchIntentHash, validateMetadata } from "@sent/sdk";
+import {
+  buildLaunchIntent,
+  launchIntentHash,
+  validateMetadata,
+  METADATA_LIMITS,
+  type MetadataProblem,
+} from "@sent/sdk";
 
 import { getLaunchConfig, isOk, type LaunchConfigResponse } from "../../lib/api.ts";
 import { previewLaunchAddress } from "../../lib/chain.ts";
@@ -67,6 +73,8 @@ interface Draft {
   name: string;
   symbol: string;
   quoteAsset: string;
+  description: string;
+  imageCid: string;
   website: string;
   vanityPrefix: string;
 }
@@ -74,6 +82,8 @@ interface Draft {
 const EMPTY: Draft = {
   name: "",
   symbol: "",
+  description: "",
+  imageCid: "",
   quoteAsset: "",
   website: "",
   vanityPrefix: "",
@@ -137,11 +147,11 @@ export default function CreatePage(): JSX.Element {
    */
   const metadata = useMemo(
     () => ({
-      description: "",
-      imageCid: "",
+      description: draft.description.trim(),
+      imageCid: draft.imageCid.trim(),
       links: draft.website.trim() === "" ? [] : [{ label: "website", url: draft.website.trim() }],
     }),
-    [draft.website],
+    [draft.description, draft.imageCid, draft.website],
   );
 
   /*
@@ -378,6 +388,38 @@ export default function CreatePage(): JSX.Element {
             </p>
           </div>
 
+          {/*
+            The description and image are part of the ADDRESS, not decoration.
+
+            §412 hashes the metadata into `launchIntentHash`, which goes into
+            the salt the token address is derived from. Changing a character
+            here moves the address — which is why they are collected before
+            launch rather than edited after, and why the preview re-derives as
+            they change.
+
+            They were not collected at all, so every launch would have
+            committed an empty description and no image, permanently, with no
+            way to add them to revision 0 afterwards.
+          */}
+          <Field
+            label="Description"
+            hint={`What this market is. Committed into the address — ${METADATA_LIMITS.description} characters.`}
+            value={draft.description}
+            onChange={(value) => set("description", value)}
+            placeholder="A market for..."
+            maxLength={METADATA_LIMITS.description}
+            multiline
+          />
+
+          <Field
+            label="Image CID"
+            hint="Optional. An IPFS CID, not a URL — the content is addressed, so it cannot be swapped later."
+            value={draft.imageCid}
+            onChange={(value) => set("imageCid", value.trim())}
+            placeholder="bafybei..."
+            maxLength={METADATA_LIMITS.cid}
+          />
+
           <Field
             label="Website"
             hint="Optional. Shown on the market page."
@@ -402,10 +444,24 @@ export default function CreatePage(): JSX.Element {
             derived and shown below either way, and enforced on-chain.
           */}
 
-          {problems.length > 0 && (
+          {/*
+            Both sets, together.
+
+            `validateMetadata` is the SDK's, and it mirrors `Metadata.sol` — so
+            it rejects exactly what the contract would revert on. Showing it
+            beside the form's own checks means a creator fixes everything in one
+            pass instead of discovering the contract's limits one signature at a
+            time.
+          */}
+          {(problems.length > 0 || metadataProblems.length > 0) && (
             <ul className={styles.problems}>
               {problems.map((problem) => (
                 <li key={problem}>{problem}</li>
+              ))}
+              {metadataProblems.map((problem) => (
+                <li key={`${problem.field}-${problem.code}`}>
+                  {describeMetadataProblem(problem)}
+                </li>
               ))}
             </ul>
           )}
@@ -584,6 +640,41 @@ function Term({
   );
 }
 
+/**
+ * Turn a `MetadataProblem` into a sentence a creator can act on.
+ *
+ * The SDK returns these as structured values rather than strings, which is the
+ * right shape for a validator — it is the same data whether it is rendered, or
+ * logged, or counted. The wording belongs here, next to the form the person is
+ * looking at.
+ *
+ * Every branch names the limit. "Description is too long" without the number is
+ * an error that tells someone to guess.
+ */
+function describeMetadataProblem(problem: MetadataProblem): string {
+  switch (problem.field) {
+    case "description":
+      return `The description is longer than ${problem.limit} characters.`;
+    case "imageCid":
+      return problem.code === "TOO_LONG"
+        ? `The image CID is longer than ${problem.limit ?? METADATA_LIMITS.cid} characters.`
+        : "That does not look like an IPFS CID. It should start with Qm or bafy, not with https.";
+    case "links":
+      return `A market can carry at most ${problem.limit} links.`;
+    case "link":
+      switch (problem.code) {
+        case "EMPTY":
+          return "A link needs both a label and a URL.";
+        case "LABEL_TOO_LONG":
+          return `A link label is longer than ${METADATA_LIMITS.linkLabel} characters.`;
+        case "URL_TOO_LONG":
+          return `A link URL is longer than ${METADATA_LIMITS.linkUrl} characters.`;
+        case "UNSAFE_SCHEME":
+          return "A link must be a plain http or https address.";
+      }
+  }
+}
+
 function Field({
   label,
   hint,
@@ -591,6 +682,7 @@ function Field({
   onChange,
   placeholder,
   maxLength,
+  multiline = false,
 }: {
   label: string;
   hint: string;
@@ -598,6 +690,8 @@ function Field({
   onChange: (value: string) => void;
   placeholder: string;
   maxLength: number;
+  /** Renders a textarea. For the description, which runs to several lines. */
+  multiline?: boolean;
 }): JSX.Element {
   const id = `field-${label.toLowerCase().replace(/\s+/g, "-")}`;
 
@@ -606,17 +700,30 @@ function Field({
       <label className={styles.label} htmlFor={id}>
         {label}
       </label>
-      <input
-        id={id}
-        className={styles.input}
-        type="text"
-        value={value}
-        placeholder={placeholder}
-        maxLength={maxLength}
-        autoComplete="off"
-        onChange={(event) => onChange(event.target.value)}
-        aria-describedby={`${id}-hint`}
-      />
+      {multiline ? (
+        <textarea
+          id={id}
+          className={styles.textarea}
+          value={value}
+          placeholder={placeholder}
+          maxLength={maxLength}
+          rows={4}
+          onChange={(event) => onChange(event.target.value)}
+          aria-describedby={`${id}-hint`}
+        />
+      ) : (
+        <input
+          id={id}
+          className={styles.input}
+          type="text"
+          value={value}
+          placeholder={placeholder}
+          maxLength={maxLength}
+          autoComplete="off"
+          onChange={(event) => onChange(event.target.value)}
+          aria-describedby={`${id}-hint`}
+        />
+      )}
       <p className={styles.hint} id={`${id}-hint`}>
         {hint}
       </p>

@@ -1,0 +1,158 @@
+/*
+ * What the creator published.
+ *
+ * Presented as information, not as a claim the product is making. The panel
+ * carries no volt accent and no border emphasis — the one element allowed to
+ * raise its voice is the §412 mismatch, because that one is about identity.
+ */
+
+.about {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.body {
+  display: flex;
+  gap: var(--s-4);
+  align-items: flex-start;
+}
+
+/*
+ * A fixed box for an image of unknown provenance and unknown size.
+ *
+ * The dimensions are on the element as well as here, so the space is reserved
+ * before the bytes arrive and a slow gateway cannot reflow the page (§80). A
+ * failed load leaves the box empty rather than collapsing the row.
+ */
+.image {
+  flex-shrink: 0;
+  width: 96px;
+  height: 96px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  object-fit: cover;
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+/*
+ * Creator-supplied prose.
+ *
+ * `overflow-wrap` because a 400-character unbroken string is a thing a creator
+ * can submit, and without it the panel widens and takes the page with it.
+ */
+.description {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.links {
+  /* No global reset in this app — every list turns its own markers off. */
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px var(--s-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  max-width: 20ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.link:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+/* --- The §412 check -------------------------------------------------------- */
+
+.verified,
+.failed,
+.unchecked {
+  flex-shrink: 0;
+  padding: 2px var(--s-2);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+
+.verified {
+  border-color: var(--volt-deep);
+  color: var(--volt);
+}
+
+/*
+ * The only alarming thing on this panel, and deliberately the only one.
+ *
+ * A mismatch means the content shown is not the content this address was
+ * created for, which is the substitution a lookalike depends on.
+ */
+.failed {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/* "Not checked" is neutral. It is not a weaker failure. */
+.unchecked {
+  color: var(--text-dim);
+}
+
+.mismatch {
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.removed {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .body {
+    flex-direction: column;
+  }
+}

@@ -92,7 +92,8 @@
 }
 
 .input,
-.select {
+.select,
+.textarea {
   /* 48px: comfortably above the touch minimum, and tall enough that the value
      rather than the chrome is what reads (§227). */
   min-height: 48px;
@@ -104,12 +105,29 @@
   transition: border-color var(--dur-fast) var(--ease-out);
 }
 
+/*
+ * The description, beyond the field chrome it shares above.
+ *
+ * Vertical resize only: dragging it horizontally would pull the control out of
+ * the form's column, and the form is the one place on this page whose layout
+ * has to stay predictable while somebody is typing into it.
+ */
+.textarea {
+  min-height: 96px;
+  padding-block: var(--s-3);
+  font-family: inherit;
+  line-height: 1.55;
+  resize: vertical;
+}
+
 .input:focus,
-.select:focus {
+.select:focus,
+.textarea:focus {
   border-color: var(--volt);
 }
 
-.input::placeholder {
+.input::placeholder,
+.textarea::placeholder {
   /* §41: a placeholder must not be too faint to read. */
   color: var(--text-dim);
   opacity: 0.7;

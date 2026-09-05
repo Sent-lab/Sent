@@ -38,6 +38,7 @@ import { ChartPanel } from "../../../components/ChartPanel.tsx";
 import { LiveTape } from "../../../components/LiveTape.tsx";
 import { FinalizePanel } from "../../../components/FinalizePanel.tsx";
 import { WrapPanel } from "../../../components/WrapPanel.tsx";
+import { MarketAbout } from "../../../components/MarketAbout.tsx";
 
 import styles from "./terminal.module.css";
 import type { JSX } from "react";
@@ -295,6 +296,19 @@ export default async function TerminalPage({
           />
         )}
       </section>
+
+      {/*
+        What the creator published, and whether it still matches the commitment
+        in the token's address (§412). The API has served both since launch and
+        nothing rendered them — including the one field that says whether this
+        market is what it claims to be.
+
+        Full width, above the activity grid: it is about identity, and identity
+        reads before history.
+      */}
+      <div className="m-secondary">
+        <MarketAbout metadata={market.metadata} symbol={market.symbol} />
+      </div>
 
       {/* --- Activity + details ------------------------------------------ */}
       <div className={styles.lower}>
