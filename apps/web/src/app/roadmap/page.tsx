@@ -75,7 +75,7 @@ const ITEMS: readonly Item[] = [
   {
     title: "Price chart",
     state: "BUILDING",
-    body: "Candlesticks, volume, six timeframes, crosshair and a graduation marker, drawn from integer prices so nothing is rounded on its way to the screen. Zoom and overlays are not built.",
+    body: "Candlesticks, volume, six timeframes, crosshair, graduation marker, wheel-to-zoom and drag-to-pan, drawn from integer prices so nothing is rounded on its way to the screen. Drawing tools and indicator overlays are not built.",
   },
   {
     title: "Wallet connection and signing",

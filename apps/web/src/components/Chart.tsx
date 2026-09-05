@@ -23,11 +23,16 @@
  *
  * WHAT IS DELIBERATELY ABSENT
  * ---------------------------
- * No zoom, no pan, no drawing tools, no indicators. §57 calls mature chart
- * controls mandatory and these are not them — but a half-built zoom that fights
- * the crosshair is worse than a chart that renders one clean window. Timeframe
- * selection, the crosshair, the tooltip and volume are here; the rest is marked
- * NEXT on the roadmap rather than stubbed.
+ * No drawing tools and no indicators. §57 calls mature chart controls
+ * mandatory; timeframes, the crosshair, the tooltip, volume, wheel-to-zoom and
+ * drag-to-pan are here, and the rest is marked NEXT on the roadmap rather than
+ * stubbed.
+ *
+ * This paragraph used to say "no zoom, no pan" and argue that a half-built zoom
+ * fighting the crosshair was worse than one clean window. That was true when it
+ * was written; zoom and pan were built afterwards, with `zoomWindow` and
+ * `panWindow` under test in `sim/chart.ts`, and the note was left describing a
+ * version of this file that no longer exists.
  */
 
 import { useCallback, useMemo, useRef, useState } from "react";

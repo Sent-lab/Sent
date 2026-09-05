@@ -126,6 +126,7 @@ export async function DistributionHistory({
                   <th scope="col">Allocated</th>
                   <th scope="col">Carried</th>
                   <th scope="col">Holders</th>
+                  <th scope="col">Weight</th>
                   <th scope="col">Root</th>
                   <th scope="col">State</th>
                 </tr>
@@ -141,6 +142,10 @@ export async function DistributionHistory({
                         and showing it is how that is checkable. */}
                     <td className="num">{formatQuoteCompact(big(e.carryForward))}</td>
                     <td className="num">{e.eligibleHolders}</td>
+                    {/* The third input the root is derived from. The note under
+                        this table says pool, holders and weight are published so
+                        the total can be recomputed — so all three have to be. */}
+                    <td className="num">{formatQuoteCompact(big(e.totalWeight))}</td>
                     <td className={styles.hash}>
                       {/* Full, not truncated. A root you cannot compare against
                           your own is not a root anyone can verify. */}
