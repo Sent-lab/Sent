@@ -22,6 +22,7 @@ import { listMarkets, isOk } from "../lib/api.ts";
 import { TokenCard } from "../components/TokenCard.tsx";
 import { FreshnessBadge } from "../components/Freshness.tsx";
 import { Logo } from "../components/Logo.tsx";
+import { MarketPulse } from "../components/MarketPulse.tsx";
 import { PlatformStats } from "../components/PlatformStats.tsx";
 
 import styles from "./page.module.css";
@@ -108,6 +109,13 @@ export default async function HomePage(): Promise<JSX.Element> {
           href="/explore?sort=NEWEST"
           result={fresh}
         />
+
+        {/*
+          §213 puts market pulse between the rails and the create CTA. Volume
+          appears here and nowhere else on this page because pulse groups it by
+          quote asset — the only shape in which it has a unit.
+        */}
+        <MarketPulse />
 
         {/*
           §213's last priority, and the page had none. Counts only — the API's

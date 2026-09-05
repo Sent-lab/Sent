@@ -37,6 +37,7 @@ import type {
   HealthResponse,
   PendingGraduationsResponse,
   LaunchConfigResponse,
+  PulseResponse,
 } from "@sent/api/handlers";
 import type { IntentKind, IntentRow } from "@sent/sdk";
 import type { FreshnessEnvelope } from "@sent/realtime";
@@ -54,6 +55,7 @@ export type {
   HealthResponse,
   PendingGraduationsResponse,
   LaunchConfigResponse,
+  PulseResponse,
   IntentKind,
   IntentRow,
 };
@@ -532,6 +534,18 @@ export function getLaunchConfig(
   options?: RequestOptions,
 ): Promise<ApiResult<LaunchConfigResponse>> {
   return request<LaunchConfigResponse>("/launch/config", options, anyObject);
+}
+
+/**
+ * §52's market heat and §53's presence (§213's "market pulse").
+ *
+ * Volume here is PER QUOTE ASSET, each row carrying its own symbol — which is
+ * the shape `/platform/stats` does not have. That endpoint sums notionals
+ * across every market with no conversion, so its total has no unit; these rows
+ * are the same underlying trades reported in a way that can be labelled.
+ */
+export function getPulse(options?: RequestOptions): Promise<ApiResult<PulseResponse>> {
+  return request<PulseResponse>("/platform/pulse", options, anyObject);
 }
 
 export function getHealth(options?: RequestOptions): Promise<ApiResult<HealthResponse>> {

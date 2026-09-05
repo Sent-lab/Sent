@@ -1,0 +1,129 @@
+/*
+ * Market pulse (§52, §53).
+ *
+ * Between the discovery rails and the supporting stats, and weighted between
+ * them: louder than the closing counts, quieter than a market card. It is
+ * context for the rails above it, not a thing to click.
+ */
+
+.pulse {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding-block: var(--s-10);
+  border-top: 1px solid var(--border);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.title {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.window {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+/* --- Presence -------------------------------------------------------------- */
+
+.presence {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s-4);
+}
+
+.presenceItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.presenceTerm {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.presenceValue {
+  color: var(--text);
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+/*
+ * The sentence under each figure.
+ *
+ * §53 asks the implementation to be honest about the metric it uses, and the
+ * only place that can happen is next to the number.
+ */
+.presenceDetail {
+  max-width: 34ch;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+/* --- Per-ecosystem heat ---------------------------------------------------- */
+
+.ecosystems {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--s-2);
+}
+
+.ecosystem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.ecosystemHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.ecosystemSymbol {
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.ecosystemMarkets {
+  color: var(--text-dim);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+
+.ecosystemFigures {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ecosystemVolume {
+  color: var(--text);
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.ecosystemMeta {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
