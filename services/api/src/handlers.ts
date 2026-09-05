@@ -1727,11 +1727,23 @@ export interface LaunchConfigResponse {
     readonly symbol: string;
     readonly decimals: number;
     readonly underlying: string | null;
+    /**
+     * The USD anchor a launch against this asset would use (§18, §402).
+     *
+     * Null means the adapter cannot serve one — no source, a stale feed, or a
+     * price outside its configured band. `launch` reads the strict version of
+     * the same call and REVERTS on all three, so a null here is not a missing
+     * display value: it is an asset whose launch fails.
+     */
+    readonly usdPriceWad: string | null;
+    readonly priceUpdatedAt: number | null;
   }[];
   /** Null when unset. A market launched now could never graduate. */
   readonly graduationRouter: string | null;
   /** Native wei, sent as `value` with the launch. */
   readonly launchFee: string;
+  /** Null when governance has not set a reference price adapter (§402). */
+  readonly referencePrice: string | null;
   readonly ready: boolean;
 }
 
@@ -1746,10 +1758,23 @@ export function handleLaunchConfig(
       symbol: a.symbol,
       decimals: a.decimals,
       underlying: a.underlying,
+      usdPriceWad: a.usdPriceWad === null ? null : a.usdPriceWad.toString(),
+      priceUpdatedAt: a.priceUpdatedAt,
     })),
     graduationRouter: config.router,
     launchFee: config.launchFee.toString(),
-    ready: config.launchable.length > 0 && config.router !== null,
+    referencePrice: config.referencePrice,
+    /*
+     * Three conditions, not two.
+     *
+     * An asset with no readable anchor is one whose launch reverts in
+     * `referencePriceToP0` — §402 blocks a launch on an invalid or stale price
+     * by design. Counting it as launchable would put a button in front of a
+     * creator that spends their gas to tell them no.
+     */
+    ready:
+      config.router !== null &&
+      config.launchable.some((a) => a.usdPriceWad !== null),
   });
 }
 

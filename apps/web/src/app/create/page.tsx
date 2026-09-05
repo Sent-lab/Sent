@@ -62,7 +62,7 @@ import {
 
 import { getLaunchConfig, isOk, type LaunchConfigResponse } from "../../lib/api.ts";
 import { previewLaunchAddress } from "../../lib/chain.ts";
-import { formatFixed, truncateAddress } from "../../lib/format.ts";
+import { formatFixed, formatUsd, truncateAddress } from "../../lib/format.ts";
 import { useWallet, CHAIN_ID } from "../../lib/wallet.ts";
 import { IntentReview } from "../../components/IntentReview.tsx";
 
@@ -176,7 +176,10 @@ export default function CreatePage(): JSX.Element {
     problems.length === 0 &&
     metadataProblems.length === 0 &&
     draft.quoteAsset !== "" &&
-    asset !== null;
+    asset !== null &&
+    // No anchor, no launch: §402 reverts rather than launching at a price it
+    // cannot vouch for, so this is a precondition and not a display detail.
+    asset.usdPriceWad !== null;
 
   /*
    * The address, read from the factory as the draft changes.
@@ -228,10 +231,20 @@ export default function CreatePage(): JSX.Element {
       quoteSymbol: asset.symbol,
       userSalt,
       launchIntentHash: launchIntentHash(metadata),
-      // Zero opts out of the anchor-tolerance check. The reference price the
-      // creator was shown is not served yet, and inventing one would arm a
-      // guard against a number nobody displayed.
-      reviewedUsdWad: 0n,
+      /*
+       * The price the creator was actually shown, which is what arms §402's
+       * tolerance check.
+       *
+       * This was zero — opting the guard out — because the reference price was
+       * not served and arming a check against a number nobody displayed would
+       * have been worse than not arming it. It is served now, it is on screen
+       * in the preview, and passing it means the launch refuses if the feed has
+       * moved more than ANCHOR_TOLERANCE_BPS since the creator looked.
+       *
+       * `asset.usdPriceWad` is non-null here: `ready` requires it, and an asset
+       * without one is one whose launch reverts.
+       */
+      reviewedUsdWad: BigInt(asset.usdPriceWad ?? "0"),
       // The address they are looking at, enforced on-chain.
       expectedToken: predicted,
       metadata,
@@ -359,9 +372,10 @@ export default function CreatePage(): JSX.Element {
                 <>
                   <option value="">Choose an xStock</option>
                   {config.launchable.map((a) => (
-                    <option key={a.token} value={a.token}>
+                    <option key={a.token} value={a.token} disabled={a.usdPriceWad === null}>
                       {a.symbol === "" ? truncateAddress(a.token) : a.symbol}
                       {a.underlying !== null ? " (wrapper)" : ""}
+                      {a.usdPriceWad === null ? " — no price feed" : ""}
                     </option>
                   ))}
                 </>
@@ -401,6 +415,34 @@ export default function CreatePage(): JSX.Element {
             committed an empty description and no image, permanently, with no
             way to add them to revision 0 afterwards.
           */}
+          {/*
+            The price the launch will anchor to, shown before it is used.
+
+            §18 derives the starting price from a $2,000 reference cap and this
+            number; §402 then refuses the launch if the feed has moved more than
+            the tolerance since. Both of those are invisible to a creator unless
+            the figure they are being held to is on the screen.
+          */}
+          {asset !== null && asset.usdPriceWad !== null && (
+            <p className={styles.hint}>
+              Anchored to {asset.symbol} at{" "}
+              <strong>{formatUsd(BigInt(asset.usdPriceWad), 18)}</strong>
+              {asset.priceUpdatedAt !== null && asset.priceUpdatedAt > 0 && (
+                <>, last updated {new Date(asset.priceUpdatedAt * 1000).toUTCString()}</>
+              )}
+              . Your market opens at a $2,000 reference cap against that price, and the
+              launch is refused if the feed moves more than 5% before it lands.
+            </p>
+          )}
+
+          {asset !== null && asset.usdPriceWad === null && (
+            <p className={styles.blocked}>
+              {asset.symbol} has no readable price right now — its feed is missing, stale
+              or outside the band governance configured. A launch against it would be
+              refused on chain, so it cannot be selected.
+            </p>
+          )}
+
           <Field
             label="Description"
             hint={`What this market is. Committed into the address — ${METADATA_LIMITS.description} characters.`}

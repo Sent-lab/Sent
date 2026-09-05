@@ -859,6 +859,30 @@ export function buildLaunchIntent(params: BuildLaunchParams): TransactionIntent 
     { label: "Launch fee", value: `${formatUnits(launchFee, 18)} HYPE` },
   ];
 
+  /*
+   * The anchor, which was in the calldata and not in the review.
+   *
+   * `reviewedUsdWad` is encoded into the launch and decides two things: the
+   * price the market opens at, and whether the factory accepts the launch at
+   * all — it reverts if the live feed has moved more than ANCHOR_TOLERANCE_BPS
+   * from this figure. A creator was signing both of those without either being
+   * on the sheet, which is the one thing §694 exists to prevent.
+   *
+   * Zero is the documented opt-out, and it says so rather than rendering "$0".
+   */
+  rows.push(
+    reviewedUsdWad === 0n
+      ? {
+          label: "Price check",
+          value: "Opted out — this launch accepts whatever the feed says when it lands",
+          warning: true,
+        }
+      : {
+          label: "Anchored at",
+          value: `${formatUnits(reviewedUsdWad, 18)} USD per ${quoteSymbol}, ±5% at execution`,
+        },
+  );
+
   if (metadata.description !== "") {
     // Shown because it is permanent and committed: it is in the hash that is in
     // the address, so this is the last moment it can be changed for free.

@@ -54,6 +54,7 @@ import {
   launchpadFactoryAbi,
   feeVaultAbi,
   xStockRegistryAbi,
+  referencePriceAdapterAbi,
 } from "@sent/contracts";
 import { matchesCommitment } from "@sent/sdk";
 
@@ -83,6 +84,19 @@ export interface LaunchableAsset {
   readonly decimals: number;
   /** What this wraps, when it wraps something. */
   readonly underlying: `0x${string}` | null;
+  /**
+   * The USD anchor a launch against this asset would use, or null when the
+   * adapter cannot serve one (§402).
+   *
+   * Null is not cosmetic. `launch` reads `usdPriceWad` and reverts if the feed
+   * is stale, out of band or unreadable, so an asset with no price here is one
+   * whose launch fails — and the creator pays gas to find out. The adapter has
+   * `peekUsdPriceWad` for exactly this reason and answers in the same order its
+   * strict read does, so a preview cannot say "fine" where the launch reverts.
+   */
+  readonly usdPriceWad: bigint | null;
+  /** When the feed last updated, unix seconds. Null when there is no price. */
+  readonly priceUpdatedAt: number | null;
 }
 
 export interface LaunchPreconditions {
@@ -92,6 +106,8 @@ export interface LaunchPreconditions {
   readonly router: `0x${string}` | null;
   /** Native wei, sent as `value` with the launch. */
   readonly launchFee: bigint;
+  /** The adapter, or null when governance has not set one (§402). */
+  readonly referencePrice: `0x${string}` | null;
 }
 
 /** One function, declared here so no wider ERC-20 ABI is in scope. */
@@ -229,7 +245,7 @@ export class PostgresPort implements DataPort {
       functionName: "REGISTRY",
     })) as `0x${string}`;
 
-    const [assets, router, launchFee] = await Promise.all([
+    const [assets, router, launchFee, adapter] = await Promise.all([
       this.client.readContract({
         address: registry,
         abi: xStockRegistryAbi,
@@ -245,7 +261,15 @@ export class PostgresPort implements DataPort {
         abi: launchpadFactoryAbi,
         functionName: "launchFee",
       }) as Promise<bigint>,
+      this.client.readContract({
+        address: factory,
+        abi: launchpadFactoryAbi,
+        functionName: "referencePrice",
+      }) as Promise<`0x${string}`>,
     ]);
+
+    const ZERO = "0x0000000000000000000000000000000000000000";
+    const referencePrice = adapter === ZERO ? null : adapter;
 
     // Decimals come from the REGISTRY, never from the token (§699). The symbol
     // is only a label and is read from the token, with the address alongside it
@@ -271,6 +295,36 @@ export class PostgresPort implements DataPort {
           .catch(() => "")
           .then((v) => String(v));
 
+        /*
+         * The anchor, previewed exactly as the launch will read it.
+         *
+         * `peekUsdPriceWad` returns `ok=false` for a stale, out-of-band or
+         * unreadable feed rather than reverting, which is what makes it safe to
+         * call for every asset in a list. A failed read here is the same
+         * condition that would revert the launch.
+         */
+        let usdPriceWad: bigint | null = null;
+        let priceUpdatedAt: number | null = null;
+
+        if (referencePrice !== null) {
+          const peek = await this.client
+            .readContract({
+              address: referencePrice,
+              abi: referencePriceAdapterAbi,
+              functionName: "peekUsdPriceWad",
+              args: [token],
+            })
+            .catch(() => null);
+
+          if (peek !== null) {
+            const [ok, price, at] = peek as readonly [boolean, bigint, bigint];
+            if (ok) {
+              usdPriceWad = price;
+              priceUpdatedAt = Number(at);
+            }
+          }
+        }
+
         return {
           token,
           symbol,
@@ -279,6 +333,8 @@ export class PostgresPort implements DataPort {
             asset.wrappedUnderlying === "0x0000000000000000000000000000000000000000"
               ? null
               : asset.wrappedUnderlying,
+          usdPriceWad,
+          priceUpdatedAt,
         };
       }),
     );
@@ -286,8 +342,9 @@ export class PostgresPort implements DataPort {
     return {
       factory,
       launchable: detailed,
-      router: router === "0x0000000000000000000000000000000000000000" ? null : router,
+      router: router === ZERO ? null : router,
       launchFee,
+      referencePrice,
     };
   }
 
