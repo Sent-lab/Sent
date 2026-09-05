@@ -36,15 +36,36 @@ export const revalidate = 6;
 export default async function HomePage(): Promise<JSX.Element> {
   // Three rails, one round trip each. Fetched in parallel: sequentially they
   // would stack three API latencies into the server render.
-  const [trending, fresh, nearGraduation] = await Promise.all([
-    listMarkets({ sort: "VOLUME", limit: 6, status: "PRE_GRAD" }, { revalidateSeconds: 6 }).catch(
-      () => null,
-    ),
-    listMarkets({ sort: "NEWEST", limit: 6 }, { revalidateSeconds: 6 }).catch(() => null),
-    listMarkets({ sort: "PROGRESS", limit: 6, status: "PRE_GRAD" }, { revalidateSeconds: 6 }).catch(
-      () => null,
-    ),
-  ]);
+  /*
+   * §49's rails, all six of them.
+   *
+   * Three were built and three were not: recently graduated, top volume and top
+   * gainers. The API has served every one of these sorts since it was written —
+   * the homepage was asking for a subset of what it already had.
+   *
+   * `trending` used VOLUME because TRENDING was not wired through. It is now,
+   * and the two are different questions: trending is movement, volume is size,
+   * and §49 lists them separately because a market can be either without being
+   * the other.
+   *
+   * Six round trips in parallel. Sequentially they would stack six API
+   * latencies into one server render.
+   */
+  const [trending, fresh, nearGraduation, recentlyGraduated, topVolume, gainers] =
+    await Promise.all([
+      listMarkets({ sort: "TRENDING", limit: 6, status: "PRE_GRAD" }, { revalidateSeconds: 6 })
+        .catch(() => null),
+      listMarkets({ sort: "NEWEST", limit: 6 }, { revalidateSeconds: 6 }).catch(() => null),
+      listMarkets({ sort: "PROGRESS", limit: 6, status: "PRE_GRAD" }, { revalidateSeconds: 6 })
+        .catch(() => null),
+      listMarkets(
+        { sort: "RECENTLY_GRADUATED", limit: 6, status: "GRADUATED" },
+        { revalidateSeconds: 6 },
+      ).catch(() => null),
+      listMarkets({ sort: "VOLUME", limit: 6 }, { revalidateSeconds: 6 }).catch(() => null),
+      listMarkets({ sort: "GAINERS", limit: 6, status: "PRE_GRAD" }, { revalidateSeconds: 6 })
+        .catch(() => null),
+    ]);
 
   return (
     <div data-mode="experience">
@@ -93,8 +114,8 @@ export default async function HomePage(): Promise<JSX.Element> {
       <div className="container">
         <Rail
           title="Trending"
-          description="Most traded before graduation."
-          href="/explore?sort=VOLUME"
+          description="Moving fastest right now."
+          href="/explore?sort=TRENDING"
           result={trending}
         />
         <Rail
@@ -108,6 +129,27 @@ export default async function HomePage(): Promise<JSX.Element> {
           description="Fresh markets, newest first."
           href="/explore?sort=NEWEST"
           result={fresh}
+        />
+
+        <Rail
+          title="Top gainers"
+          description="Furthest along their curve since launch."
+          href="/explore?sort=GAINERS"
+          result={gainers}
+        />
+
+        <Rail
+          title="Top volume"
+          description="Most traded, graduated or not."
+          href="/explore?sort=VOLUME"
+          result={topVolume}
+        />
+
+        <Rail
+          title="Recently graduated"
+          description="Curves closed, liquidity locked permanently."
+          href="/explore?sort=RECENTLY_GRADUATED"
+          result={recentlyGraduated}
         />
 
         {/*

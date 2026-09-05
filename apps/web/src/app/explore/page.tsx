@@ -14,7 +14,14 @@
 
 import Link from "next/link";
 
-import { listMarkets, isOk, type ExploreSort, type ExploreStatus } from "../../lib/api.ts";
+import {
+  listMarkets,
+  getLaunchConfig,
+  isOk,
+  type ExploreSort,
+  type ExploreStatus,
+} from "../../lib/api.ts";
+import { truncateAddress } from "../../lib/format.ts";
 import { TokenCard } from "../../components/TokenCard.tsx";
 import { FreshnessBadge } from "../../components/Freshness.tsx";
 
@@ -25,10 +32,21 @@ export const revalidate = 4;
 
 export const metadata = { title: "Explore" };
 
+/**
+ * §50's sorts, in its order.
+ *
+ * The API has served all seven since it was written; four were exposed. The
+ * three that were not — trending, gainers and recently graduated — are the ones
+ * §50 names first, because they are what makes this a discovery tool rather
+ * than a product catalogue.
+ */
 const SORTS: { value: ExploreSort; label: string }[] = [
-  { value: "NEWEST", label: "Newest" },
-  { value: "PROGRESS", label: "Near graduation" },
+  { value: "TRENDING", label: "Trending" },
   { value: "VOLUME", label: "Volume" },
+  { value: "GAINERS", label: "Gainers" },
+  { value: "NEWEST", label: "New" },
+  { value: "PROGRESS", label: "Near graduation" },
+  { value: "RECENTLY_GRADUATED", label: "Recently graduated" },
   { value: "HOLDERS", label: "Holders" },
 ];
 
@@ -50,12 +68,25 @@ export default async function ExplorePage({
   // API as a sort key.
   const sort = parseSort(params.sort);
   const status = parseStatus(params.status);
+  const pair = parsePair(params.pair);
+
+  /*
+   * The pair list comes from the launch config, which reads the registry.
+   *
+   * §50 wants a filter per xStock and the only honest source for "which
+   * xStocks exist" is the registry the factory consults — typing one in, or
+   * deriving the list from whatever markets happen to be indexed, would both
+   * drift from what a launch would accept.
+   */
+  const config = await getLaunchConfig({ revalidateSeconds: 60 }).catch(() => null);
+  const pairs = config !== null && isOk(config) ? config.data.launchable : [];
 
   const result = await listMarkets(
     {
       sort,
       limit: 48,
       ...(status !== "ALL" ? { status } : {}),
+      ...(pair !== null ? { quoteAsset: pair } : {}),
     },
     { revalidateSeconds: 4 },
   ).catch(() => null);
@@ -79,7 +110,7 @@ export default async function ExplorePage({
           {SORTS.map((option) => (
             <Link
               key={option.value}
-              href={buildHref(option.value, status)}
+              href={buildHref(option.value, status, pair)}
               className={sort === option.value ? styles.chipActive : styles.chip}
               aria-current={sort === option.value ? "true" : undefined}
             >
@@ -92,7 +123,7 @@ export default async function ExplorePage({
           {STATUSES.map((option) => (
             <Link
               key={option.value}
-              href={buildHref(sort, option.value)}
+              href={buildHref(sort, option.value, pair)}
               className={status === option.value ? styles.chipActive : styles.chip}
               aria-current={status === option.value ? "true" : undefined}
             >
@@ -100,6 +131,33 @@ export default async function ExplorePage({
             </Link>
           ))}
         </div>
+
+        {/*
+          §50's pair filter. Rendered only when there is more than one to choose
+          between: a single-choice filter is a control that cannot change
+          anything, and offering it implies the platform has variety it does not.
+        */}
+        {pairs.length > 1 && (
+          <div className={styles.group} role="group" aria-label="xStock pair">
+            <Link
+              href={buildHref(sort, status, null)}
+              className={pair === null ? styles.chipActive : styles.chip}
+              aria-current={pair === null ? "true" : undefined}
+            >
+              All xStocks
+            </Link>
+            {pairs.map((asset) => (
+              <Link
+                key={asset.token}
+                href={buildHref(sort, status, asset.token)}
+                className={pair === asset.token ? styles.chipActive : styles.chip}
+                aria-current={pair === asset.token ? "true" : undefined}
+              >
+                {asset.symbol === "" ? truncateAddress(asset.token) : asset.symbol}
+              </Link>
+            ))}
+          </div>
+        )}
       </nav>
 
       {result === null ? (
@@ -127,10 +185,30 @@ export default async function ExplorePage({
   );
 }
 
-function buildHref(sort: ExploreSort, status: ExploreStatus | "ALL"): string {
+/**
+ * Every control is a link, so every combination is a URL (§50, §69).
+ *
+ * Changing one filter preserves the others: a sort that dropped the pair would
+ * make the two controls fight, and §50 asks for the state to be deep-linkable —
+ * which it only is if it round-trips.
+ */
+function buildHref(
+  sort: ExploreSort,
+  status: ExploreStatus | "ALL",
+  pair: string | null,
+): string {
   const params = new URLSearchParams({ sort });
   if (status !== "ALL") params.set("status", status);
+  if (pair !== null) params.set("pair", pair);
   return `/explore?${params.toString()}`;
+}
+
+/** An address, or nothing. Never passed through unvalidated (§699). */
+function parsePair(value: string | string[] | undefined): string | null {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return typeof candidate === "string" && /^0x[0-9a-fA-F]{40}$/.test(candidate)
+    ? candidate.toLowerCase()
+    : null;
 }
 
 /** An unknown sort falls back to the default rather than erroring (§214). */
