@@ -37,7 +37,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { buildApproveIntent } from "@sent/sdk";
 
 import { quote, isOk, type WireIntent } from "../lib/api.ts";
-import { parseAmount, formatFixed } from "../lib/format.ts";
+import { parseAmount, formatFixed, truncateAddress } from "../lib/format.ts";
 import { useWallet } from "../lib/wallet.ts";
 import { FreshnessNotice } from "./Freshness.tsx";
 import { IntentReview } from "./IntentReview.tsx";
@@ -61,6 +61,8 @@ export interface TradePanelProps {
   readonly quoteSymbol: string;
   readonly quoteDecimals: number;
   readonly status: MarketStatus;
+  /** The HyperSwap pool, once graduation minted it (§21). */
+  readonly pool: string | null;
   readonly freshness: FreshnessEnvelope;
 }
 
@@ -72,6 +74,7 @@ export function TradePanel({
   quoteSymbol,
   quoteDecimals,
   status,
+  pool,
   freshness,
 }: TradePanelProps): JSX.Element {
   const wallet = useWallet();
@@ -323,6 +326,17 @@ export function TradePanel({
             This market has graduated. Trading now happens in the permanently locked
             {" "}
             {quoteSymbol} pool rather than on the curve.
+            {/*
+              Naming it, because the sentence above is an instruction and an
+              instruction that does not say where is not one. The address is
+              below in Market details; this is the pointer.
+            */}
+            {pool !== null && (
+              <>
+                {" "}
+                The pool is <span className="mono">{truncateAddress(pool)}</span>.
+              </>
+            )}
           </p>
         ) : graduating ? (
           <p className={styles.notice}>

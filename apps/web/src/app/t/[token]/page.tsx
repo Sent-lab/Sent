@@ -29,6 +29,7 @@ import {
   formatCompact,
   formatQuoteCompact,
   formatQuoteFixed,
+  formatUsdCompact,
   truncateAddress,
 } from "../../../lib/format.ts";
 import { FreshnessBadge } from "../../../components/Freshness.tsx";
@@ -146,6 +147,8 @@ export default async function TerminalPage({
   const collateral = safeBigint(market.curveCollateral.value);
   const holders = safeBigint(market.holderCount.value);
   const distributed = safeBigint(market.distributed.value);
+  const referenceCap = safeBigint(market.referenceMarketCapUsd.value);
+  const volume = safeBigint(market.volume24h.value);
 
   return (
     <div className={`${styles.page} container-wide`} data-mode="trading">
@@ -222,6 +225,30 @@ export default async function TerminalPage({
           suffix="tokens"
         />
         <Metric label="Holders" value={holders === null ? "—" : formatCompact(holders, 0)} />
+
+        {/*
+          §18's anchored figure, which the SHARE CARD has been showing all along
+          while the market's own page did not. Someone arriving from a link saw
+          a market cap and then could not find it here.
+
+          Reference, not live (§403): it is derived from p0 and the current
+          price, so no oracle is consulted and none can go stale underneath it.
+          The label says which one it is, because the two are different numbers
+          and §403 requires them to be distinguishable.
+        */}
+        <Metric
+          label="Reference cap"
+          // USD wad, and `formatUsdCompact` is the function written for exactly
+          // this — market cap and volume, compact above a million and exact
+          // below, with the currency mark its own rather than concatenated.
+          value={referenceCap === null ? "—" : formatUsdCompact(referenceCap, 18)}
+        />
+
+        <Metric
+          label="24h volume"
+          value={volume === null ? "—" : formatQuoteCompact(volume)}
+          suffix={market.quoteSymbol}
+        />
       </section>
 
       {/* --- Chart + trade (§216) ---------------------------------------- */}
@@ -245,6 +272,7 @@ export default async function TerminalPage({
             quoteSymbol={market.quoteSymbol}
             quoteDecimals={decimals}
             status={status}
+            pool={market.pool}
             freshness={marketResult.freshness}
           />
 
@@ -343,6 +371,19 @@ export default async function TerminalPage({
                 term="Wraps"
                 value={truncateAddress(market.quoteUnderlying)}
                 full={market.quoteUnderlying}
+              />
+            )}
+            {/*
+              The trade panel tells a graduated market's holders that trading
+              now happens in the pool. It never said WHICH pool — the address
+              has been in the response since §21 recorded it and nothing showed
+              it, so the instruction was unfollowable.
+            */}
+            {market.pool !== null && (
+              <Detail
+                term="HyperSwap pool"
+                value={truncateAddress(market.pool)}
+                full={market.pool}
               />
             )}
             <Detail term="Supply" value="1,000,000,000" />
