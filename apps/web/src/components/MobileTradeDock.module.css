@@ -1,0 +1,184 @@
+/*
+ * §85's mobile composition: sticky actions, sheet form.
+ *
+ * The breakpoint matches the one the terminal already uses to drop to a single
+ * column. Two different answers to "is this mobile" is how a layout ends up
+ * with a gap where neither applies.
+ */
+
+.dock {
+  display: none;
+}
+
+.sheet {
+  display: none;
+}
+
+@media (max-width: 1080px) {
+  /*
+   * Fixed, not sticky.
+   *
+   * Sticky would still scroll away at the end of its container, and §85 asks
+   * for the action to be present — not present for most of the page.
+   */
+  .dock {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: var(--z-sticky);
+
+    display: flex;
+    gap: var(--s-2);
+    padding: var(--s-3) var(--s-4);
+    /* The safe area on a phone with a home indicator, so the buttons are not
+       under it. Zero everywhere else. */
+    padding-bottom: calc(var(--s-3) + env(safe-area-inset-bottom, 0px));
+
+    border-top: 1px solid var(--border);
+    /* Opaque: content scrolls under this and must not read through it. */
+    background: var(--bg-raised);
+  }
+
+  .dock[data-closed="true"] {
+    justify-content: center;
+  }
+
+  .sheet {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    margin: 0 0 0 auto;
+    /* Anchored to the bottom edge: a sheet, not a centred modal. */
+    margin-block-start: auto;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    background: var(--bg-raised);
+    color: var(--text);
+    /* Never taller than the viewport, and scrolls inside itself. */
+    max-height: 90dvh;
+    overflow-y: auto;
+  }
+
+  .sheet::backdrop {
+    background: rgb(0 0 0 / 0.6);
+  }
+}
+
+/* --- The actions ----------------------------------------------------------- */
+
+.buy,
+.sell {
+  flex: 1;
+  /* §84: comfortably above the touch minimum. */
+  min-height: 52px;
+  border-radius: var(--radius);
+  font-size: var(--text-base);
+  font-weight: 600;
+  transition:
+    filter var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.buy {
+  flex: 2;
+  background: var(--volt);
+  color: #06070a;
+}
+
+/*
+ * Sell is not red.
+ *
+ * §84 forbids colour-only meaning and §88 keeps strong colour for urgency;
+ * selling is an ordinary action, not a warning. The two are told apart by label
+ * and weight, which also survives a colourblind reader.
+ */
+.sell {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+}
+
+.buy:active,
+.sell:active {
+  transform: translateY(1px);
+}
+
+.buy:focus-visible,
+.sell:focus-visible {
+  outline: 2px solid var(--volt);
+  outline-offset: 2px;
+}
+
+.dockNotice {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* --- The sheet ------------------------------------------------------------- */
+
+.sheetInner {
+  padding: var(--s-2) var(--s-4) var(--s-6);
+  padding-bottom: calc(var(--s-6) + env(safe-area-inset-bottom, 0px));
+}
+
+.sheetHead {
+  display: flex;
+  justify-content: center;
+  padding-block: var(--s-2);
+}
+
+.close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* A full-width target: the handle is small but the thing you press is not. */
+  width: 100%;
+  min-height: 32px;
+  cursor: pointer;
+}
+
+/*
+ * The target is the full width; the focus ring is not.
+ *
+ * A ring around a full-width invisible button spans the whole sheet and reads
+ * as though the sheet itself is focused. §84 wants the focus state clear, not
+ * large — so the outline is suppressed on the button and drawn around the
+ * handle, which is the thing the eye is already looking at.
+ */
+.close:focus-visible {
+  outline: none;
+}
+
+.grabber {
+  width: 44px;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--border-strong);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.close:focus-visible .grabber {
+  background: var(--volt);
+  outline: 2px solid var(--volt);
+  outline-offset: 6px;
+}
+
+/*
+ * §85 and §84: motion drops on a device that asked for less, and the sheet
+ * still arrives — it just arrives immediately.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .sheet[open] {
+    animation: rise var(--dur) var(--ease-out);
+  }
+}
+
+@keyframes rise {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+}

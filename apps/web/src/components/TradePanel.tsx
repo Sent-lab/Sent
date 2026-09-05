@@ -48,7 +48,7 @@ import type { FreshnessEnvelope } from "@sent/realtime";
 import styles from "./TradePanel.module.css";
 import type { JSX } from "react";
 
-type Side = "BUY" | "SELL";
+export type Side = "BUY" | "SELL";
 
 /** Slippage presets in basis points. §14: the user picks, nothing is implicit. */
 const SLIPPAGE_PRESETS = [50n, 100n, 300n] as const;
@@ -65,6 +65,13 @@ export interface TradePanelProps {
   /** The HyperSwap pool, once graduation minted it (§21). */
   readonly pool: string | null;
   readonly freshness: FreshnessEnvelope;
+  /**
+   * Which side the panel opens on.
+   *
+   * §85's mobile dock has separate BUY and SELL actions, and a sheet that
+   * opened on the wrong one would make the tap that got you there a lie.
+   */
+  readonly initialSide?: Side;
 }
 
 export function TradePanel({
@@ -77,9 +84,10 @@ export function TradePanel({
   status,
   pool,
   freshness,
+  initialSide = "BUY",
 }: TradePanelProps): JSX.Element {
   const wallet = useWallet();
-  const [side, setSide] = useState<Side>("BUY");
+  const [side, setSide] = useState<Side>(initialSide);
   const [input, setInput] = useState("");
   /*
    * §62: a trader who picked 3% should not find 1% again on the next market.

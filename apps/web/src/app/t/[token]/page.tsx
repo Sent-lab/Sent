@@ -38,6 +38,7 @@ import { TradePanel } from "../../../components/TradePanel.tsx";
 import { ChartPanel } from "../../../components/ChartPanel.tsx";
 import { LiveTape } from "../../../components/LiveTape.tsx";
 import { ShareMarket } from "../../../components/ShareMarket.tsx";
+import { MobileTradeDock } from "../../../components/MobileTradeDock.tsx";
 import { FinalizePanel } from "../../../components/FinalizePanel.tsx";
 import { WrapPanel } from "../../../components/WrapPanel.tsx";
 import { MarketAbout } from "../../../components/MarketAbout.tsx";
@@ -376,6 +377,24 @@ export default async function TerminalPage({
       <div className="m-secondary">
         <DistributionHistory token={market.token} rewardSymbol={market.quoteSymbol} />
       </div>
+
+      {/*
+        §85's mobile composition: the actions stay on screen and the form is a
+        sheet they open. Rendered at page level so the fixed bar is not trapped
+        inside a scrolling or transformed ancestor, and hidden above the
+        breakpoint where the aside is the panel.
+      */}
+      <MobileTradeDock
+        token={market.token}
+        market={market.market}
+        quoteAsset={market.quoteAsset}
+        symbol={market.symbol}
+        quoteSymbol={market.quoteSymbol}
+        quoteDecimals={decimals}
+        status={status}
+        pool={market.pool}
+        freshness={marketResult.freshness}
+      />
 
       {/* --- Activity + details ------------------------------------------ */}
       <div className={styles.lower}>

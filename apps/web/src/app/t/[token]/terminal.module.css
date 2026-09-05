@@ -371,12 +371,22 @@
   }
 
   /*
-   * §217 orders the mobile terminal header, metrics, chart, then trade. The
-   * panel stops being sticky here: a sticky panel on a short viewport covers the
-   * content it is meant to accompany, which §227 forbids.
+   * §85 gives mobile its own composition: the trade panel is not in the flow
+   * here at all. It moves into the sheet the sticky BUY / SELL dock opens.
+   *
+   * The reasoning that made it merely `static` still holds — a sticky PANEL on a
+   * short viewport covers the content it accompanies (§227) — but going static
+   * meant scrolling to the chart took the only action off the screen, which is
+   * the opposite of what §85 puts second in its priority list. Sticky ACTIONS,
+   * sheet form.
    */
   .trade {
-    position: static;
+    display: none;
+  }
+
+  /* Room for the fixed dock, so the last section is not underneath it. */
+  .page {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
   }
 
   .chart {
