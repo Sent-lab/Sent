@@ -12,6 +12,7 @@ import type { Metadata, Viewport } from "next";
 import { Nav } from "../components/Nav.tsx";
 import { Field } from "../components/Field.tsx";
 import { Reveal } from "../components/Reveal.tsx";
+import { ServiceNotice } from "../components/ServiceNotice.tsx";
 
 import "./globals.css";
 import type { JSX } from "react";
@@ -152,6 +153,14 @@ export default function RootLayout({
         <Reveal />
 
         <Nav />
+
+        {/*
+          §211 allows exactly one page-wide warning: a system-wide issue. This
+          is it, and nothing else uses it. It renders nothing unless `/health`
+          says the projection is too far behind to act on.
+        */}
+        <ServiceNotice />
+
         <main id="main">{children}</main>
       </body>
     </html>
