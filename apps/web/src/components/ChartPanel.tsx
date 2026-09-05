@@ -34,6 +34,8 @@
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
 
+import { TIMEFRAMES } from "../lib/chart-scale.ts";
+import { usePreference, decodeNumber } from "../lib/preference.ts";
 import { getCandles, isOk, type CandleResponse } from "../lib/api.ts";
 import { Chart } from "./Chart.tsx";
 
@@ -57,7 +59,18 @@ export function ChartPanel({
 }: ChartPanelProps): JSX.Element {
   // Five minutes: long enough that a quiet market still shows shape, short
   // enough that an active one moves.
-  const [intervalSeconds, setIntervalSeconds] = useState(300);
+  /*
+   * §62: the timeframe follows the trader across markets and reloads.
+   *
+   * Restricted to the intervals the API actually serves — a stored value it
+   * does not bucket would return an empty chart with a button highlighted.
+   */
+  const [intervalSeconds, setIntervalSeconds] = usePreference<number>(
+    "chartInterval",
+    300,
+    decodeNumber(TIMEFRAMES.map((t) => t.seconds)),
+    (v) => String(v),
+  );
   const [data, setData] = useState<CandleResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

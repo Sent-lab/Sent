@@ -38,6 +38,7 @@ import { buildApproveIntent } from "@sent/sdk";
 
 import { quote, isOk, type WireIntent } from "../lib/api.ts";
 import { parseAmount, formatFixed, truncateAddress } from "../lib/format.ts";
+import { usePreference, decodeBigint } from "../lib/preference.ts";
 import { useWallet } from "../lib/wallet.ts";
 import { FreshnessNotice } from "./Freshness.tsx";
 import { IntentReview } from "./IntentReview.tsx";
@@ -80,7 +81,18 @@ export function TradePanel({
   const wallet = useWallet();
   const [side, setSide] = useState<Side>("BUY");
   const [input, setInput] = useState("");
-  const [slippageBps, setSlippageBps] = useState<bigint>(100n);
+  /*
+   * §62: a trader who picked 3% should not find 1% again on the next market.
+   *
+   * Only the presets the control offers are accepted back — a stored value the
+   * UI cannot render would be a slippage in force that no chip is highlighting.
+   */
+  const [slippageBps, setSlippageBps] = usePreference<bigint>(
+    "slippageBps",
+    100n,
+    decodeBigint(SLIPPAGE_PRESETS),
+    (v) => v.toString(),
+  );
   const [intent, setIntent] = useState<WireIntent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
