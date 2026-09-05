@@ -37,6 +37,7 @@ import { GraduationProgress, type MarketStatus } from "../../../components/Gradu
 import { TradePanel } from "../../../components/TradePanel.tsx";
 import { ChartPanel } from "../../../components/ChartPanel.tsx";
 import { LiveTape } from "../../../components/LiveTape.tsx";
+import { ShareMarket } from "../../../components/ShareMarket.tsx";
 import { FinalizePanel } from "../../../components/FinalizePanel.tsx";
 import { WrapPanel } from "../../../components/WrapPanel.tsx";
 import { MarketAbout } from "../../../components/MarketAbout.tsx";
@@ -198,6 +199,19 @@ export default async function TerminalPage({
             </span>
           )}
           <FreshnessBadge envelope={marketResult.freshness} />
+
+          {/*
+            §68: share is part of the acquisition loop, and the preview card the
+            API generates has had nothing pointing at it. In the header beside
+            the pair, because that is where somebody decides this is worth
+            sending to someone.
+          */}
+          <ShareMarket
+            symbol={market.symbol}
+            name={market.name}
+            quoteSymbol={market.quoteSymbol}
+            token={market.token}
+          />
         </div>
       </header>
 

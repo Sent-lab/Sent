@@ -1,0 +1,79 @@
+/*
+ * Share controls (§68), built to §48.
+ *
+ * Quiet by default and tactile on approach: these sit in the market header
+ * beside the pair, and a share button that competes with Buy is a share button
+ * in the wrong place.
+ */
+
+.share {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* §84: a touch target, not a link-sized one. */
+  min-height: 36px;
+  padding-inline: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.button:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+
+/* §48: press feedback. Small — a control this size does not need a lot. */
+.button:active {
+  transform: translateY(1px);
+}
+
+/* §84: the focus ring is never removed, only made to match the system. */
+.button:focus-visible {
+  outline: 2px solid var(--volt);
+  outline-offset: 2px;
+}
+
+/*
+ * §48's stable width, mechanically.
+ *
+ * Both labels occupy the same grid cell, so the button is laid out against the
+ * longer of them at first paint. Swapping which one is visible cannot change
+ * the width, because both are always in the box.
+ */
+.swap {
+  display: grid;
+}
+
+.swap > span {
+  grid-area: 1 / 1;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.swap > span[data-shown="false"] {
+  opacity: 0;
+  /* Out of the accessibility tree as well as invisible: a screen reader must
+     not read both states at once. The sr-only span beside it says which. */
+  visibility: hidden;
+}
+
+.swap > span[data-shown="true"] {
+  opacity: 1;
+}
