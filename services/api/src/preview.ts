@@ -74,20 +74,17 @@ const WARN = "#fbbf24";
  * diagonal forms, so the artefact that travels furthest carried a glyph that is
  * not the logo — on every link anyone ever posted.
  *
- * Measured from `Brand.png` by `scripts/trace-mark.py`, which prints exactly
- * these constants; `apps/web/src/components/Logo.tsx` holds the same values for
- * the same reason the colours are repeated here. An SVG served to a crawler has
- * no stylesheet and no imports — it has to be self-contained, and the price of
- * that is a copy. The script is the source; both copies are its output.
- *
- * The paths are the outline INSET by the corner radius, stroked with twice it
- * and a round join, which rounds every corner uniformly without a dozen arcs.
+ * Measured from the official export by `scripts/trace-mark.py`, which prints
+ * exactly these constants; `apps/web/src/components/Logo.tsx` holds the same
+ * values for the same reason the colours are repeated here. An SVG served to a
+ * crawler has no stylesheet and no imports — it has to be self-contained, and
+ * the price of that is a copy. The script is the source; both copies are its
+ * output.
  */
 const MARK_UPPER =
-  "M 14.16 1.96 L 20.23 8.34 L 22.78 8.82 L 28.37 8.66 L 29.96 10.41 L 29.96 16.64 L 28.85 17.60 L 14.80 8.50 L 14.32 7.38 L 14.16 2.12 Z";
+  "M 13.94 1.0 L 14.63 1.03 L 15.32 1.38 L 22.43 8.53 L 22.78 8.77 L 23.2 8.98 L 23.96 9.18 L 29.37 9.22 L 30.06 9.5 L 30.48 9.84 L 30.86 10.47 L 31.0 11.09 L 31.0 17.99 L 30.86 18.69 L 30.48 19.35 L 29.86 19.87 L 29.06 20.14 L 27.5 20.14 L 26.7 19.87 L 20.28 15.25 L 13.83 10.88 L 13.28 10.4 L 12.83 9.71 L 12.65 9.18 L 12.58 8.7 L 12.58 2.42 L 12.72 1.87 L 12.93 1.55 L 13.35 1.21 L 13.9 1.03 Z";
 const MARK_LOWER =
-  "M 3.15 13.29 L 11.29 20.31 L 18.95 24.30 L 19.59 25.89 L 19.59 30.04 L 12.09 22.38 L 4.27 22.38 L 2.99 21.90 L 2.20 20.63 L 2.04 18.55 L 2.04 15.04 L 2.99 13.45 Z";
-const MARK_CORNER = 0.957;
+  "M 3.08 11.92 L 4.68 11.96 L 5.13 12.1 L 5.61 12.38 L 11.96 18.24 L 18.72 22.29 L 19.38 22.85 L 19.8 23.47 L 20.04 24.41 L 20.04 29.72 L 19.94 30.17 L 19.76 30.48 L 19.31 30.86 L 18.86 31.0 L 18.27 30.93 L 17.96 30.76 L 17.27 30.03 L 11.58 23.4 L 11.09 22.95 L 10.36 22.54 L 9.53 22.33 L 2.8 22.33 L 1.97 22.05 L 1.49 21.64 L 1.14 21.05 L 1.0 20.42 L 1.03 13.8 L 1.31 13.03 L 1.66 12.58 L 2.21 12.17 L 2.7 11.99 L 3.05 11.96 Z";
 /** The mark is authored in a 32-unit box; the card wants it at 44. */
 const MARK_SCALE = 44 / 32;
 
@@ -216,7 +213,7 @@ export function renderPreview(m: PreviewMarket): string {
 
   <!-- Brand mark. §231: the platform is named on anything that travels. -->
   <g transform="translate(80 66)">
-    <g transform="scale(${MARK_SCALE})" fill="${VOLT}" stroke="${VOLT}" stroke-width="${MARK_CORNER * 2}" stroke-linejoin="round" stroke-linecap="round">
+    <g transform="scale(${MARK_SCALE})" fill="${VOLT}">
       <path d="${MARK_UPPER}" />
       <path d="${MARK_LOWER}" />
     </g>

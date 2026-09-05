@@ -1,66 +1,93 @@
 #!/usr/bin/env python3
 """
-Derive the SENT mark's geometry from `Brand.png`.
+Derive the SENT mark's geometry from the official artwork.
 
 WHY THIS EXISTS
 ---------------
-The mark in `apps/web/src/components/Logo.tsx` was drawn by eye from the brand
-board and did not match it — three flat slabs where the real mark is two stepped
-diagonal forms. The board was in the repository the whole time, so the shape can
-be measured instead of remembered, and this is the measurement.
+The mark in `apps/web/src/components/Logo.tsx` was once drawn by eye and did not
+match — three flat slabs where the real mark is two stepped diagonal forms. The
+artwork is in the repository, so the shape can be measured instead of
+remembered, and this is the measurement.
 
-Run it when `Brand.png` changes. It prints the two paths and the corner radius
-in the same form `Logo.tsx` holds them.
+Run it when the artwork changes. It prints the two paths in the same form
+`Logo.tsx` and `services/api/src/preview.ts` hold them.
 
     pip install pillow numpy scipy
     python scripts/trace-mark.py
 
-WHAT IT PRODUCES, AND WHY IT IS SHAPED THAT WAY
------------------------------------------------
-Every corner on the mark is rounded by one radius. Emitting that as arc segments
-would be a dozen hand-tuned curves per path that nobody could safely edit later.
+SOURCE, IN ORDER OF PREFERENCE
+------------------------------
+`Logo SENT.png` is the official export: transparent background, no glow, no
+surrounding board. The mask is then simply "alpha > 0", which has no threshold
+to tune and no halo to exclude.
 
-So the polygons printed here are the outline INSET by that radius: the consumer
-strokes them with twice the radius and a round line join, which grows the shape
-back to true size with every corner rounded exactly. That is why the trace runs
-against an ERODED mask rather than the raw one.
+`Brand.png` is the brand board and the fallback. Tracing from it means colour-
+thresholding the volt lime out of a dark panel with a glow around it, which
+works but is measuring a picture of the logo rather than the logo.
 
-The contour walk is Moore neighbour tracing. An earlier attempt ordered boundary
-pixels by angle around the centroid, which is only valid for a star-shaped
-region; this mark is a concave step, so that interleaved the two sides of the
-notch and produced a zigzag.
+WHAT IT PRODUCES
+----------------
+Two closed polygons, filled. Nothing else — no stroke, no arcs.
+
+An earlier version traced an ERODED mask and told the consumer to stroke it with
+a round join, on the theory that this rounds every corner from a small set of
+sharp vertices. That is the right trick for a shape whose corners are sharp in
+the source. This one's are not: the official artwork already has its rounding,
+so eroding and re-stroking rounded it twice and spent two dozen vertices
+retracing curves that were already there.
+
+Tracing the outline as it is reproduces the artwork exactly, including corners
+that differ from each other. It costs about thirty vertices per form and a
+simplification error of roughly 0.05 viewBox units — under a tenth of a pixel at
+the sizes the mark is drawn, and under a pixel on a 512px app icon.
+
+The contour walk is Moore neighbour tracing. An attempt before that ordered
+boundary pixels by angle around the centroid, which is only valid for a
+star-shaped region; this mark is a concave step, so it interleaved the two sides
+of the notch and produced a zigzag.
 """
 
 import json
+import os
 import sys
 
 import numpy as np
 from PIL import Image
 from scipy import ndimage
 
+OFFICIAL = "Logo SENT.png"
 BOARD = "Brand.png"
 
-# Corner radius in source pixels, and the breathing room the board's clear-space
-# panel asks for, in viewBox units.
-RADIUS_PX = 6
+# Breathing room the brand board's clear-space panel asks for, in viewBox units.
 MARGIN = 1.0
 VIEWBOX = 32.0
 
+# Simplification tolerance as a FRACTION of the mark's largest dimension, so a
+# 4k export does not produce four times the vertices of a 1k one.
+EPS_FRACTION = 0.0015
+
 
 def load_mask() -> np.ndarray:
-    """Volt-lime pixels of the hero mark, as a filled binary mask."""
-    a = np.asarray(Image.open(BOARD).convert("RGB")).astype(np.int16)
-    h, w = a.shape[:2]
+    """The mark as a filled binary mask, from the cleanest source available."""
+    if os.path.exists(OFFICIAL):
+        im = Image.open(OFFICIAL).convert("RGBA")
+        alpha = np.asarray(im)[..., 3]
+        # Transparent background: no threshold to tune, no glow to exclude.
+        # Half-opaque is the antialiased edge, so that is the boundary.
+        mask = alpha > 127
+        print(f"source: {OFFICIAL} (alpha)", file=sys.stderr)
+    else:
+        a = np.asarray(Image.open(BOARD).convert("RGB")).astype(np.int16)
+        h, w = a.shape[:2]
+        # The hero panel, top left. Generous — the colour mask does the work.
+        crop = a[int(h * 0.03) : int(h * 0.30), int(w * 0.10) : int(w * 0.30)]
+        r, g, b = crop[..., 0], crop[..., 1], crop[..., 2]
+        # Volt lime is #C6F600: high green, near-zero blue, and a green-blue gap
+        # the glow halo does not have.
+        mask = (g > 150) & (b < 120) & (g - b > 90)
+        mask = ndimage.binary_opening(mask, np.ones((3, 3)))
+        print(f"source: {BOARD} (colour)", file=sys.stderr)
 
-    # The hero panel, top left. Generous — the colour mask does the precision.
-    crop = a[int(h * 0.03) : int(h * 0.30), int(w * 0.10) : int(w * 0.30)]
-
-    r, g, b = crop[..., 0], crop[..., 1], crop[..., 2]
-    # Volt lime is #C6F600: high green, near-zero blue, and a wide green-blue gap
-    # that the glow halo around the mark does not have.
-    mask = (g > 150) & (b < 120) & (g - b > 90)
-
-    mask = ndimage.binary_opening(mask, np.ones((3, 3)))
     return ndimage.binary_fill_holes(mask)
 
 
@@ -76,7 +103,7 @@ def moore(m: np.ndarray) -> np.ndarray:
     contour = [start]
     cur, back = start, 0
 
-    for _ in range(200_000):
+    for _ in range(2_000_000):
         for k in range(8):
             i = (back + 1 + k) % 8
             cand = (cur[0] + nbr[i][0], cur[1] + nbr[i][1])
@@ -118,16 +145,19 @@ def main() -> int:
     mask = load_mask()
     lab, n = ndimage.label(mask)
     if n < 2:
-        print(f"expected two components in the mark, found {n}", file=sys.stderr)
+        print(f"expected two forms in the mark, found {n}", file=sys.stderr)
         return 1
 
     sizes = ndimage.sum(mask, lab, range(1, n + 1))
     keep = [int(i) + 1 for i in np.argsort(sizes)[::-1][:2]]
 
+    ys, xs = np.nonzero(mask)
+    extent = max(xs.max() - xs.min(), ys.max() - ys.min())
+    eps = max(1.0, extent * EPS_FRACTION)
+
     polys = []
     for comp in keep:
-        inset = ndimage.binary_erosion(lab == comp, np.ones((RADIUS_PX * 2 + 1,) * 2))
-        p = rdp(moore(inset), eps=2.2)
+        p = rdp(moore(lab == comp), eps=eps)
         if np.allclose(p[0], p[-1]):
             p = p[:-1]
         polys.append(p)
@@ -135,31 +165,29 @@ def main() -> int:
     # Upper form first, so the emitted order matches how the mark reads.
     polys.sort(key=lambda p: p[:, 1].min())
 
-    # The DRAWN extent is the polygon grown by the stroke radius, so the fit has
-    # to account for it or the stroke overflows the viewBox.
     allp = np.vstack(polys)
-    lo = allp.min(axis=0) - RADIUS_PX
-    hi = allp.max(axis=0) + RADIUS_PX
+    lo, hi = allp.min(axis=0), allp.max(axis=0)
     span = float((hi - lo).max())
 
     scale = (VIEWBOX - 2 * MARGIN) / span
     offset = (VIEWBOX - (hi - lo) * scale) / 2.0
 
     out = [(p - lo) * scale + offset for p in polys]
-    radius = RADIUS_PX * scale
 
-    print(f"const CORNER = {radius:.3f};\n")
+    print(
+        f"// {extent}px extent, eps {eps:.1f}px, "
+        f"{len(out[0])}/{len(out[1])} vertices, "
+        f"~{eps * scale:.3f} viewBox units of error",
+        file=sys.stderr,
+    )
     for name, p in zip(("UPPER", "LOWER"), out):
         d = "M " + " L ".join(f"{x:.2f} {y:.2f}" for x, y in p) + " Z"
-        print(f'const {name} = "{d}";')
+        print(f'const {name} =\n  "{d}";')
 
     print("\n// JSON, for any other consumer:")
     print(
         json.dumps(
-            {
-                "radius": round(radius, 3),
-                "paths": [[[round(float(x), 2), round(float(y), 2)] for x, y in p] for p in out],
-            }
+            {"paths": [[[round(float(x), 2), round(float(y), 2)] for x, y in p] for p in out]}
         )
     )
     return 0
