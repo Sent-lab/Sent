@@ -1,0 +1,50 @@
+/*
+ * Supporting stats (§213: last in priority, and it shows).
+ *
+ * Quiet by construction. These are the closing lines of the homepage, not a
+ * claim it leads with — §168 is against vanity metrics and size is the first
+ * way a metric starts making one.
+ */
+
+.stats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding-block: var(--s-10) var(--s-16);
+  border-top: 1px solid var(--border);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--s-6) var(--s-4);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.statTerm {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.statValue {
+  color: var(--text);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  /* The provenance is on `title`, so the cursor should say the value has more
+     to tell. */
+  cursor: help;
+}
+
+.legend {
+  max-width: 60ch;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+}

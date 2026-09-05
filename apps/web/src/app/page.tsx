@@ -22,6 +22,7 @@ import { listMarkets, isOk } from "../lib/api.ts";
 import { TokenCard } from "../components/TokenCard.tsx";
 import { FreshnessBadge } from "../components/Freshness.tsx";
 import { Logo } from "../components/Logo.tsx";
+import { PlatformStats } from "../components/PlatformStats.tsx";
 
 import styles from "./page.module.css";
 import type { JSX } from "react";
@@ -107,6 +108,14 @@ export default async function HomePage(): Promise<JSX.Element> {
           href="/explore?sort=NEWEST"
           result={fresh}
         />
+
+        {/*
+          §213's last priority, and the page had none. Counts only — the API's
+          volume and fee totals are summed across quote assets with no
+          conversion, so they carry no unit; see `PlatformStats` for why showing
+          one anyway would be the vanity metric §168 rules out.
+        */}
+        <PlatformStats />
       </div>
     </div>
   );
