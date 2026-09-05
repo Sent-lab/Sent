@@ -41,6 +41,7 @@ import { FinalizePanel } from "../../../components/FinalizePanel.tsx";
 import { WrapPanel } from "../../../components/WrapPanel.tsx";
 import { MarketAbout } from "../../../components/MarketAbout.tsx";
 import { StockbackPanel } from "../../../components/StockbackPanel.tsx";
+import { DistributionHistory } from "../../../components/DistributionHistory.tsx";
 
 import styles from "./terminal.module.css";
 import type { JSX } from "react";
@@ -351,6 +352,15 @@ export default async function TerminalPage({
           market={market.market}
           rewardSymbol={market.quoteSymbol}
         />
+      </div>
+
+      {/*
+        §333 exists so someone who does not trust this service can re-derive a
+        root themselves, which is why the inputs are published beside it. Under
+        the holder's own figures, because it is the evidence for them.
+      */}
+      <div className="m-secondary">
+        <DistributionHistory token={market.token} rewardSymbol={market.quoteSymbol} />
       </div>
 
       {/* --- Activity + details ------------------------------------------ */}

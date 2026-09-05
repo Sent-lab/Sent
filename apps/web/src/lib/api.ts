@@ -38,6 +38,7 @@ import type {
   PendingGraduationsResponse,
   LaunchConfigResponse,
   PulseResponse,
+  EpochsResponse,
 } from "@sent/api/handlers";
 import type { IntentKind, IntentRow } from "@sent/sdk";
 import type { FreshnessEnvelope } from "@sent/realtime";
@@ -56,6 +57,7 @@ export type {
   PendingGraduationsResponse,
   LaunchConfigResponse,
   PulseResponse,
+  EpochsResponse,
   IntentKind,
   IntentRow,
 };
@@ -546,6 +548,20 @@ export function getLaunchConfig(
  */
 export function getPulse(options?: RequestOptions): Promise<ApiResult<PulseResponse>> {
   return request<PulseResponse>("/platform/pulse", options, anyObject);
+}
+
+/**
+ * A market's Stockback distribution history and status (§333, §367).
+ *
+ * The inputs travel with the outputs on purpose: §333 exists so somebody who
+ * does not trust this service can re-derive a root themselves, and a response
+ * carrying only the root would be asking to be believed.
+ */
+export function getEpochs(
+  token: string,
+  options?: RequestOptions,
+): Promise<ApiResult<EpochsResponse>> {
+  return request<EpochsResponse>(`/markets/${token}/epochs`, options, anyObject);
 }
 
 export function getHealth(options?: RequestOptions): Promise<ApiResult<HealthResponse>> {
