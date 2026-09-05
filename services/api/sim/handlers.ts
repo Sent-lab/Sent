@@ -129,6 +129,12 @@ class FakePort implements DataPort {
   chainConnected(): boolean {
     return this.connected;
   }
+  /* The vault address is a chain read; the fake answers as an unreachable
+     chain would, so the handler's null branch is the one under test. */
+  stockbackVault(): Promise<`0x${string}` | null> {
+    return Promise.resolve(this.rewardVault);
+  }
+  rewardVault: `0x${string}` | null = "0xf7dce0cc413d6d7f855a742a02545253bbb0cb92";
   listMarkets(): readonly MarketRow[] {
     return this.market ? [this.market] : [];
   }
@@ -442,12 +448,16 @@ console.log("\n--- 3. §293: an estimate is never an entitlement ---------------
 
 {
   const port = new FakePort();
-  const sb = handleStockback(port, TOKEN, ACCOUNT);
+  const sb = await handleStockback(port, TOKEN, ACCOUNT);
 
   if (!sb.ok) throw new Error("expected success");
 
   check("estimated accrual is a separate field", sb.data.estimatedAccrued !== undefined);
   check("claimable is a separate field", sb.data.claimable !== undefined);
+  check(
+    "and the vault a claim is sent to travels with it",
+    sb.data.rewardVault === "0xf7dce0cc413d6d7f855a742a02545253bbb0cb92",
+  );
 
   // The distinction that matters: one is a projection, the other is money the
   // vault will actually pay. Merged into one number, a user cannot tell.
@@ -598,7 +608,7 @@ console.log("\n--- 5c. Timestamps are real, never zero -------------------------
 
   const explore = handleExplore(port, {});
   const detail = handleMarket(port, TOKEN);
-  const sb = handleStockback(port, TOKEN, ACCOUNT);
+  const sb = await handleStockback(port, TOKEN, ACCOUNT);
 
   check("the envelope carries a real server time", explore.freshness.serverTime === port.now);
 

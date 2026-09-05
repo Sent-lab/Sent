@@ -118,7 +118,18 @@
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  /*
+   * 200px, not 160.
+   *
+   * A price is wad-scaled and runs to eleven decimal places, and §80 pads it so
+   * a ticking value does not reflow its row. Measured: the number needs 149px
+   * and the unit beside it about 45px, so a 213px tile left it 19px short and
+   * ellipsised the one figure the page exists to show.
+   *
+   * 240 fits it with room. On a desktop that is still all six metrics in one
+   * row; on a narrow pane it is two rows, which is the right thing to give up.
+   */
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: var(--s-1);
   border: 1px solid var(--border);
   border-radius: var(--radius);

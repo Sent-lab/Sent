@@ -621,7 +621,7 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
     const market = port.getMarket(token);
     if (market !== null) await port.loadStockback(market.market, account, market.quoteDecimals);
 
-    const result = handleStockback(port, token, account);
+    const result = await handleStockback(port, token, account);
     return reply.code(result.ok ? 200 : 404).send(result);
   });
 

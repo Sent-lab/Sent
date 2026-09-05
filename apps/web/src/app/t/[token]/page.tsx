@@ -40,6 +40,7 @@ import { LiveTape } from "../../../components/LiveTape.tsx";
 import { FinalizePanel } from "../../../components/FinalizePanel.tsx";
 import { WrapPanel } from "../../../components/WrapPanel.tsx";
 import { MarketAbout } from "../../../components/MarketAbout.tsx";
+import { StockbackPanel } from "../../../components/StockbackPanel.tsx";
 
 import styles from "./terminal.module.css";
 import type { JSX } from "react";
@@ -336,6 +337,20 @@ export default async function TerminalPage({
       */}
       <div className="m-secondary">
         <MarketAbout metadata={market.metadata} symbol={market.symbol} />
+      </div>
+
+      {/*
+        The homepage sells Stockback as a headline term and nothing showed a
+        holder theirs. §293 is the reason this is a panel rather than a metric:
+        the estimate and the payable entitlement are different numbers and have
+        to stay visibly different.
+      */}
+      <div className="m-secondary">
+        <StockbackPanel
+          token={market.token}
+          market={market.market}
+          rewardSymbol={market.quoteSymbol}
+        />
       </div>
 
       {/* --- Activity + details ------------------------------------------ */}

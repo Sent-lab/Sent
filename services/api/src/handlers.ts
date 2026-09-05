@@ -141,6 +141,8 @@ export interface DataPort {
   indexedBlock(): bigint;
   finalizedBlock(): bigint | undefined;
   chainConnected(): boolean;
+  /** The Stockback vault, or null when the chain could not be reached. */
+  stockbackVault(): Promise<`0x${string}` | null>;
 
   listMarkets(options: ExploreOptions): readonly MarketRow[];
   getMarket(token: string): MarketRow | null;
@@ -1575,13 +1577,22 @@ export interface StockbackResponse {
   /** Present only when an activated commitment covers this holder. */
   readonly proof?: readonly string[];
   readonly cumulative?: string;
+  /**
+   * Where a claim is sent. Null when the chain could not be reached.
+   *
+   * Served rather than configured on the client, for the reason the port gives
+   * about the fee vault: the factory holds `REWARD_VAULT`, the two must agree,
+   * and a second place to set it is a second place to set it wrong. Here that
+   * would be a claim built against a vault owing this holder nothing.
+   */
+  readonly rewardVault: string | null;
 }
 
-export function handleStockback(
+export async function handleStockback(
   port: DataPort,
   token: string,
   account: string,
-): ApiResult<StockbackResponse> {
+): Promise<ApiResult<StockbackResponse>> {
   const row = port.getMarket(token.toLowerCase());
   if (row === null) return fail(port, "MARKET_NOT_FOUND", `no launched market for token ${token}`);
 
@@ -1602,6 +1613,7 @@ export function handleStockback(
     epochEndsAt: stockback.epochEndsAt,
     ...(stockback.proof !== undefined ? { proof: stockback.proof } : {}),
     ...(stockback.cumulative !== undefined ? { cumulative: stockback.cumulative.toString() } : {}),
+    rewardVault: await port.stockbackVault(),
   });
 }
 

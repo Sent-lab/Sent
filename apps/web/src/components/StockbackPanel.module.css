@@ -1,0 +1,149 @@
+/*
+ * A holder's Stockback.
+ *
+ * The claimable figure is the only one given weight. §293 wants the estimate
+ * and the entitlement distinguishable, and size is the fastest way a reader
+ * tells two numbers apart — before they have read either label.
+ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.subtitle {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+.empty {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+/* --- The three figures ----------------------------------------------------- */
+
+.figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s-3);
+}
+
+.figure,
+.figurePrimary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+/*
+ * The payable amount, set apart.
+ *
+ * Not by colour — colour here would read as a status. By weight and a left
+ * edge, which says "this is the one" without saying anything about whether it
+ * is good news.
+ */
+.figurePrimary {
+  border-left: 2px solid var(--volt);
+}
+
+.figureTerm {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.figureValue {
+  color: var(--text);
+  font-size: var(--text-lg);
+  /* Long figures scroll inside the tile rather than widening the grid (§80). */
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.figurePrimary .figureValue {
+  font-size: var(--text-xl);
+  font-weight: 600;
+}
+
+.figureDetail {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+/* --- Epoch and states ------------------------------------------------------ */
+
+.epoch {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+/*
+ * Settled but not yet provable.
+ *
+ * Deliberately not a warning: nothing is wrong and nothing is at risk, the root
+ * simply has not been published. §42 keeps warning styling for what a reader
+ * should act on, and there is no action here but waiting.
+ */
+.pending {
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.submit {
+  min-height: 48px;
+  border-radius: var(--radius);
+  background: var(--volt);
+  color: #06070a;
+  font-size: var(--text-base);
+  font-weight: 600;
+  transition: filter var(--dur-fast) var(--ease-out);
+}
+
+.submit:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.submit:disabled {
+  background: var(--surface-hover);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.note {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.error {
+  color: var(--warn);
+  font-size: var(--text-sm);
+}

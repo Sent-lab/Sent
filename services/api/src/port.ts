@@ -291,6 +291,10 @@ export class PostgresPort implements DataPort {
     };
   }
 
+  stockbackVault(): Promise<`0x${string}` | null> {
+    return this.resolveRewardVault();
+  }
+
   chainConnected(): boolean {
     return this.connected;
   }
@@ -400,6 +404,7 @@ export class PostgresPort implements DataPort {
 
   /** Resolved once from the factory, then remembered. */
   private feeVault: `0x${string}` | null = null;
+  private rewardVault: `0x${string}` | null = null;
 
   async loadMarkets(options: ExploreOptions): Promise<void> {
     const filter = {
@@ -815,6 +820,35 @@ export class PostgresPort implements DataPort {
       })) as `0x${string}`;
 
       this.feeVault = vault;
+      return vault;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The Stockback vault, from the factory.
+   *
+   * Same reasoning as `resolveFeeVault`, and the same reason it is not its own
+   * environment variable: the factory already holds `REWARD_VAULT`, the two must
+   * agree, and a second variable is a second thing that can be set to the wrong
+   * address. Here the failure would be a claim built against a vault that owes
+   * this holder nothing, which costs gas to discover.
+   *
+   * Cached on success only. An RPC blip at startup must not disable every
+   * holder's claim until the process restarts.
+   */
+  private async resolveRewardVault(): Promise<`0x${string}` | null> {
+    if (this.rewardVault !== null) return this.rewardVault;
+
+    try {
+      const vault = (await this.client.readContract({
+        address: this.config.factory,
+        abi: launchpadFactoryAbi,
+        functionName: "REWARD_VAULT",
+      })) as `0x${string}`;
+
+      this.rewardVault = vault;
       return vault;
     } catch {
       return null;
