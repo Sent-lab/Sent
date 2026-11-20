@@ -2020,3 +2020,18 @@ submission service. Also, no public web host/domain deployment is configured in
 this checkout. The launch contract route can be tested after the Safe batch,
 but a genuinely public website and a claimable Stockback distribution each need
 their respective operator steps.
+
+## Post-Safe UI readback — 2026-11-20
+
+After the Safe UI showed the previously submitted router and adapter batches as
+executed, a fresh read-only check at HyperEVM block `51,769,564` confirmed those
+two settings remain correct: the factory router is
+`0xa4c6F6Cc2754CD8E47172f9e10e9a227F6E2339b`, and its reference-price adapter
+is `0x772AEDd551E38de727248e2925F53aAc80BE2b32`.
+
+The HYPE-paired launch MVP batch is still not reflected on chain. The registry
+has `registeredCount=0` and no launchable assets; the factory launch fee is
+still `0.04 HYPE`; the predicted sWHYPE address has no bytecode; and the reward
+vault guardian, quorum and attestor count are all zero. Therefore no new token
+can be launched through this MVP yet. The batch remains prepared, not submitted
+or executed, as documented in `transactions/SENT-WHYPE-MVP.md`.
