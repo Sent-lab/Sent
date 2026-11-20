@@ -26,10 +26,10 @@
  * bounds the damage one misbehaving client does to a shared dependency, which
  * is the failure that actually happens: a bot with a retry loop and no backoff.
  *
- * §425 puts the shared version in Redis, and that stays the right answer when
- * there is a reason to coordinate replicas. Adding it now would make the API
- * unable to answer at all when Redis is down, in exchange for a limit that is
- * four times tighter.
+ * The general read/quote buckets remain local and are documented as per
+ * replica. The paid Chainlink report route has a separate aggregate budget in
+ * PostgreSQL, because multiplying that route's provider allowance per replica
+ * would directly multiply its possible subscription use.
  *
  * A TOKEN BUCKET, NOT A FIXED WINDOW
  * ----------------------------------
@@ -75,19 +75,21 @@ export class RateLimiter {
   private readonly buckets = new Map<string, Bucket>();
   private readonly config: BucketConfig;
   private readonly limit: number;
+  private nextPruneAt = 0;
 
   /**
    * `maxClients` bounds the bucket map itself.
    *
    * Without it the limiter is the memory-exhaustion vector it was added to
    * prevent: one bucket per source key, and the source key is attacker-chosen.
-   * Eviction is the whole map at once, because evicting individually would
-   * reset the budget of whichever client is evicted — which is what an attacker
-   * would target.
+   * At capacity, only fully refilled buckets may be evicted. Forgetting such a
+   * bucket cannot give that client more tokens than it already had. If every
+   * bucket is still carrying a penalty, new identities are refused until one
+   * refills; existing clients continue to use their buckets.
    */
   constructor(config: BucketConfig, maxClients = 20_000) {
     this.config = config;
-    this.limit = maxClients;
+    this.limit = Math.max(1, Math.floor(maxClients));
   }
 
   /**
@@ -98,12 +100,22 @@ export class RateLimiter {
    * that eventually gets deleted.
    */
   take(key: string, now: number = Date.now()): Decision {
-    if (this.buckets.size >= this.limit) this.buckets.clear();
-
-    const bucket = this.buckets.get(key) ?? {
-      tokens: this.config.capacity,
-      updatedAt: now,
-    };
+    let bucket = this.buckets.get(key);
+    if (bucket === undefined) {
+      if (this.buckets.size >= this.limit && now >= this.nextPruneAt) {
+        this.pruneRefilled(now);
+      }
+      if (this.buckets.size >= this.limit) {
+        // Do not scan the full map on every attacker-chosen new key. Cleanup
+        // is rate-limited to once per second while full.
+        return {
+          allowed: false,
+          retryAfter: Math.max(Math.ceil((this.nextPruneAt - now) / 1_000), 1),
+          remaining: 0,
+        };
+      }
+      bucket = { tokens: this.config.capacity, updatedAt: now };
+    }
 
     // Continuous refill. Fractional tokens are kept: rounding down here would
     // make a client running at exactly the limit lose a little of it on every
@@ -131,6 +143,19 @@ export class RateLimiter {
 
   get size(): number {
     return this.buckets.size;
+  }
+
+  /** Forget only buckets whose budget has naturally recovered to full. */
+  private pruneRefilled(now: number): void {
+    for (const [key, bucket] of this.buckets) {
+      const elapsed = Math.max(now - bucket.updatedAt, 0) / 1_000;
+      const tokens = Math.min(
+        this.config.capacity,
+        bucket.tokens + elapsed * this.config.refillPerSecond,
+      );
+      if (tokens >= this.config.capacity) this.buckets.delete(key);
+    }
+    this.nextPruneAt = this.buckets.size >= this.limit ? now + 1_000 : 0;
   }
 }
 

@@ -1,0 +1,15 @@
+{$WEB_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:3000
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+	@metrics path /metrics /v1/metrics
+	respond @metrics 404
+	reverse_proxy api:8080
+}
+
+{$REALTIME_DOMAIN} {
+	reverse_proxy realtime:8081
+}

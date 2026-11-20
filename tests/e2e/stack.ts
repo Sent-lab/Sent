@@ -199,7 +199,8 @@ try {
   // and there is no reason for a test to be the exception.
   const treasury = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as Address;
 
-  const registry = await deploy("XStockRegistry", [governance]);
+  const wrapperFactory = await deploy("WrappedXStockFactory", []);
+  const registry = await deploy("XStockRegistry", [governance, wrapperFactory]);
   const factory = await deploy("LaunchpadFactory", [governance, treasury, registry, 0n]);
 
   check("the registry deployed", registry.length === 42);
@@ -222,6 +223,37 @@ try {
 
   check("the factory built its own fee vault", feeVault.length === 42);
   check("and its own reward vault", rewardVault !== feeVault);
+
+  // A market cannot launch until the vault has an independent Guardian. Use a
+  // separate Anvil account here so the E2E fixture proves the real launch gate
+  // rather than weakening it for local tests.
+  const rewardVaultAbi = artifact("HolderRewardVault").abi;
+  const guardian = privateKeyToAccount(
+    "0x7c852118294c8e6255e37b91be69d64ea415f1d8d894b4df499a2d6a74ac6a05",
+  );
+  await send(rewardVault, rewardVaultAbi, "setGuardian", [guardian.address]);
+
+  // The local launch fixture needs a reachable quorum before its first market
+  // is created. The same keys later sign the real EIP-712 Stockback commitment.
+  const attestors = [
+    privateKeyToAccount(
+      "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+    ),
+    privateKeyToAccount(
+      "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
+    ),
+  ].sort((a, b) => (BigInt(a.address) < BigInt(b.address) ? -1 : 1));
+  for (const attestor of attestors) {
+    await send(rewardVault, rewardVaultAbi, "addAttestor", [attestor.address]);
+  }
+  await send(rewardVault, rewardVaultAbi, "setQuorum", [2n]);
+
+  const rewardLaunchReady = await publicClient.readContract({
+    address: rewardVault,
+    abi: rewardVaultAbi,
+    functionName: "launchConfigurationReady",
+  });
+  check("guardian and quorum are ready before markets launch", rewardLaunchReady === true);
 
   // --- A quote asset -----------------------------------------------------
 
@@ -1017,7 +1049,7 @@ try {
          * that protects holders from a bad root.
          */
         if (dataset !== null && entitlement !== null) {
-          const vaultAbi = artifact("HolderRewardVault").abi;
+          const vaultAbi = rewardVaultAbi;
 
           /*
            * Anvil's second and third accounts, SORTED BY ADDRESS.
@@ -1028,22 +1060,6 @@ try {
            * refusal is the guard working — so the order is produced here rather
            * than assumed.
            */
-          const attestors = [
-            privateKeyToAccount(
-              "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
-            ),
-            privateKeyToAccount(
-              "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
-            ),
-          ].sort((a, b) =>
-            BigInt(a.address) < BigInt(b.address) ? -1 : 1,
-          );
-
-          for (const attestor of attestors) {
-            await send(rewardVault, vaultAbi, "addAttestor", [attestor.address]);
-          }
-          await send(rewardVault, vaultAbi, "setQuorum", [2n]);
-
           const commitment = {
             market: market as Address,
             token: token as Address,
@@ -1811,15 +1827,16 @@ try {
     const holdings = (dash.holdings ?? []) as Record<string, unknown>[];
     check("with the position they hold", holdings.some((h) => h.token === token.toLowerCase()));
 
-    // A mark, not a valuation: selling walks down the curve. The provenance is
-    // what says so, and §87 requires it to survive the wire.
+    // Each holding carries a mark in its own quote asset. A cross-market sum
+    // would add unlike units, so the API intentionally has no portfolioValue.
+    const heldToken = holdings.find((h) => h.token === token.toLowerCase());
     check(
-      "portfolio value is marked CALCULATED",
-      (dash.portfolioValue as Record<string, unknown>)?.provenance === "CALCULATED",
+      "the holding mark is marked CALCULATED",
+      (heldToken?.value as Record<string, unknown>)?.provenance === "CALCULATED",
     );
     check(
       "and is non-zero for a real holder",
-      BigInt(String((dash.portfolioValue as Record<string, unknown>)?.value)) > 0n,
+      BigInt(String((heldToken?.value as Record<string, unknown>)?.value)) > 0n,
     );
 
     check("their launch is counted", dash.launchCount === 1);
@@ -1831,15 +1848,21 @@ try {
       entitlement === null || BigInt(String(history[0]?.amount)) === entitlement.cumulative,
     );
 
-    // Fully claimed, so nothing is left. Zero for the right reason — the
-    // lifetime figure above proves the claim was seen.
-    check("nothing is left claimable across markets", dash.totalClaimable === "0");
+    // Fully claimed, so every per-market entitlement is zero. The API keeps
+    // balances grouped by reward asset rather than summing unlike tokens.
+    const stockbackRows = (dash.stockback ?? []) as Record<string, unknown>[];
+    check(
+      "nothing is left claimable for this market",
+      stockbackRows.find((r) => r.token === token.toLowerCase())?.claimable === "0",
+    );
 
     const acctStockback = await get(`/accounts/${account.address}/stockback`);
     check("the Stockback-only account view answers", acctStockback.status === 200);
+    const stockbackOnly = acctStockback.body.data as Record<string, unknown>;
+    const stockbackMarkets = (stockbackOnly.markets ?? []) as Record<string, unknown>[];
     check(
-      "with the same total",
-      (acctStockback.body.data as Record<string, unknown>).totalClaimable === "0",
+      "with the same per-market claimable amount",
+      stockbackMarkets.find((r) => r.token === token.toLowerCase())?.claimable === "0",
     );
 
     const strangerAcct = await get("/accounts/0x000000000000000000000000000000000000dEaD");

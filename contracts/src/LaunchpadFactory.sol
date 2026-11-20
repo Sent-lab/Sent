@@ -155,12 +155,14 @@ contract LaunchpadFactory is ReentrancyGuard {
     error SaltAlreadyUsed(bytes32 effectiveSalt);
     error PredictedAddressMismatch(address predicted, address actual);
     error InsufficientLaunchFee(uint256 sent, uint256 required);
+    error ExcessiveLaunchFee(uint256 sent, uint256 required);
     error InvalidReferencePrice();
     error ReferencePriceNotSet();
     error NotTheCreator(address token, address caller);
     error UnknownToken(address token);
     error ReferencePriceDeviated(uint256 reviewed, uint256 actual, uint256 toleranceBps);
     error RouterNotSet();
+    error StockbackNotReady();
     error LaunchFeeTransferFailed();
     error DecimalsDriftedFromRegistry(uint8 registered, uint8 reported);
     error DecimalsUnavailable(address quoteAsset);
@@ -231,8 +233,10 @@ contract LaunchpadFactory is ReentrancyGuard {
         returns (address token, address market)
     {
         if (msg.value < launchFee) revert InsufficientLaunchFee(msg.value, launchFee);
+        if (msg.value > launchFee) revert ExcessiveLaunchFee(msg.value, launchFee);
         if (router == address(0)) revert RouterNotSet();
         if (referencePrice == address(0)) revert ReferencePriceNotSet();
+        if (!REWARD_VAULT.launchConfigurationReady()) revert StockbackNotReady();
 
         // Before anything is deployed. A launch that fails on a description
         // length after minting a token and a market would leave both stranded

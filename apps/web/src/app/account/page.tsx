@@ -3,14 +3,14 @@
 /**
  * SENT — account dashboard (§222).
  *
- * §222's sections: holdings, activity, my launches, earnings, with portfolio
- * value, 24h P&L, creator earnings and claimable fees across the top.
+ * §222's sections: holdings, activity, my launches and earnings. Summary tiles
+ * count positions and claimable balances without combining unlike xStock units.
  *
  * THIS PAGE USED TO SAY THE READ DID NOT EXIST
  * --------------------------------------------
  * It said "positions and P&L still need a per-account holdings read, which is
  * not built", and that stopped being true: `/accounts/:address` is routed and
- * `handleAccount` returns holdings, portfolio value, Stockback and claims. The
+ * `handleAccount` returns holdings, Stockback and claims. The
  * note outlived the gap it described, which is its own kind of wrong — a user
  * reading it was told the product could not do something it could.
  *
@@ -43,7 +43,7 @@ import {
   type AccountResponse,
   type CreatorResponse,
 } from "../../lib/api.ts";
-import { formatFixed, formatQuoteCompact, truncateAddress } from "../../lib/format.ts";
+import { formatCompact, formatFixed, formatQuoteCompact, truncateAddress } from "../../lib/format.ts";
 import { useWallet } from "../../lib/wallet.ts";
 import { FreshnessBadge } from "../../components/Freshness.tsx";
 import type { MarketStatus } from "../../components/GraduationProgress.tsx";
@@ -134,20 +134,9 @@ export default function AccountPage(): JSX.Element {
 
   const connected = address !== null;
 
-  /*
-   * Creator earnings, summed across assets.
-   *
-   * `accrued` is one row per asset because a creator can be paid in several
-   * xStocks, and the API refuses to add them — they are different things. This
-   * tile sums them anyway to give §222 its headline figure, and the earnings
-   * section below breaks the sum back out per asset so the composition is never
-   * only implied.
-   */
-  const creatorEarned = (creator?.accrued ?? []).reduce((sum, row) => sum + big(row.amount), 0n);
-  const creatorClaimable = (creator?.claimable ?? []).reduce(
-    (sum, row) => sum + big(row.amount),
-    0n,
-  );
+  const claimableBalances =
+    (account?.stockback ?? []).filter((row) => big(row.claimable) > 0n).length +
+    (creator?.claimable ?? []).length;
 
   return (
     <div className={`${styles.page} container`} data-mode="trading">
@@ -161,32 +150,24 @@ export default function AccountPage(): JSX.Element {
 
       <section className={styles.metrics} aria-label="Portfolio summary">
         <Metric
-          label="Portfolio value"
-          detail="Marked at the curve price of every position you hold."
-          value={
-            account === null ? null : `${formatQuoteCompact(big(account.portfolioValue.value))}`
-          }
+          label="Open positions"
+          detail="Each position is marked in its paired xStock below."
+          value={account === null ? null : String(account.holdings.length)}
+        />
+        <Metric
+          label="Markets launched"
+          detail="Markets created from this wallet."
+          value={creator === null ? null : String(creator.launches.length)}
+        />
+        <Metric
+          label="Claimable balances"
+          detail="Positive Stockback and creator fee balances; amounts stay separate by asset below."
+          value={account === null && creator === null ? null : String(claimableBalances)}
         />
         <Metric
           label="24h change"
-          // Not served, and not invented. Nothing in the API carries these same
-          // positions valued 24 hours ago, and a zero here would be a claim.
-          detail="Needs these positions valued 24 hours ago, which the API does not serve yet."
+          detail="Historical position values are not available yet."
           value={null}
-        />
-        <Metric
-          label="Creator earnings"
-          detail="Your 65% of the core fee, across every market you launched."
-          value={creator === null ? null : formatQuoteCompact(creatorEarned)}
-        />
-        <Metric
-          label="Claimable now"
-          detail="Settled and withdrawable. Separate from what is still accruing."
-          value={
-            account === null && creator === null
-              ? null
-              : formatQuoteCompact(big(account?.totalClaimable) + creatorClaimable)
-          }
         />
       </section>
 
@@ -287,7 +268,7 @@ export default function AccountPage(): JSX.Element {
                     <span className={styles.rowSymbol}>{reward.symbol}</span>
                     <span className={styles.rowName}>Stockback in {reward.rewardSymbol}</span>
                     <span className={`${styles.rowBalance} num`}>
-                      {formatQuoteCompact(big(reward.claimable))} {reward.rewardSymbol}
+                      {formatCompact(big(reward.claimable), reward.quoteDecimals)} {reward.rewardSymbol}
                     </span>
                   </li>
                 ))}
@@ -322,7 +303,7 @@ export default function AccountPage(): JSX.Element {
                     <span className={styles.rowSymbol}>{claim.symbol}</span>
                     <span className={styles.rowName}>Claimed</span>
                     <span className={`${styles.rowBalance} num`}>
-                      {formatQuoteCompact(big(claim.amount))}
+                      {formatCompact(big(claim.amount), claim.quoteDecimals)} {claim.rewardSymbol}
                     </span>
                   </li>
                 ))}

@@ -143,6 +143,25 @@ contract HolderRewardVaultTest is Test {
         assertEq(total, 100e18);
     }
 
+    function test_zeroMerkleRootCannotErasePendingCommitment() public {
+        _fund(200e18);
+
+        HolderRewardVault.Commitment memory valid =
+            _commitment(9, 160e18, _root(_leaf(alice, 90e18), _leaf(bob, 70e18)));
+        vault.submitCommitment(valid, _sign(valid));
+
+        HolderRewardVault.Commitment memory empty = _commitment(10, 170e18, bytes32(0));
+        bytes[] memory signatures = _sign(empty);
+
+        vm.expectRevert(HolderRewardVault.ZeroMerkleRoot.selector);
+        vault.submitCommitment(empty, signatures);
+
+        (bytes32 root,, uint256 total, uint256 sequence,) = vault.pending(market);
+        assertEq(root, valid.merkleRoot, "the valid pending root remains intact");
+        assertEq(total, valid.totalCumulative, "the cumulative entitlement remains intact");
+        assertEq(sequence, valid.epochSequence, "the pending sequence remains intact");
+    }
+
     // -----------------------------------------------------------------------
     // Permissionless submission, zero privilege (§404)
     // -----------------------------------------------------------------------
@@ -380,6 +399,17 @@ contract HolderRewardVaultTest is Test {
     // Guardian — §589, §590, §591
     // -----------------------------------------------------------------------
 
+    function test_governanceCannotClearGuardian() public {
+        vm.prank(governance);
+        vault.setGuardian(guardian);
+
+        vm.prank(governance);
+        vm.expectRevert(HolderRewardVault.ZeroAddress.selector);
+        vault.setGuardian(address(0));
+
+        assertEq(vault.guardian(), guardian, "guardian remains configured");
+    }
+
     function _activeRoot() internal returns (bytes32 leafB) {
         _fund(100e18);
         bytes32 leafA = _leaf(alice, 60e18);
@@ -573,6 +603,50 @@ contract HolderRewardVaultTest is Test {
         (, , uint256 total, uint256 seq,) = vault.pending(market);
         assertEq(seq, 4, "a newer commitment supersedes the pending one");
         assertEq(total, 150e18);
+    }
+
+    function test_cancelledCommitmentStillSetsMonotonicityWatermark() public {
+        _fund(200e18);
+
+        HolderRewardVault.Commitment memory first =
+            _commitment(8, 100e18, _root(_leaf(alice, 60e18), _leaf(bob, 40e18)));
+        vault.submitCommitment(first, _sign(first));
+
+        HolderRewardVault.Commitment memory newer =
+            _commitment(9, 150e18, _root(_leaf(alice, 90e18), _leaf(bob, 60e18)));
+        vault.submitCommitment(newer, _sign(newer));
+
+        vm.prank(governance);
+        vault.setGuardian(guardian);
+        vm.prank(guardian);
+        vault.cancelPendingCommitment(market, "independent verification failed");
+
+        (uint256 recordedSequence, uint256 recordedTotal, bool watermarkExists) =
+            vault.submissionWatermark(market);
+        assertTrue(watermarkExists, "cancellation keeps a monotonicity record");
+        assertEq(recordedSequence, 9);
+        assertEq(recordedTotal, 150e18);
+
+        // The old quorum-signed root remains stale even after cancellation.
+        bytes[] memory replayedSignatures = _sign(first);
+        vm.expectRevert(abi.encodeWithSelector(HolderRewardVault.StaleCommitment.selector, 8, 9));
+        vault.submitCommitment(first, replayedSignatures);
+
+        // A newer sequence cannot lower the cumulative total accepted before
+        // cancellation either.
+        HolderRewardVault.Commitment memory lowerTotal =
+            _commitment(10, 120e18, _root(_leaf(alice, 70e18), _leaf(bob, 50e18)));
+        bytes[] memory lowerSignatures = _sign(lowerTotal);
+        vm.expectRevert(abi.encodeWithSelector(HolderRewardVault.StaleCommitment.selector, 120e18, 150e18));
+        vault.submitCommitment(lowerTotal, lowerSignatures);
+
+        // A genuinely newer, non-decreasing commitment is still accepted.
+        HolderRewardVault.Commitment memory next =
+            _commitment(10, 160e18, _root(_leaf(alice, 90e18), _leaf(bob, 70e18)));
+        vault.submitCommitment(next, _sign(next));
+        (, , uint256 total, uint256 sequence,) = vault.pending(market);
+        assertEq(sequence, 10);
+        assertEq(total, 160e18);
     }
 
     function test_onlyMarketCanFund() public {

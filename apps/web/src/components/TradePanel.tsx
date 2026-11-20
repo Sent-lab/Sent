@@ -40,6 +40,8 @@ import { quote, isOk, type WireIntent } from "../lib/api.ts";
 import { parseAmount, formatFixed, truncateAddress } from "../lib/format.ts";
 import { usePreference, decodeBigint } from "../lib/preference.ts";
 import { useWallet } from "../lib/wallet.ts";
+import { track } from "../lib/transactions.ts";
+import { isTradeableFreshness } from "../lib/freshness.ts";
 import { FreshnessNotice } from "./Freshness.tsx";
 import { IntentReview } from "./IntentReview.tsx";
 import type { MarketStatus } from "./GraduationProgress.tsx";
@@ -102,6 +104,7 @@ export function TradePanel({
     (v) => v.toString(),
   );
   const [intent, setIntent] = useState<WireIntent | null>(null);
+  const [quoteFreshness, setQuoteFreshness] = useState<FreshnessEnvelope | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -142,17 +145,21 @@ export function TradePanel({
       // cannot be signed.
       if (curveClosed) {
         setIntent(null);
+        setQuoteFreshness(null);
         setError(null);
         return;
       }
 
       if (amount === null || amount === 0n) {
         setIntent(null);
+        setQuoteFreshness(null);
         setError(null);
         return;
       }
 
       setPending(true);
+      setIntent(null);
+      setQuoteFreshness(null);
 
       try {
         const result = await quote(
@@ -169,9 +176,13 @@ export function TradePanel({
 
         if (signal.aborted) return;
 
-        if (isOk(result)) {
+        setQuoteFreshness(result.freshness);
+        if (isOk(result) && isTradeableFreshness(result.freshness)) {
           setIntent(result.data);
           setError(null);
+        } else if (isOk(result)) {
+          setIntent(null);
+          setError("This quote is stale or reconnecting. Trading is disabled until a fresh quote is available.");
         } else {
           setIntent(null);
           setError(result.message);
@@ -179,6 +190,7 @@ export function TradePanel({
       } catch (caught) {
         if (signal.aborted) return;
         setIntent(null);
+        setQuoteFreshness(null);
         setError(
           caught instanceof Error
             ? caught.message
@@ -214,12 +226,21 @@ export function TradePanel({
    * the wrong one would leave the trade reverting with an allowance error that
    * points at the other asset.
    */
+  const activeFreshness = quoteFreshness ?? freshness;
+  const quoteTradeable = isTradeableFreshness(activeFreshness);
+
   const submit = useCallback(async () => {
-    if (intent === null || amount === null) return;
+    if (
+      intent === null ||
+      amount === null ||
+      pending ||
+      !isTradeableFreshness(quoteFreshness ?? freshness)
+    ) return;
 
     setSubmitting(true);
     setError(null);
     setSent(null);
+    let approvalHash: `0x${string}` | null = null;
 
     try {
       const approval = buildApproveIntent({
@@ -234,7 +255,7 @@ export function TradePanel({
 
       // The SDK builds with bigints; the wallet sends the wire shape. Only the
       // representation changes — no value is recomputed.
-      await wallet.send({
+      approvalHash = await wallet.send({
         kind: approval.kind,
         chainId: approval.chainId,
         to: approval.to,
@@ -247,18 +268,41 @@ export function TradePanel({
         },
       });
 
+      // The approval is a transaction too, and the one most likely to be
+      // waiting when the trade below it is rejected for want of allowance.
+      // Leaving it untracked would leave the user watching for a trade that
+      // cannot be sent yet (§61).
+      track({ hash: approvalHash, summary: approval.review.summary, token });
+
       const hash = await wallet.send(intent);
+      // Tracked with the intent's own summary, so the header says exactly what
+      // the review said (§694).
+      track({ hash, summary: intent.review.summary, token });
       setSent(hash);
     } catch (caught) {
+      const detail = caught instanceof Error ? caught.message : "The wallet rejected the request.";
       setError(
-        caught instanceof Error
-          ? caught.message
-          : "The transaction could not be sent. Nothing was signed.",
+        approvalHash === null
+          ? `The transaction was not submitted. ${detail}`
+          : `The approval was submitted, but the trade was not. Check Activity for its status, then review and retry the trade. ${detail}`,
       );
     } finally {
       setSubmitting(false);
     }
-  }, [intent, amount, side, quoteAsset, token, market, inputDecimals, inputSymbol, wallet]);
+  }, [
+    intent,
+    amount,
+    pending,
+    quoteFreshness,
+    freshness,
+    side,
+    quoteAsset,
+    token,
+    market,
+    inputDecimals,
+    inputSymbol,
+    wallet,
+  ]);
 
   return (
     <div className={styles.panel}>
@@ -279,6 +323,7 @@ export function TradePanel({
               // side, so carrying it over would silently re-interpret it.
               setInput("");
               setIntent(null);
+              setQuoteFreshness(null);
               setError(null);
             }}
           >
@@ -304,7 +349,12 @@ export function TradePanel({
             spellCheck={false}
             placeholder="0.00"
             value={input}
-            onChange={(event) => setInput(event.target.value)}
+            onChange={(event) => {
+              setInput(event.target.value);
+              setIntent(null);
+              setQuoteFreshness(null);
+              setError(null);
+            }}
             aria-describedby="trade-help"
             disabled={curveClosed}
           />
@@ -329,7 +379,12 @@ export function TradePanel({
               type="button"
               className={slippageBps === preset ? styles.slippageActive : styles.slippageOption}
               aria-pressed={slippageBps === preset}
-              onClick={() => setSlippageBps(preset)}
+              onClick={() => {
+                setSlippageBps(preset);
+                setIntent(null);
+                setQuoteFreshness(null);
+                setError(null);
+              }}
             >
               {formatFixed(preset, 2, { places: 2, pad: true })}%
             </button>
@@ -337,7 +392,7 @@ export function TradePanel({
         </div>
       </fieldset>
 
-      <FreshnessNotice envelope={freshness} />
+      <FreshnessNotice envelope={activeFreshness} />
 
       {/* --- Review (§694) ------------------------------------------------ */}
       <div className={styles.review} aria-live="polite" aria-busy={pending}>
@@ -403,7 +458,7 @@ export function TradePanel({
           type="button"
           className={styles.submit}
           onClick={() => void submit()}
-          disabled={curveClosed || intent === null || submitting}
+          disabled={curveClosed || intent === null || submitting || pending || !quoteTradeable}
         >
           {submitting
             ? "Confirm in your wallet"

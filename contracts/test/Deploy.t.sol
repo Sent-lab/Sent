@@ -164,6 +164,15 @@ contract DeployTest is Test {
         harness.checkConfig(_config(governance, treasury));
     }
 
+    function test_MainnetRejectsOneOfOneTreasury() public {
+        address governance = address(new FakeSafe(2, 3));
+        address treasury = address(new FakeSafe(1, 1));
+
+        vm.chainId(HYPEREVM);
+        vm.expectRevert(bytes("Deploy: treasury threshold must be at least 2 (C-08, S601)"));
+        harness.checkConfig(_config(governance, treasury));
+    }
+
     /// @dev A contract whose authority structure cannot be read is refused
     ///      rather than waved through. This address controls every parameter in
     ///      the protocol; "it is a contract and we could not tell what it does"
@@ -186,24 +195,14 @@ contract DeployTest is Test {
         harness.checkConfig(_config(governance, EOA_TREASURY));
     }
 
-    /// @dev Treasury may be any contract; governance may not.
-    ///
-    ///      The asymmetry is deliberate and worth pinning. Treasury receives
-    ///      money and controls nothing, so a multisig, a splitter or a vault all
-    ///      make sense there. Governance controls every parameter in the
-    ///      protocol and has a path to the reward vault, so its authority
-    ///      structure has to be legible before deployment.
-    ///
-    ///      This test asserted that ANY two contracts were accepted until the
-    ///      quorum guard landed. That premise is gone rather than weakened, and
-    ///      it is rewritten rather than deleted so the narrowing is visible.
-    function test_MainnetAcceptsAnyTreasuryContractButNotAnyGovernance() public {
+    /// @dev A treasury that is merely a contract has no reviewed signer quorum.
+    function test_MainnetRejectsContractThatIsNotATreasurySafe() public {
         vm.chainId(HYPEREVM);
+        address governance = address(new FakeSafe(2, 3));
+        address treasury = address(new NotASafe());
 
-        // No revert expected. Explicit rather than implied, so a guard that
-        // starts rejecting everything fails here instead of silently blocking
-        // the deploy on the day it runs.
-        harness.checkConfig(_config(address(new FakeSafe(2, 3)), address(new NotASafe())));
+        vm.expectRevert(bytes("Deploy: treasury is not a Safe (C-08, S601)"));
+        harness.checkConfig(_config(governance, treasury));
     }
 
     // -----------------------------------------------------------------------

@@ -1,0 +1,17 @@
+# Never let build contexts receive local credentials, including untracked env
+# files. Production values are passed explicitly as build args or runtime env.
+**/.env*
+
+# Local/runtime artifacts are not application source.
+**/node_modules
+**/.next
+**/coverage
+**/dist
+**/out
+**/.turbo
+.git
+.next
+coverage
+dist
+out
+.turbo

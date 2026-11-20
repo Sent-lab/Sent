@@ -31,6 +31,7 @@ const EXPORTED = [
   "WrappedXStock",
   "WrappedXStockFactory",
   "PythAggregatorShim",
+  "ChainlinkTokenizedAssetAggregatorShim",
 ] as const;
 
 interface Artifact {

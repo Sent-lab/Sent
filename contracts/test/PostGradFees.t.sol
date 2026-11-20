@@ -17,6 +17,7 @@ import {Metadata} from "../src/lib/Metadata.sol";
 import {Curve} from "../src/lib/Curve.sol";
 import {MockV3Factory, MockPositionManager, MockSwapRouter} from "./mocks/MockUniswapV3.sol";
 import {MockAggregator} from "./mocks/MockAggregator.sol";
+import {StockbackTestReadiness} from "./helpers/StockbackTestReadiness.sol";
 
 contract PQuote is ERC20 {
     constructor() ERC20("Mock NVDAx", "NVDAx") {}
@@ -66,6 +67,7 @@ contract PostGradFeesTest is Test {
         factory = new LaunchpadFactory(governance, treasury, address(registry), 0);
         feeVault = factory.FEE_VAULT();
         rewardVault = factory.REWARD_VAULT();
+        StockbackTestReadiness.configure(vm, rewardVault, governance);
 
         v3Factory = new MockV3Factory();
         positionManager = new MockPositionManager(address(v3Factory));

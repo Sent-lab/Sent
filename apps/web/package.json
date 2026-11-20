@@ -12,14 +12,16 @@
     "test": "node --experimental-strip-types sim/format.ts"
   },
   "dependencies": {
+    "@sent/api": "workspace:*",
+    "@sent/config": "workspace:*",
+    "@sent/economics": "workspace:*",
+    "@sent/realtime": "workspace:*",
+    "@sent/sdk": "workspace:*",
+    "@sent/stockback": "workspace:*",
     "next": "^15.5.4",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "viem": "^2.56.3",
-    "@sent/sdk": "workspace:*",
-    "@sent/economics": "workspace:*",
-    "@sent/api": "workspace:*",
-    "@sent/realtime": "workspace:*"
+    "viem": "^2.56.3"
   },
   "devDependencies": {
     "@types/react": "^19.1.9",

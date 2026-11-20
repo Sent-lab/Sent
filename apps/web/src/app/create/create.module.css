@@ -26,6 +26,17 @@
   line-height: var(--leading-normal);
 }
 
+.localNotice {
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--warn);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+
 /*
  * Terms sit above the form. §219 forbids a hidden fee, and a cost disclosed at
  * the review step has already cost the creator their time.

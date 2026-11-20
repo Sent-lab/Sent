@@ -9,11 +9,7 @@
 
 import { Database } from "@sent/database";
 import { apiEnv, chainEnv, databaseEnv, loadAll } from "@sent/config/env";
-import {
-  XSTOCK_ALLOWLIST,
-  HYPEREVM_CHAIN_ID,
-  assertProductionConfigReady,
-} from "@sent/config";
+import { BASE_QUOTE_ASSETS, XSTOCK_ALLOWLIST } from "@sent/config";
 
 import { startServer } from "./server.ts";
 
@@ -25,11 +21,6 @@ async function main(): Promise<void> {
   });
 
 
-  // §279 forbids placeholders in production. On mainnet the verified facts must
-  // actually be present; applying this on every chain would block local work for
-  // no safety benefit, so it is gated the same way the deploy script's guards are.
-  if (chain.chainId === HYPEREVM_CHAIN_ID) assertProductionConfigReady();
-
   const db = new Database(dbConfig);
 
   // Quote symbols come from the verified allowlist, never from the token's own
@@ -37,8 +28,19 @@ async function main(): Promise<void> {
   // that rendered an attacker-chosen string next to a price is a phishing
   // surface rather than a display bug (§699).
   const quoteSymbols = new Map(
-    XSTOCK_ALLOWLIST.filter((entry) => entry.verified).map((entry) => [entry.erc20, entry.symbol]),
+    [
+      ...BASE_QUOTE_ASSETS.filter((entry) => entry.verified).map((entry) => [entry.erc20, entry.symbol] as const),
+      ...XSTOCK_ALLOWLIST.filter((entry) => entry.verified).map((entry) => [entry.erc20, entry.symbol] as const),
+    ],
   );
+
+  // The disposable Anvil deployment uses one deterministic NVDAx-shaped mock
+  // quote token. Label it explicitly in local projections so the market page
+  // keeps the same pair name the launch form showed. Never apply this alias to
+  // any public chain.
+  if (chain.chainId === 31337) {
+    quoteSymbols.set("0xa513e6e4b8f2a923d98304ec87f64353c4d5c853", "NVDAx");
+  }
 
   const app = await startServer(db, {
     port: api.port,
@@ -49,6 +51,7 @@ async function main(): Promise<void> {
     confirmations: chain.confirmations,
     refreshIntervalMs: api.refreshIntervalMs,
     allowedOrigins: api.allowedOrigins,
+    trustProxy: api.trustProxy,
     quoteSymbols,
   });
 

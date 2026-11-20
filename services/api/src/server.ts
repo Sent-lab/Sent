@@ -183,7 +183,8 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
       config.trustProxy ?? false,
     );
 
-    const decision = limiter.take(key, Date.now());
+    const now = Date.now();
+    const decision = limiter.take(key, now);
 
     reply.header("x-ratelimit-limit", String(budget.capacity));
     reply.header("x-ratelimit-remaining", String(decision.remaining));
@@ -614,12 +615,52 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
     return reply.code(result.ok ? 200 : 404).send(result);
   });
 
+  // Publicly expose the ordered leaf data so anyone can independently rebuild
+  // the Stockback Merkle root and dataset hash. Pages are bounded to cap both
+  // query cost and response size.
+  scope.get("/markets/:token/epochs/:sequence/entries", async (request, reply) => {
+    const { token, sequence } = request.params as { token: string; sequence: string };
+    const query = request.query as Record<string, string | undefined>;
+    if (!/^\d{1,19}$/.test(sequence) || BigInt(sequence) > 9_223_372_036_854_775_807n) {
+      return reply.code(400).send({ ok: false, code: "INVALID_EPOCH_SEQUENCE", retryable: false });
+    }
+    const cursor = query.cursor ?? null;
+    if (cursor !== null && !/^0x[0-9a-fA-F]{40}$/.test(cursor)) {
+      return reply.code(400).send({ ok: false, code: "INVALID_CURSOR", retryable: false });
+    }
+    const requestedLimit = /^\d+$/.test(query.limit ?? "") ? Number(query.limit) : 500;
+    const limit = Math.min(Math.max(requestedLimit, 1), 500);
+
+    await port.loadMarket(token);
+    const market = port.getMarket(token);
+    if (market === null) {
+      return reply.code(404).send({ ok: false, code: "MARKET_NOT_FOUND", retryable: false });
+    }
+
+    const result = await port.listDatasetEntries(market.market, BigInt(sequence), cursor, limit);
+    if (result.dataset === null) {
+      return reply.code(404).send({ ok: false, code: "DATASET_NOT_FOUND", retryable: false });
+    }
+
+    return reply.code(200).send({
+      ok: true,
+      data: {
+        market: market.market,
+        epochSequence: sequence,
+        ...result.dataset,
+        entries: result.entries,
+        nextCursor: result.nextCursor,
+      },
+      freshness: handleHealth(port).freshness,
+    });
+  });
+
   scope.get("/markets/:token/stockback/:account", async (request, reply) => {
     const { token, account } = request.params as { token: string; account: string };
 
     await port.loadMarket(token);
     const market = port.getMarket(token);
-    if (market !== null) await port.loadStockback(market.market, account, market.quoteDecimals);
+    if (market !== null) await port.loadStockback(market.market, account);
 
     const result = await handleStockback(port, token, account);
     return reply.code(result.ok ? 200 : 404).send(result);
@@ -661,7 +702,6 @@ export async function createServer(db: Database, config: ServerConfig): Promise<
       data: {
         account: result.data.account,
         markets: result.data.stockback,
-        totalClaimable: result.data.totalClaimable,
         claims: result.data.claims,
       },
       freshness: result.freshness,

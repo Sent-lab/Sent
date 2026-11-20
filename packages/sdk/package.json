@@ -7,6 +7,7 @@
   "exports": { ".": "./src/index.ts" },
   "dependencies": {
     "viem": "^2.56.3",
+    "@sent/config": "workspace:*",
     "@sent/contracts": "workspace:*",
     "@sent/economics": "workspace:*"
   },

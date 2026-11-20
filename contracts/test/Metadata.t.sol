@@ -10,6 +10,7 @@ import {ReferencePriceAdapter} from "../src/ReferencePriceAdapter.sol";
 import {IGraduationRouter} from "../src/interfaces/IGraduationRouter.sol";
 import {Metadata} from "../src/lib/Metadata.sol";
 import {MockAggregator} from "./mocks/MockAggregator.sol";
+import {StockbackTestReadiness} from "./helpers/StockbackTestReadiness.sol";
 
 contract MQuote is ERC20 {
     constructor() ERC20("Mock NVDAx", "NVDAx") {}
@@ -61,6 +62,7 @@ contract MetadataTest is Test {
         router = new MRouter();
 
         factory = new LaunchpadFactory(governance, treasury, address(registry), FEE);
+        StockbackTestReadiness.configure(vm, factory.REWARD_VAULT(), governance);
         feed = new MockAggregator(int256(XSTOCK_USD / 1e10), 8);
         priceAdapter = new ReferencePriceAdapter(governance);
 

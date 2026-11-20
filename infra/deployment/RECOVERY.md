@@ -152,12 +152,19 @@ The last resort, and it works:
 DATABASE_URL=… RPC_URL=… node --experimental-strip-types services/indexer/src/main.ts
 ```
 
-with `START_BLOCK` set to the factory's deployment block and the projection
+with `START_BLOCK` set to the earliest deployment block among the monitored
+contracts (including the registry) and the projection
 truncated. `fullReindex` does this in-process when the reorg tracker detects a
 history it cannot reconcile.
 
-Duration scales with `batchSize` and the RPC's `getLogs` limit, neither of which
-has been measured against HyperEVM (V-15). **That is why the backups exist.**
+Duration scales with `batchSize` and the RPC's `getLogs` limit. Hyperliquid's
+official public RPC documents a 50-block query cap and 100 JSON-RPC requests per
+minute per IP; SENT's indexer defaults to that range cap and a 15-second head
+poll. A full replay from the original deployment block can therefore take many
+hours or days on that shared endpoint, and it competes with API reads from the
+same host. Use a provider with documented archive access and sufficient quota,
+or restore a verified database snapshot before bringing the indexer online.
+**That is why the backups exist.**
 
 ---
 
@@ -356,8 +363,20 @@ ceiling.
 | Account | Type | Why |
 |---|---|---|
 | Governance | **Safe, ≥ 2-of-3** | controls every parameter, and has a path to the reward vault. `Deploy.s.sol` refuses anything weaker on mainnet. |
-| Treasury | Safe | receives fees, controls nothing. Any contract is accepted. |
+| Treasury | **Safe, ≥ 2-of-3** | receives launch-fee revenue and controls its withdrawals; `Deploy.s.sol` requires a Safe with threshold ≥ 2 and at least one spare owner. Keep it separate from Governance. |
 | Deployer | **EOA** | must sign transactions directly. A Safe has no private key and cannot be a deployer. |
+
+### Treasury routing must stay in sync
+
+Launch fees in native HYPE use `LaunchpadFactory.treasury()`. ERC-20 platform
+trading fees use `FeeVault.treasury()`. Both start at the configured Treasury
+Safe, but Governance can change them independently through
+`LaunchpadFactory.setTreasury(newSafe)` and `FeeVault.setTreasury(newSafe)`.
+When rotating the Treasury, execute both calls as one reviewed Safe batch where
+available, then read both values back from chain before reopening launches or
+trading. If the two destinations are intentionally different, record the reason
+and the approved recipient for each before execution. Keep each recipient under
+the Treasury Safe's owner-control and threshold requirements above.
 
 The deployer holds nothing afterwards — every authority goes to Governance through
 constructors, in the same transaction. Its key is used once, on an
@@ -384,7 +403,7 @@ Failed to get EIP-1559 fees; ... error code -32602: invalid block range
 ```
 
 The method works for small ranges, so this is the RPC's limit rather than a
-missing feature - the same shape as its 1000-block cap on `eth_getLogs`.
+missing feature - the same shape as its 50-block cap on `eth_getLogs`.
 `--legacy` skips the estimation and uses a flat gas price, which is what this
 chain charges anyway: 0.1 gwei, giving ~0.0013 HYPE for the whole deployment.
 

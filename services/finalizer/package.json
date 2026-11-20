@@ -8,15 +8,17 @@
     ".": "./src/finalizer.ts"
   },
   "dependencies": {
-    "@sent/database": "workspace:*",
-    "@sent/stockback": "workspace:*",
-    "@sent/stockback-service": "workspace:*",
     "@sent/config": "workspace:*",
-    "@sent/observability": "workspace:*"
+    "@sent/contracts": "workspace:*",
+    "@sent/database": "workspace:*",
+    "@sent/observability": "workspace:*",
+    "@sent/stockback": "workspace:*",
+    "@sent/stockback-service": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --experimental-strip-types sim/finalizer.ts",
-    "start": "node --experimental-strip-types src/main.ts"
+    "start": "node --experimental-strip-types src/main.ts",
+    "proposal": "node --experimental-strip-types src/propose-attestation.ts"
   }
 }

@@ -29,9 +29,10 @@
  * rendering a different transaction from the one it is about to submit.
  */
 
-import { encodeFunctionData, type Hex } from "viem";
+import { decodeFunctionResult, encodeFunctionData, keccak256, type Hex } from "viem";
 
-import { launchMarketAbi } from "@sent/contracts";
+import { chainlinkTokenizedAssetAggregatorShimAbi, launchMarketAbi } from "@sent/contracts";
+import { TOKENIZED_ASSET_V10_FEEDS } from "@sent/config";
 import { computeFees, type FeeBreakdown } from "@sent/economics";
 
 /** Every kind of financial action a user can take. */
@@ -45,7 +46,8 @@ export type IntentKind =
   | "LAUNCH"
   | "FINALIZE_GRADUATION"
   | "WRAP_QUOTE"
-  | "UNWRAP_QUOTE";
+  | "UNWRAP_QUOTE"
+  | "UPDATE_PRICE_REPORT";
 
 /**
  * What the user is shown before signing.
@@ -1135,6 +1137,11 @@ const WRAPPER_ABI = [
   },
 ] as const;
 
+const WHYPE_ABI = [
+  { type: "function", name: "deposit", stateMutability: "payable", inputs: [], outputs: [] },
+  { type: "function", name: "withdraw", stateMutability: "nonpayable", inputs: [{ name: "amount", type: "uint256" }], outputs: [] },
+] as const;
+
 export interface BuildWrapParams {
   readonly chainId: number;
   /** The `WrappedXStock` contract. */
@@ -1267,6 +1274,163 @@ export function buildUnwrapIntent(params: BuildUnwrapParams): TransactionIntent 
           value: `${formatUnits(expectedAssets, decimals)} ${underlyingSymbol} at the current rate`,
           primary: true,
         },
+      ],
+    },
+  };
+}
+
+/** Build the native HYPE <-> WHYPE 1:1 conversion used by the MVP quote lane. */
+export function buildHypeWrapIntent(params: {
+  readonly chainId: number;
+  readonly whype: `0x${string}`;
+  readonly amount: bigint;
+  readonly direction: "WRAP" | "UNWRAP";
+}): TransactionIntent {
+  const { chainId, whype, amount, direction } = params;
+  if (amount <= 0n) throw new Error("buildHypeWrapIntent: amount must be positive");
+
+  const wrapping = direction === "WRAP";
+  return {
+    kind: wrapping ? "WRAP_QUOTE" : "UNWRAP_QUOTE",
+    chainId,
+    to: whype,
+    data: wrapping
+      ? encodeFunctionData({ abi: WHYPE_ABI, functionName: "deposit" })
+      : encodeFunctionData({ abi: WHYPE_ABI, functionName: "withdraw", args: [amount] }),
+    value: wrapping ? amount : 0n,
+    review: {
+      kind: wrapping ? "WRAP_QUOTE" : "UNWRAP_QUOTE",
+      summary: wrapping
+        ? `Wrap ${formatUnits(amount, 18)} HYPE into WHYPE`
+        : `Unwrap ${formatUnits(amount, 18)} WHYPE into HYPE`,
+      rows: wrapping
+        ? [
+            { label: "You deposit", value: `${formatUnits(amount, 18)} HYPE`, primary: true },
+            { label: "You receive", value: `${formatUnits(amount, 18)} WHYPE`, primary: true },
+            { label: "Conversion", value: "1 HYPE becomes 1 WHYPE. The wrapper is reversible." },
+          ]
+        : [
+            { label: "You burn", value: `${formatUnits(amount, 18)} WHYPE`, primary: true },
+            { label: "You receive", value: `${formatUnits(amount, 18)} HYPE`, primary: true },
+          ],
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// UPDATE_PRICE_REPORT (Chainlink Tokenized Asset v10)
+// ---------------------------------------------------------------------------
+
+export interface BuildUpdatePriceReportParams {
+  readonly chainId: number;
+  /** Source address read from ReferencePriceAdapter.sourceOf(asset). */
+  readonly updater: `0x${string}`;
+  readonly quoteAsset: `0x${string}`;
+  readonly feedId: `0x${string}`;
+  readonly fullReport: Hex;
+  readonly validFromTimestamp: number;
+  readonly observationsTimestamp: number;
+}
+
+/** Read the updater's feed ID using the caller's wallet-backed eth_call. */
+export async function readChainlinkShimFeedId(
+  read: (request: { readonly to: `0x${string}`; readonly data: Hex }) => Promise<Hex>,
+  updater: `0x${string}`,
+): Promise<`0x${string}`> {
+  const data = encodeFunctionData({
+    abi: chainlinkTokenizedAssetAggregatorShimAbi,
+    functionName: "feedId",
+  });
+  const result = await read({ to: updater, data });
+
+  return decodeFunctionResult({
+    abi: chainlinkTokenizedAssetAggregatorShimAbi,
+    functionName: "feedId",
+    data: result,
+  }) as `0x${string}`;
+}
+
+/** Read the asset this shim is immutably bound to. */
+export async function readChainlinkShimPriceAsset(
+  read: (request: { readonly to: `0x${string}`; readonly data: Hex }) => Promise<Hex>,
+  updater: `0x${string}`,
+): Promise<`0x${string}`> {
+  const data = encodeFunctionData({
+    abi: chainlinkTokenizedAssetAggregatorShimAbi,
+    functionName: "priceAsset",
+  });
+  const result = await read({ to: updater, data });
+
+  return decodeFunctionResult({
+    abi: chainlinkTokenizedAssetAggregatorShimAbi,
+    functionName: "priceAsset",
+    data: result,
+  }) as `0x${string}`;
+}
+
+/** Build an onchain update intent from a report obtained through permitted access. */
+export function buildUpdatePriceReportIntent(
+  params: BuildUpdatePriceReportParams,
+): TransactionIntent {
+  const {
+    chainId,
+    updater,
+    quoteAsset,
+    feedId,
+    fullReport,
+    validFromTimestamp,
+    observationsTimestamp,
+  } = params;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(feedId)) {
+    throw new Error("buildUpdatePriceReportIntent: feed ID must be bytes32");
+  }
+  const supportedFeedIds = Object.values(TOKENIZED_ASSET_V10_FEEDS).map((feed) =>
+    feed.feedId.toLowerCase(),
+  );
+  if (!supportedFeedIds.includes(feedId.toLowerCase())) {
+    throw new Error("buildUpdatePriceReportIntent: feed ID is not an enabled xStock v10 feed");
+  }
+  if (!/^0x(?:[0-9a-fA-F]{2})+$/.test(fullReport)) {
+    throw new Error("buildUpdatePriceReportIntent: report must be non-empty hex bytes");
+  }
+  if (
+    !Number.isSafeInteger(validFromTimestamp) ||
+    !Number.isSafeInteger(observationsTimestamp) ||
+    validFromTimestamp <= 0 ||
+    observationsTimestamp < validFromTimestamp
+  ) {
+    throw new Error("buildUpdatePriceReportIntent: report timestamps are invalid");
+  }
+
+  const data = encodeFunctionData({
+    abi: chainlinkTokenizedAssetAggregatorShimAbi,
+    functionName: "update",
+    args: [fullReport],
+  });
+  const isoTime = (seconds: number): string => new Date(seconds * 1000).toISOString();
+
+  return {
+    kind: "UPDATE_PRICE_REPORT",
+    chainId,
+    to: updater,
+    data,
+    value: 0n,
+    review: {
+      kind: "UPDATE_PRICE_REPORT",
+      summary: `Update the signed ${feedId.toLowerCase() === TOKENIZED_ASSET_V10_FEEDS.nvdax.feedId.toLowerCase() ? "NVDAx" : "SPYx"} price report`,
+      rows: [
+        { label: "Report feed", value: feedId },
+        { label: "Bound quote asset", value: quoteAsset },
+        { label: "Observation time", value: isoTime(observationsTimestamp) },
+        { label: "Valid from", value: isoTime(validFromTimestamp) },
+        { label: "Report digest", value: keccak256(fullReport) },
+        {
+          label: "What this does",
+          value:
+            "The onchain verifier checks the signed report. A first update or multiplier change pauses price reads for 15 minutes.",
+          warning: true,
+        },
+        { label: "Network fee", value: "Wallet gas only; amount shown by your wallet" },
       ],
     },
   };

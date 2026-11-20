@@ -14,13 +14,14 @@ import {IGraduationRouter} from "./interfaces/IGraduationRouter.sol";
 
 /// @title SENT LaunchMarket
 /// @notice The pre-graduation venue: two-way curve trading against an official
-///         xStock, automatic graduation, and the accounting that keeps both honest.
+///         xStock, endpoint-triggered curve closure, and retryable graduation.
 ///
 /// LIFECYCLE (§19) — exactly one canonical venue per state:
 ///
 ///   PRE_GRAD    curve is the canonical venue; buy and sell both live
 ///   GRADUATING  curve permanently closed, HyperSwap position not yet minted;
-///               NO state mutation of any kind is reachable in this state
+///               trades and reserve changes are closed, while the permissionless
+///               finalizer may record the deterministic migration
 ///   GRADUATED   curve permanently dead; HyperSwap is the canonical venue
 ///
 /// GRADUATING IS A REAL STATE, NOT A TRANSIENT ONE (D-016, V-20)
@@ -67,12 +68,13 @@ import {IGraduationRouter} from "./interfaces/IGraduationRouter.sol";
 /// HolderRewardVault in the same transaction that books them. Neither is ever part
 /// of what backs a sell.
 ///
-/// GRADUATION IS AUTOMATIC AND ATOMIC (§14, §16)
-/// ---------------------------------------------
-/// There is no manual trigger, for anyone — not creator, not governance, not an
-/// operator. It happens inside the buy that reaches the endpoint. If any critical
-/// migration step fails, the whole transaction reverts: there is no path to a
-/// GRADUATED status with an incomplete migration, and no orphaned reserve.
+/// GRADUATION IS PERMISSIONLESS AND RETRYABLE (D-016, §14, §16)
+/// -------------------------------------------------------------
+/// The crossing buy closes the curve and records frozen migration inputs. A
+/// later permissionless `finalizeGraduation()` call performs the HyperSwap
+/// migration. If any critical migration step fails, that call reverts while
+/// leaving the market in GRADUATING with its inputs intact for another attempt.
+/// No caller chooses a migration parameter or receives a privilege from it.
 contract LaunchMarket is ReentrancyGuard {
     using SafeERC20 for IERC20;
     using Curve for Curve.Params;

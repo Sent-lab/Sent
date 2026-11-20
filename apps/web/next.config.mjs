@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 /** @type {import("next").NextConfig} */
 const config = {
   reactStrictMode: true,
+  output: "standalone",
 
   // There is a lockfile above this repository on some machines, and Next picks
   // the wrong root when it finds two. Pinning it keeps the build's file tracing

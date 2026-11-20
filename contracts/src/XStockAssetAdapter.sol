@@ -29,8 +29,9 @@ pragma solidity 0.8.28;
 /// MULTIPLIER / SHARE SEMANTICS — DELIBERATELY NOT IMPLEMENTED
 /// -----------------------------------------------------------
 /// §421 lists "wrapper/multiplier/share semantics" as VERIFY-before-production and
-/// forbids guessing. V-03 is still open. §279 forbids a mock or placeholder from
-/// reaching a production build.
+/// forbids guessing. V-03 established issuer-token behavior, but SENT has not
+/// verified an enabled quote-wrapper path. §279 forbids a mock or placeholder
+/// from reaching a production build.
 ///
 /// Writing a plausible-looking multiplier path now would be exactly the silent
 /// approximation §421 prohibits — and a wrong multiplier does not fail loudly, it

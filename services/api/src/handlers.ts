@@ -154,6 +154,16 @@ export interface DataPort {
   getPlatformStats(): PlatformStatsRow | null;
   getPulse(): PulseRow | null;
   getEpochs(market: string): EpochsRow | null;
+  listDatasetEntries(
+    market: string,
+    epochSequence: bigint,
+    cursor: string | null,
+    limit: number,
+  ): Promise<{
+    dataset: { merkleRoot: string; datasetHash: string; holderCount: number } | null;
+    entries: readonly { account: string; cumulative: bigint }[];
+    nextCursor: string | null;
+  }>;
   /** How many markets the last `listMarkets` filter matched, before its limit. */
   countMarkets(options: ExploreOptions): number;
 
@@ -190,7 +200,8 @@ export interface CreatorRow {
    * so the projection's total would tell a creator they can withdraw money that
    * is already in their wallet.
    */
-  readonly claimable: readonly { asset: string; symbol: string; amount: bigint }[];
+  /** Raw vault units; `decimals` describes this fee asset (xStock or SENT token). */
+  readonly claimable: readonly { asset: string; symbol: string; amount: bigint; decimals: number }[];
   /** Everything ever earned, from indexed events. A lifetime figure. */
   readonly accrued: readonly { asset: string; symbol: string; amount: bigint }[];
   /**
@@ -205,6 +216,7 @@ export interface CreatorRow {
     asset: string;
     symbol: string;
     amount: bigint;
+    decimals: number;
     recipient: string;
     timestamp: number;
     blockNumber: bigint;
@@ -302,6 +314,8 @@ export interface AccountRow {
   readonly claims: readonly {
     token: string;
     symbol: string;
+    rewardSymbol: string;
+    quoteDecimals: number;
     amount: bigint;
     timestamp: number;
     blockNumber: bigint;
@@ -820,7 +834,8 @@ export interface CreatorResponse {
   readonly feeVault: string | null;
   readonly launches: readonly CreatorLaunch[];
   /** Payable now, from the vault. */
-  readonly claimable: readonly { asset: string; symbol: string; amount: string }[];
+  /** Raw vault units; `decimals` describes the paired reward asset. */
+  readonly claimable: readonly { asset: string; symbol: string; amount: string; decimals: number }[];
   /** Earned over all time, from indexed events. */
   readonly accrued: readonly { asset: string; symbol: string; amount: string }[];
   /** Withdrawals, newest first (§499). */
@@ -828,6 +843,7 @@ export interface CreatorResponse {
     asset: string;
     symbol: string;
     amount: string;
+    decimals: number;
     recipient: string;
     timestamp: number;
     blockNumber: string;
@@ -915,6 +931,7 @@ export function handleCreator(port: DataPort, address: string): ApiResult<Creato
       asset: c.asset,
       symbol: c.symbol,
       amount: c.amount.toString(),
+      decimals: c.decimals,
     })),
     accrued: row.accrued.map((a) => ({
       asset: a.asset,
@@ -925,6 +942,7 @@ export function handleCreator(port: DataPort, address: string): ApiResult<Creato
       asset: c.asset,
       symbol: c.symbol,
       amount: c.amount.toString(),
+      decimals: c.decimals,
       recipient: c.recipient,
       timestamp: c.timestamp,
       blockNumber: c.blockNumber.toString(),
@@ -961,8 +979,7 @@ export interface AccountHolding {
 export interface AccountResponse {
   readonly account: string;
   readonly holdings: readonly AccountHolding[];
-  /** Summed across holdings, in normalized quote units. */
-  readonly portfolioValue: Sourced;
+  /** Raw per-market vault units; use `quoteDecimals` to read each amount. */
   readonly stockback: readonly {
     token: string;
     symbol: string;
@@ -972,10 +989,11 @@ export interface AccountResponse {
     lifetimeClaimed: string;
     merkleRoot: string | null;
   }[];
-  readonly totalClaimable: string;
   readonly claims: readonly {
     token: string;
     symbol: string;
+    rewardSymbol: string;
+    quoteDecimals: number;
     amount: string;
     timestamp: number;
     blockNumber: string;
@@ -986,20 +1004,9 @@ export interface AccountResponse {
 /**
  * One wallet's positions, rewards and claim history (§64, §347).
  *
- * PORTFOLIO VALUE IS A MARK, AND SAYS SO
- * --------------------------------------
- * Every holding is valued at the curve's current price. Selling the whole
- * position walks DOWN the curve and returns less — sometimes much less on a
- * thin market. The figure is marked CALCULATED rather than INDEXED for exactly
- * that reason: it is derived, and the only thing that can answer "what would I
- * get" is a sell quote against the chain.
- *
- * CLAIMABLE IS ONLY EVER ATTESTED
- * -------------------------------
- * §293 keeps estimated accrual and claimable entitlement apart, and this
- * endpoint answers the second question only. A cross-market "claim everything"
- * total that included unattested arithmetic would be a number the vault will
- * not pay, offered as a button.
+ * Each holding's mark and reward balance stays attached to its market and quote
+ * asset. Values are not added across different xStocks because they are distinct
+ * units; claimable amounts remain raw so clients use the correct asset decimals.
  */
 export function handleAccount(port: DataPort, address: string): ApiResult<AccountResponse> {
   if (!ADDRESS.test(address)) {
@@ -1015,16 +1022,11 @@ export function handleAccount(port: DataPort, address: string): ApiResult<Accoun
     return ok(port, {
       account: address.toLowerCase(),
       holdings: [],
-      portfolioValue: sourced("0", "CALCULATED", port.indexedBlock(), now),
       stockback: [],
-      totalClaimable: "0",
       claims: [],
       launchCount: 0,
     });
   }
-
-  const portfolio = row.holdings.reduce((sum, h) => sum + h.value, 0n);
-  const claimable = row.stockback.reduce((sum, r) => sum + r.claimable, 0n);
 
   return ok(port, {
     account: address.toLowerCase(),
@@ -1040,7 +1042,6 @@ export function handleAccount(port: DataPort, address: string): ApiResult<Accoun
       price: sourced(h.price.toString(), "CALCULATED", h.lastBlock, now),
       value: sourced(h.value.toString(), "CALCULATED", h.lastBlock, now),
     })),
-    portfolioValue: sourced(portfolio.toString(), "CALCULATED", port.indexedBlock(), now),
     stockback: row.stockback.map((r) => ({
       token: r.token,
       symbol: r.symbol,
@@ -1050,10 +1051,11 @@ export function handleAccount(port: DataPort, address: string): ApiResult<Accoun
       lifetimeClaimed: r.lifetimeClaimed.toString(),
       merkleRoot: r.merkleRoot,
     })),
-    totalClaimable: claimable.toString(),
     claims: row.claims.map((c) => ({
       token: c.token,
       symbol: c.symbol,
+      rewardSymbol: c.rewardSymbol,
+      quoteDecimals: c.quoteDecimals,
       amount: c.amount.toString(),
       timestamp: c.timestamp,
       blockNumber: c.blockNumber.toString(),
@@ -1562,6 +1564,8 @@ export function handleQuote(port: DataPort, request: QuoteRequest): ApiResult<Tr
 export interface StockbackResponse {
   readonly market: string;
   readonly account: string;
+  /** Decimals of the reward asset; Stockback values below are in raw token units. */
+  readonly quoteDecimals: number;
   /**
    * Two separate fields, deliberately. §293 requires estimated accrual and
    * claimable entitlement to be distinguishable, and the provenance on each says
@@ -1606,6 +1610,7 @@ export async function handleStockback(
   return ok(port, {
     market: row.market,
     account: account.toLowerCase(),
+    quoteDecimals: row.quoteDecimals,
     estimatedAccrued: sourced(stockback.estimatedAccrued.toString(), "ESTIMATED", indexed, port.serverTime()),
     claimable: sourced(stockback.claimable.toString(), "INDEXED", indexed, port.serverTime()),
     lifetimeClaimed: sourced(stockback.lifetimeClaimed.toString(), "INDEXED", indexed, port.serverTime()),
@@ -1645,9 +1650,10 @@ export interface HealthResponse {
  * the operator alerts on it, and a UI can offer the finalise to whoever is
  * looking at a stalled market. All three want the same list.
  *
- * `waitingBlocks` is what a threshold is set against. A market passes through
- * this state once and briefly, so a large value means nobody finalised — not
- * that the market is busy.
+ * `waitingBlocks` is what a threshold is set against. A market enters this
+ * state once, but it can remain pending through a keeper outage, unavailable
+ * large lane or venue failure. A large value is a liveness fault, not a busy
+ * market.
  */
 export interface PendingGraduationsResponse {
   readonly pending: readonly {
@@ -1727,6 +1733,8 @@ export interface LaunchConfigResponse {
     readonly symbol: string;
     readonly decimals: number;
     readonly underlying: string | null;
+    /** Configured price contract, when one exists for this quote asset. */
+    readonly priceSource: string | null;
     /**
      * The USD anchor a launch against this asset would use (§18, §402).
      *
@@ -1744,6 +1752,18 @@ export interface LaunchConfigResponse {
   readonly launchFee: string;
   /** Null when governance has not set a reference price adapter (§402). */
   readonly referencePrice: string | null;
+  /** Whether the deployed Stockback vault can accept a valid distribution. */
+  readonly stockback: {
+    readonly vault: string;
+    readonly factoryGuardMarkerPresent: boolean;
+    readonly vaultReadinessCheckSupported: boolean;
+    readonly vaultConfigurationReady: boolean;
+    readonly guardian: string | null;
+    readonly attestorCount: string;
+    readonly quorum: string;
+    readonly claimsPaused: boolean;
+    readonly ready: boolean;
+  };
   readonly ready: boolean;
 }
 
@@ -1751,6 +1771,15 @@ export function handleLaunchConfig(
   port: DataPort,
   config: LaunchPreconditions,
 ): ApiResponse<LaunchConfigResponse> {
+  const stockbackReady =
+    config.stockback.factoryGuardMarkerPresent &&
+    config.stockback.vaultReadinessCheckSupported &&
+    config.stockback.vaultConfigurationReady &&
+    config.stockback.guardian !== null &&
+    config.stockback.quorum > 0n &&
+    config.stockback.quorum <= config.stockback.attestorCount &&
+    !config.stockback.claimsPaused;
+
   return ok(port, {
     factory: config.factory,
     launchable: config.launchable.map((a) => ({
@@ -1758,14 +1787,27 @@ export function handleLaunchConfig(
       symbol: a.symbol,
       decimals: a.decimals,
       underlying: a.underlying,
+      priceSource: a.priceSource,
       usdPriceWad: a.usdPriceWad === null ? null : a.usdPriceWad.toString(),
       priceUpdatedAt: a.priceUpdatedAt,
     })),
     graduationRouter: config.router,
     launchFee: config.launchFee.toString(),
     referencePrice: config.referencePrice,
+    stockback: {
+      vault: config.stockback.vault,
+      factoryGuardMarkerPresent: config.stockback.factoryGuardMarkerPresent,
+      vaultReadinessCheckSupported: config.stockback.vaultReadinessCheckSupported,
+      vaultConfigurationReady: config.stockback.vaultConfigurationReady,
+      guardian: config.stockback.guardian,
+      attestorCount: config.stockback.attestorCount.toString(),
+      quorum: config.stockback.quorum.toString(),
+      claimsPaused: config.stockback.claimsPaused,
+      ready: stockbackReady,
+    },
     /*
-     * Three conditions, not two.
+     * Three conditions, not two: a graduation route, at least one fresh
+     * reference price, and a Stockback vault ready to publish distributions.
      *
      * An asset with no readable anchor is one whose launch reverts in
      * `referencePriceToP0` — §402 blocks a launch on an invalid or stale price
@@ -1774,7 +1816,8 @@ export function handleLaunchConfig(
      */
     ready:
       config.router !== null &&
-      config.launchable.some((a) => a.usdPriceWad !== null),
+      config.launchable.some((a) => a.usdPriceWad !== null) &&
+      stockbackReady,
   });
 }
 

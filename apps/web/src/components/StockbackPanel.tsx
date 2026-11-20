@@ -41,8 +41,9 @@ import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
 import { buildClaimStockbackIntent } from "@sent/sdk";
 
 import { getStockback, isOk, type StockbackResponse } from "../lib/api.ts";
-import { formatQuoteCompact, formatQuoteFixed } from "../lib/format.ts";
+import { formatAmount, formatCompact, formatFixed, placesFor } from "../lib/format.ts";
 import { useWallet, CHAIN_ID } from "../lib/wallet.ts";
+import { track } from "../lib/transactions.ts";
 import { IntentReview } from "./IntentReview.tsx";
 
 import styles from "./StockbackPanel.module.css";
@@ -126,9 +127,9 @@ export function StockbackPanel({
       cumulative: big(data.cumulative),
       proof: data.proof as readonly `0x${string}`[],
       payable: claimable,
-      // Stockback is paid in the quote asset, and every quote figure the API
-      // serves is normalized to eighteen places (see `format.ts`).
-      decimals: 18,
+      // Cumulative and payable values are raw vault units; use the paired asset's
+      // registry decimals for the wallet review while preserving raw calldata.
+      decimals: data.quoteDecimals,
       symbol: rewardSymbol,
     });
   }, [data, address, market, claimable, rewardSymbol]);
@@ -160,7 +161,9 @@ export function StockbackPanel({
     setSent(null);
 
     try {
-      setSent(await wallet.send(wire));
+      const hash = await wallet.send(wire);
+      track({ hash, summary: wire.review.summary, token });
+      setSent(hash);
       const controller = new AbortController();
       await load(address, controller.signal);
     } catch (caught) {
@@ -201,18 +204,21 @@ export function StockbackPanel({
             */}
             <Figure
               term="Claimable now"
-              value={`${formatQuoteCompact(claimable)} ${rewardSymbol}`}
+              value={`${formatAmount(claimable, data.quoteDecimals)} ${rewardSymbol}`}
               detail="Settled against an activated root. This is what the vault pays."
               emphasis
             />
             <Figure
               term="Accruing this epoch"
-              value={`${formatQuoteFixed(accrued)} ${rewardSymbol}`}
+              value={`${formatFixed(accrued, data.quoteDecimals, {
+                places: placesFor(accrued, data.quoteDecimals),
+                pad: true,
+              })} ${rewardSymbol}`}
               detail="An estimate for the epoch in progress. It is not payable until the epoch closes and its root is activated."
             />
             <Figure
               term="Claimed so far"
-              value={`${formatQuoteCompact(claimed)} ${rewardSymbol}`}
+              value={`${formatCompact(claimed, data.quoteDecimals)} ${rewardSymbol}`}
               detail="Everything this wallet has already withdrawn from this market."
             />
           </dl>

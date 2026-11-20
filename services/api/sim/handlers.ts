@@ -134,6 +134,9 @@ class FakePort implements DataPort {
   stockbackVault(): Promise<`0x${string}` | null> {
     return Promise.resolve(this.rewardVault);
   }
+  listDatasetEntries() {
+    return Promise.resolve({ dataset: null, entries: [], nextCursor: null });
+  }
   rewardVault: `0x${string}` | null = "0xf7dce0cc413d6d7f855a742a02545253bbb0cb92";
   listMarkets(): readonly MarketRow[] {
     return this.market ? [this.market] : [];
@@ -175,7 +178,7 @@ class FakePort implements DataPort {
     launches: [baseMarket],
     feeVault: "0x6666666666666666666666666666666666666666",
     claimable: [
-      { asset: "0x5555555555555555555555555555555555555555", symbol: "NVDAx", amount: 250n },
+      { asset: "0x5555555555555555555555555555555555555555", symbol: "NVDAx", amount: 250n, decimals: 6 },
     ],
     accrued: [
       { asset: "0x5555555555555555555555555555555555555555", symbol: "NVDAx", amount: 900n },
@@ -185,6 +188,7 @@ class FakePort implements DataPort {
         asset: "0x5555555555555555555555555555555555555555",
         symbol: "NVDAx",
         amount: 650n,
+        decimals: 6,
         recipient: "0x4444444444444444444444444444444444444444",
         timestamp: 1_699_999_000,
         blockNumber: 870n,
@@ -231,7 +235,7 @@ class FakePort implements DataPort {
       },
     ],
     claims: [
-      { token: TOKEN, symbol: "TEST", amount: 789n, timestamp: 1_700_000_200, blockNumber: 880n },
+      { token: TOKEN, symbol: "TEST", rewardSymbol: "NVDAx", quoteDecimals: 6, amount: 789n, timestamp: 1_700_000_200, blockNumber: 880n },
     ],
     launchCount: 1,
   };
@@ -1008,17 +1012,11 @@ console.log("\n--- 11. \u00a764/\u00a7347: the account dashboard ---------------
    * that distinction to survive the wire, and this is the value where confusing
    * the two would cost a user money.
    */
-  check(
-    "portfolio value is CALCULATED, not INDEXED",
-    result.data.portfolioValue.provenance === "CALCULATED",
-  );
-  check("and sums the holdings", result.data.portfolioValue.value === "100000000000000");
-
-  // \u00a7293 again, one level up: the cross-market total must not include anything
-  // unattested, or a "claim everything" button spends a number the vault refuses.
-  check("the claimable total is the attested sum", result.data.totalClaimable === "456");
+  check("stockback stays in raw per-asset units", result.data.stockback[0]?.claimable === "456");
+  check("quote decimals accompany the raw amount", result.data.stockback[0]?.quoteDecimals === 6);
   check("lifetime claimed is separate from it", result.data.stockback[0]?.lifetimeClaimed === "789");
   check("the claim history is carried", result.data.claims.length === 1);
+  check("claim history preserves the raw reward decimals", result.data.claims[0]?.quoteDecimals === 6);
   check("launches are counted, not listed", result.data.launchCount === 1);
 }
 
@@ -1028,7 +1026,7 @@ console.log("\n--- 11. \u00a764/\u00a7347: the account dashboard ---------------
 
   const empty = handleAccount(port, ACCOUNT);
   check("an account with nothing is not an error", empty.ok);
-  check("and its portfolio value is zero, not absent", empty.ok && empty.data.portfolioValue.value === "0");
+  check("and its holdings are an empty list", empty.ok && empty.data.holdings.length === 0);
 
   const bad = handleAccount(port, "0xnope");
   check("a malformed address is refused by name", !bad.ok && bad.code === "INVALID_ADDRESS");

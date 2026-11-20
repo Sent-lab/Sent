@@ -15,6 +15,7 @@ import {Curve} from "../src/lib/Curve.sol";
 import {Metadata} from "../src/lib/Metadata.sol";
 import {ReferencePriceAdapter} from "../src/ReferencePriceAdapter.sol";
 import {MockAggregator} from "./mocks/MockAggregator.sol";
+import {StockbackTestReadiness} from "./helpers/StockbackTestReadiness.sol";
 
 contract GuardQuote is ERC20 {
     uint8 private d;
@@ -92,6 +93,7 @@ contract GuardPathsTest is Test {
 
         vm.prank(deployer);
         factory = new LaunchpadFactory(governance, treasury, address(registry), FEE);
+        StockbackTestReadiness.configure(vm, factory.REWARD_VAULT(), governance);
 
         vm.prank(governance);
         factory.setRouter(address(router));
@@ -174,6 +176,7 @@ contract GuardPathsTest is Test {
         XStockRegistry r2 = new XStockRegistry(governance, address(0));
         vm.prank(deployer);
         LaunchpadFactory bare = new LaunchpadFactory(governance, treasury, address(r2), FEE);
+        StockbackTestReadiness.configure(vm, bare.REWARD_VAULT(), governance);
 
         vm.prank(creator);
         vm.expectRevert(LaunchpadFactory.RouterNotSet.selector);
@@ -237,6 +240,7 @@ contract GuardPathsTest is Test {
     function test_launchIsBlockedWithNoReferencePriceAdapter() public {
         vm.prank(deployer);
         LaunchpadFactory bare = new LaunchpadFactory(governance, treasury, address(registry), FEE);
+        StockbackTestReadiness.configure(vm, bare.REWARD_VAULT(), governance);
 
         vm.prank(governance);
         bare.setRouter(address(router));

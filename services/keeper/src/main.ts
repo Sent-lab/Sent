@@ -30,9 +30,11 @@
  */
 
 import { Database, marketsAwaitingFinalisation } from "@sent/database";
+import { HYPEREVM_CHAIN_ID, PLATFORM_ACCOUNTS } from "@sent/config";
 import { databaseEnv, chainEnv, keeperEnv, loadAll } from "@sent/config/env";
 import { createLogger } from "@sent/observability/logger";
 import { serveOperations } from "@sent/observability/server";
+import { privateKeyToAccount } from "viem/accounts";
 
 import { sweep, type PendingMarket } from "./keeper.ts";
 import { createChainSide, createDeps } from "./chain.ts";
@@ -44,6 +46,21 @@ async function main(): Promise<void> {
     chain: chainConfig,
     keeper: keeperConfig,
   } = loadAll({ db: databaseEnv, chain: chainEnv, keeper: keeperEnv });
+
+  // Watch-only remains available while release configuration is incomplete.
+  // On HyperEVM, a configured signing key must match the canonical relayer
+  // address so an accidental secret cannot turn this process into an
+  // unconfigured transaction sender.
+  if (chainConfig.chainId === HYPEREVM_CHAIN_ID && keeperConfig.privateKey !== null) {
+    const expectedRelayer = PLATFORM_ACCOUNTS.opsRelayer as `0x${string}` | null;
+    if (expectedRelayer === null) {
+      throw new Error("KEEPER_PRIVATE_KEY is set on HyperEVM, but PLATFORM_ACCOUNTS.opsRelayer is not configured");
+    }
+    const actualRelayer = privateKeyToAccount(keeperConfig.privateKey).address;
+    if (actualRelayer.toLowerCase() !== expectedRelayer.toLowerCase()) {
+      throw new Error("KEEPER_PRIVATE_KEY does not match PLATFORM_ACCOUNTS.opsRelayer");
+    }
+  }
 
   const log = createLogger({ service: "keeper" });
 

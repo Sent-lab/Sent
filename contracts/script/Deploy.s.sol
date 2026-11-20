@@ -24,11 +24,10 @@ import {HolderRewardVault} from "../src/HolderRewardVault.sol";
 ///      deploy script that enabled assets from a config file would be the single
 ///      easiest place in this system to point a market at the wrong address.
 ///
-///      It does not set the graduation router. The router depends on HyperSwap's
-///      position manager and the lock primitive, both of which are open
-///      verification items (V-06, V-09). A market launched before the router is
-///      wired cannot graduate, so the factory must not accept launches until
-///      governance sets it — which is a governance transaction, not this script.
+///      It does not set the graduation router. HyperSwap's V3 addresses are now
+///      verified (V-06), but the SENT lock/router still need a separate deployment
+///      and the governance Safe must set the router. A market launched before the
+///      router is wired cannot graduate, so the factory refuses launches.
 ///
 ///      It refuses to hand mainnet governance to an externally owned account.
 ///      Governance can enable assets, move the treasury and set the router; a
@@ -95,19 +94,17 @@ contract Deploy is Script {
          * The graduation router is NOT deployed here, and that is deliberate.
          *
          * It is written and tested — `GraduationRouter`, `PermanentLiquidityLock`
-         * and `V3Math` — but its constructor takes three HyperSwap addresses
-         * that V-06 has not confirmed, and ALL THREE are immutable once
-         * deployed — as is the position manager inside the lock. Guessing them
-         * produces a router that looks configured and mints a market's entire
-         * liquidity into a contract nobody verified, and correcting it later
-         * means redeploying both while the old lock still holds a real position
-         * that nothing can move.
+         * and `V3Math`. HyperSwap's factory, router and position manager have
+         * first-party docs and matching live reads (V-06). The SENT router and
+         * lock are still separate immutable deployments, and the lock embeds the
+         * predicted router address. `DeployGraduation.s.sol` handles that pair;
+         * the governance Safe wires the result after reviewing it.
          *
          * §279 forbids a placeholder standing in for an unverified dependency,
          * and a factory with no router already refuses to launch anything —
          * which is the honest failure and the one an operator can act on.
          *
-         * Deployment order, once V-06 and V-09 close:
+         * Deployment order:
          *
          *   1. PermanentLiquidityLock(positionManager, <predicted router>)
          *   2. GraduationRouter(factory, v3Factory, positionManager, swapRouter, lock)
@@ -185,6 +182,7 @@ contract Deploy is Script {
         require(config.governance != config.treasury, "Deploy: governance and treasury must differ");
 
         _assertGovernanceQuorum(config.governance);
+        _assertTreasuryQuorum(config.treasury);
     }
 
     /**
@@ -253,6 +251,32 @@ contract Deploy is Script {
         );
     }
 
+    /**
+     * @dev Treasury controls withdrawals of platform fee revenue. A 1-of-1
+     *      treasury can lose or transfer that revenue with one key, so merely
+     *      checking that it has bytecode is not enough for a HyperEVM deploy.
+     *      Keep the same resilience floor as governance: at least 2 signers
+     *      required and at least one spare owner beyond the threshold.
+     */
+    function _assertTreasuryQuorum(address treasury) internal view {
+        (bool okThreshold, bytes memory thresholdData) =
+            treasury.staticcall(abi.encodeWithSignature("getThreshold()"));
+        (bool okOwners, bytes memory ownersData) =
+            treasury.staticcall(abi.encodeWithSignature("getOwners()"));
+
+        require(okThreshold && thresholdData.length >= 32, "Deploy: treasury is not a Safe (C-08, S601)");
+        require(okOwners && ownersData.length >= 64, "Deploy: treasury is not a Safe (C-08, S601)");
+
+        uint256 threshold = abi.decode(thresholdData, (uint256));
+        address[] memory owners = abi.decode(ownersData, (address[]));
+
+        require(threshold >= 2, "Deploy: treasury threshold must be at least 2 (C-08, S601)");
+        require(
+            owners.length > threshold,
+            "Deploy: treasury needs more owners than its threshold (C-08, S601)"
+        );
+    }
+
     /// @dev Prints what was deployed AND what is still missing.
     ///
     ///      The second half matters more. A deployment log that lists addresses
@@ -280,15 +304,13 @@ contract Deploy is Script {
         console2.log("");
         console2.log("NOT DONE - required before any launch:");
         console2.log("  1. deploy the lock + router, then factory.setRouter(...)");
-        console2.log("     the router is written and tested; its HyperSwap");
-        console2.log("     addresses are  [blocked on V-06, V-09]");
-        console2.log("  2. governance registers and enables xStocks  [blocked on V-02, V-03, V-05]");
-        console2.log("  3. governance configures a price feed per asset on the adapter,");
-        console2.log("     then calls factory.setReferencePrice(...)  [blocked on V-11]");
-        console2.log("  4. attestors registered on the reward vault  [blocked on C-08]");
+        console2.log("     HyperSwap V3 addresses verified (V-06); then Safe calls setRouter");
+        console2.log("  2. verify one quote-wrapper route and complete its eight registry gates");
+        console2.log("  3. integrate a signed-report USD oracle adapter and Safe-configure it (V-11)");
+        console2.log("  4. configure Stockback guardian, independent attestors and nonzero quorum (C-08)");
         console2.log("");
-        console2.log("A launch is refused outright until 1 and 3 are done. Step 3 is the");
-        console2.log("launch anchor: without it p0 has no source, and p0 is immutable for");
-        console2.log("the life of every market it prices.");
+        console2.log("A launch is refused outright until all four steps pass. The factory");
+        console2.log("checks router, price source, asset gates and Stockback readiness onchain.");
+        console2.log("The launch anchor is immutable for the life of every market it prices.");
     }
 }

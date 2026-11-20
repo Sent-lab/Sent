@@ -1056,10 +1056,11 @@ export async function insertBalanceEvent(
   db: Db,
   e: { blockNumber: bigint; logIndex: number; market: string; account: string; delta: bigint; timestamp: number },
 ): Promise<void> {
-  await db.query(
+  const inserted = await db.queryOne<{ inserted: number }>(
     `INSERT INTO balance_events (block_number, log_index, market, account, delta, timestamp)
      VALUES ($1,$2,$3,$4,$5,$6)
-     ON CONFLICT (block_number, log_index, account) DO NOTHING`,
+     ON CONFLICT (block_number, log_index, account) DO NOTHING
+     RETURNING 1 AS inserted`,
     [
       e.blockNumber.toString(),
       e.logIndex,
@@ -1069,6 +1070,12 @@ export async function insertBalanceEvent(
       e.timestamp,
     ],
   );
+
+  // The event row is the idempotency key. A replay can legitimately encounter
+  // an already-recorded log (for example after an overlapping poll); if it did
+  // not insert a new event, applying its delta again would corrupt the running
+  // balance and can make a valid holder appear negative.
+  if (inserted === null) return;
 
   // TWO statements, and they cannot be collapsed into one.
   //
@@ -1846,6 +1853,8 @@ export interface ClaimRow {
   readonly market: `0x${string}`;
   readonly token: `0x${string}`;
   readonly symbol: string;
+  readonly rewardAsset: `0x${string}`;
+  readonly quoteDecimals: number;
   readonly amount: bigint;
   readonly cumulative: bigint;
   readonly blockNumber: bigint;
@@ -1859,7 +1868,8 @@ export async function listClaimsByAccount(
   limit = 50,
 ): Promise<ClaimRow[]> {
   const rows = await db.query<Record<string, unknown>>(
-    `SELECT c.market, m.token, m.symbol, c.amount, c.cumulative,
+    `SELECT c.market, m.token, m.symbol, m.quote_asset, m.quote_decimals,
+            c.amount, c.cumulative,
             c.block_number, c.timestamp
      FROM stockback_claims c JOIN markets m ON m.market = c.market
      WHERE c.account = $1
@@ -1872,6 +1882,8 @@ export async function listClaimsByAccount(
     market: addr(r.market, "market"),
     token: addr(r.token, "token"),
     symbol: String(r.symbol),
+    rewardAsset: addr(r.quote_asset, "quote_asset"),
+    quoteDecimals: Number(r.quote_decimals),
     amount: big(r.amount, "amount"),
     cumulative: big(r.cumulative, "cumulative"),
     blockNumber: big(r.block_number, "block_number"),
@@ -2701,6 +2713,61 @@ export async function getEntitlementForRoot(
   };
 }
 
+/**
+ * A bounded, public page of the entries behind one Stockback dataset.
+ *
+ * Ordering by the encoded address makes pages deterministic and lets a caller
+ * concatenate them in the exact order used by `buildDistributionTree` when
+ * independently checking the root and dataset hash.
+ */
+export async function listDatasetEntries(
+  db: Db,
+  market: string,
+  epochSequence: bigint,
+  cursor: string | null,
+  limit = 500,
+): Promise<{
+  dataset: { merkleRoot: `0x${string}`; datasetHash: `0x${string}`; holderCount: number } | null;
+  entries: { account: `0x${string}`; cumulative: bigint }[];
+  nextCursor: `0x${string}` | null;
+}> {
+  const datasetRow = await db.queryOne<Record<string, unknown>>(
+    `SELECT merkle_root, dataset_hash, holder_count
+     FROM stockback_datasets
+     WHERE market = $1 AND epoch_sequence = $2`,
+    [toBytes(market), epochSequence.toString()],
+  );
+  if (datasetRow === null) return { dataset: null, entries: [], nextCursor: null };
+
+  const pageSize = Math.max(1, Math.min(limit, 500));
+  const rows = await db.query<Record<string, unknown>>(
+    `SELECT account, cumulative
+     FROM stockback_entitlements
+     WHERE market = $1 AND epoch_sequence = $2
+       AND ($3::BYTEA IS NULL OR account > $3)
+     ORDER BY account ASC
+     LIMIT $4`,
+    [toBytes(market), epochSequence.toString(), cursor === null ? null : toBytes(cursor), pageSize + 1],
+  );
+
+  const hasMore = rows.length > pageSize;
+  const page = hasMore ? rows.slice(0, pageSize) : rows;
+  const entries = page.map((row) => ({
+    account: addr(row.account, "account"),
+    cumulative: big(row.cumulative, "cumulative"),
+  }));
+
+  return {
+    dataset: {
+      merkleRoot: hexBytes(datasetRow.merkle_root, "merkle_root"),
+      datasetHash: hexBytes(datasetRow.dataset_hash, "dataset_hash"),
+      holderCount: Number(big(datasetRow.holder_count, "holder_count")),
+    },
+    entries,
+    nextCursor: hasMore ? (entries.at(-1)?.account ?? null) : null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------------
@@ -2743,10 +2810,13 @@ export async function finalizedHead(
 }
 
 export async function headBlockIndexed(db: Db): Promise<bigint> {
-  const row = await db.queryOne<{ number: string | null }>(
-    "SELECT MAX(number)::TEXT AS number FROM blocks",
+  // The event-block table is intentionally sparse: empty blocks have no
+  // projection rows. Freshness must use the indexer's committed scan cursor,
+  // otherwise an idle chain looks permanently behind its latest event.
+  const row = await db.queryOne<{ last_processed_block: string }>(
+    "SELECT last_processed_block FROM indexer_state WHERE id = 1",
   );
-  return row === null || row.number === null ? 0n : big(row.number, "head_block");
+  return row === null ? 0n : big(row.last_processed_block, "last_processed_block");
 }
 
 export { bigOrNull };

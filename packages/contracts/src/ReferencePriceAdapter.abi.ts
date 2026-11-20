@@ -4,360 +4,381 @@
 
 export const referencePriceAdapterAbi = [
   {
-    "type": "constructor",
     "inputs": [
       {
+        "internalType": "address",
         "name": "governance_",
-        "type": "address",
-        "internalType": "address"
+        "type": "address"
       }
     ],
-    "stateMutability": "nonpayable"
+    "stateMutability": "nonpayable",
+    "type": "constructor"
   },
   {
-    "type": "function",
-    "name": "configure",
     "inputs": [
       {
+        "internalType": "address",
         "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "aggregator",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "maxAge",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "minUsdWad",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "maxUsdWad",
-        "type": "uint128",
-        "internalType": "uint128"
+        "type": "address"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "name": "FeedUnreadable",
+    "type": "error"
   },
   {
-    "type": "function",
-    "name": "governance",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "peekUsdPriceWad",
     "inputs": [
       {
+        "internalType": "address",
         "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "ok",
-        "type": "bool",
-        "internalType": "bool"
+        "type": "address"
       },
       {
-        "name": "usdWad",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
+        "internalType": "uint256",
         "name": "updatedAt",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "nowTimestamp",
+        "type": "uint256"
       }
     ],
-    "stateMutability": "view"
+    "name": "FuturePrice",
+    "type": "error"
   },
   {
-    "type": "function",
-    "name": "removeSource",
     "inputs": [
       {
+        "internalType": "address",
         "name": "asset",
-        "type": "address",
-        "internalType": "address"
+        "type": "address"
       }
     ],
+    "name": "IncompleteRound",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidBand",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidMaxAge",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      }
+    ],
+    "name": "NoSource",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      },
+      {
+        "internalType": "int256",
+        "name": "answer",
+        "type": "int256"
+      }
+    ],
+    "name": "NonPositivePrice",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NotGovernance",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "usdWad",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "minUsdWad",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "maxUsdWad",
+        "type": "uint256"
+      }
+    ],
+    "name": "PriceOutOfBand",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "updatedAt",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "maxAge",
+        "type": "uint256"
+      }
+    ],
+    "name": "StalePrice",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ZeroAddress",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "from",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      }
+    ],
+    "name": "GovernanceTransferred",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "aggregator",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint32",
+        "name": "maxAge",
+        "type": "uint32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint128",
+        "name": "minUsdWad",
+        "type": "uint128"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint128",
+        "name": "maxUsdWad",
+        "type": "uint128"
+      }
+    ],
+    "name": "SourceConfigured",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      }
+    ],
+    "name": "SourceRemoved",
+    "type": "event"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "aggregator",
+        "type": "address"
+      },
+      {
+        "internalType": "uint32",
+        "name": "maxAge",
+        "type": "uint32"
+      },
+      {
+        "internalType": "uint128",
+        "name": "minUsdWad",
+        "type": "uint128"
+      },
+      {
+        "internalType": "uint128",
+        "name": "maxUsdWad",
+        "type": "uint128"
+      }
+    ],
+    "name": "configure",
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "nonpayable",
+    "type": "function"
   },
   {
-    "type": "function",
-    "name": "sourceOf",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
+    "inputs": [],
+    "name": "governance",
     "outputs": [
       {
+        "internalType": "address",
         "name": "",
-        "type": "tuple",
-        "internalType": "struct ReferencePriceAdapter.Source",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      }
+    ],
+    "name": "peekUsdPriceWad",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "ok",
+        "type": "bool"
+      },
+      {
+        "internalType": "uint256",
+        "name": "usdWad",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "updatedAt",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      }
+    ],
+    "name": "removeSource",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      }
+    ],
+    "name": "sourceOf",
+    "outputs": [
+      {
         "components": [
           {
+            "internalType": "address",
             "name": "aggregator",
-            "type": "address",
-            "internalType": "address"
+            "type": "address"
           },
           {
+            "internalType": "uint32",
             "name": "maxAge",
-            "type": "uint32",
-            "internalType": "uint32"
+            "type": "uint32"
           },
           {
+            "internalType": "uint128",
             "name": "minUsdWad",
-            "type": "uint128",
-            "internalType": "uint128"
+            "type": "uint128"
           },
           {
+            "internalType": "uint128",
             "name": "maxUsdWad",
-            "type": "uint128",
-            "internalType": "uint128"
+            "type": "uint128"
           }
-        ]
+        ],
+        "internalType": "struct ReferencePriceAdapter.Source",
+        "name": "",
+        "type": "tuple"
       }
     ],
-    "stateMutability": "view"
+    "stateMutability": "view",
+    "type": "function"
   },
   {
-    "type": "function",
-    "name": "transferGovernance",
     "inputs": [
       {
+        "internalType": "address",
         "name": "to",
-        "type": "address",
-        "internalType": "address"
+        "type": "address"
       }
     ],
+    "name": "transferGovernance",
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "nonpayable",
+    "type": "function"
   },
   {
-    "type": "function",
-    "name": "usdPriceWad",
     "inputs": [
       {
+        "internalType": "address",
         "name": "asset",
-        "type": "address",
-        "internalType": "address"
+        "type": "address"
       }
     ],
+    "name": "usdPriceWad",
     "outputs": [
       {
+        "internalType": "uint256",
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "uint256"
       }
     ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "event",
-    "name": "GovernanceTransferred",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SourceConfigured",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "aggregator",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "maxAge",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "minUsdWad",
-        "type": "uint128",
-        "indexed": false,
-        "internalType": "uint128"
-      },
-      {
-        "name": "maxUsdWad",
-        "type": "uint128",
-        "indexed": false,
-        "internalType": "uint128"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SourceRemoved",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "FeedUnreadable",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "IncompleteRound",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "InvalidBand",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidMaxAge",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NoSource",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "NonPositivePrice",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "answer",
-        "type": "int256",
-        "internalType": "int256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "NotGovernance",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "PriceOutOfBand",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "usdWad",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minUsdWad",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxUsdWad",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "StalePrice",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "updatedAt",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxAge",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ZeroAddress",
-    "inputs": []
+    "stateMutability": "view",
+    "type": "function"
   }
 ] as const;

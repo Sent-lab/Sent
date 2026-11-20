@@ -35,9 +35,10 @@ COMMENT ON COLUMN market_state.graduating_at_block IS
     'and on Graduated (a reindex from a later block never sees the first), and '
     'never cleared.';
 
--- Partial index: the pending set is small by construction - a market passes
--- through it once, briefly - so indexing only the rows in it keeps the keeper's
--- query proportional to the work outstanding rather than to the market count.
+-- Partial index: each market enters the pending set at most once, but failures
+-- or an operator outage can leave it pending indefinitely. Index only those
+-- rows so the keeper's query stays proportional to outstanding work rather than
+-- total market count; monitoring must alert before the set silently accumulates.
 CREATE INDEX IF NOT EXISTS market_state_awaiting_finalisation_idx
     ON market_state (graduating_at_block)
     WHERE graduating_at_block IS NOT NULL AND status <> 2;

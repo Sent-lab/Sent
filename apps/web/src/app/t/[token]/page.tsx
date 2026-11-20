@@ -23,6 +23,7 @@
  */
 
 import { notFound } from "next/navigation";
+import { WHYPE_ADDRESS } from "@sent/config";
 
 import { getMarket, getTape, isOk, API_BASE } from "../../../lib/api.ts";
 import {
@@ -41,6 +42,7 @@ import { ShareMarket } from "../../../components/ShareMarket.tsx";
 import { MobileTradeDock } from "../../../components/MobileTradeDock.tsx";
 import { FinalizePanel } from "../../../components/FinalizePanel.tsx";
 import { WrapPanel } from "../../../components/WrapPanel.tsx";
+import { HypeWrapPanel } from "../../../components/HypeWrapPanel.tsx";
 import { MarketAbout } from "../../../components/MarketAbout.tsx";
 import { StockbackPanel } from "../../../components/StockbackPanel.tsx";
 import { DistributionHistory } from "../../../components/DistributionHistory.tsx";
@@ -199,6 +201,9 @@ export default async function TerminalPage({
               , and that address is the asset this market is actually quoted against.
             </span>
           )}
+          {market.quoteAsset.toLowerCase() === WHYPE_ADDRESS.toLowerCase() && (
+            <HypeWrapPanel token={market.token} />
+          )}
           <FreshnessBadge envelope={marketResult.freshness} />
 
           {/*
@@ -304,6 +309,7 @@ export default async function TerminalPage({
           */}
           {market.quoteUnderlying != null && (
             <WrapPanel
+              token={market.token}
               wrapper={market.quoteAsset}
               underlying={market.quoteUnderlying}
               wrapperSymbol={market.quoteSymbol}
@@ -332,6 +338,7 @@ export default async function TerminalPage({
         */}
         {status === "GRADUATING" && (
           <FinalizePanel
+            token={market.token}
             market={market.market}
             symbol={market.symbol}
             quoteSymbol={market.quoteSymbol}

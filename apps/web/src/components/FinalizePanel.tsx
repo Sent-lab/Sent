@@ -50,11 +50,14 @@ import { TOTAL_SUPPLY } from "@sent/economics";
 
 import { getPendingGraduations, isOk } from "../lib/api.ts";
 import { useWallet, CHAIN_ID } from "../lib/wallet.ts";
+import { track } from "../lib/transactions.ts";
 import { IntentReview } from "./IntentReview.tsx";
 
 import styles from "./FinalizePanel.module.css";
 
 export interface FinalizePanelProps {
+  /** For the transaction center's deep link back to this market (§61). */
+  readonly token: string;
   readonly market: string;
   readonly symbol: string;
   readonly quoteSymbol: string;
@@ -65,6 +68,7 @@ export interface FinalizePanelProps {
 }
 
 export function FinalizePanel({
+  token,
   market,
   symbol,
   quoteSymbol,
@@ -179,7 +183,9 @@ export function FinalizePanel({
     setSent(null);
 
     try {
-      setSent(await wallet.send(wire));
+      const hash = await wallet.send(wire);
+      track({ hash, summary: wire.review.summary, token });
+      setSent(hash);
     } catch (caught) {
       setError(
         caught instanceof Error

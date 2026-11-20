@@ -33,7 +33,12 @@ COPY services/realtime/package.json        services/realtime/
 COPY services/stockback/package.json       services/stockback/
 COPY services/worker/package.json          services/worker/
 
-RUN pnpm install --frozen-lockfile
+COPY packages/observability/package.json      packages/observability/
+COPY services/keeper/package.json             services/keeper/
+
+# Node 22 strips TypeScript types at runtime, so the production services do not
+# need the root typecheck, test or Turbo toolchain inside their runtime image.
+RUN pnpm install --prod --frozen-lockfile
 
 COPY packages/ packages/
 COPY services/ services/

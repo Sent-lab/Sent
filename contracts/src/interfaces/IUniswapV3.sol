@@ -4,10 +4,9 @@ pragma solidity 0.8.28;
 /// @title The HyperSwap V3 surface this protocol touches
 /// @notice Declared here, minimally, rather than imported (§443).
 ///
-/// HyperSwap V3 is a Uniswap V3 fork, so these signatures are known even though
-/// the deployed addresses are not (V-06). That is the whole reason a router can
-/// be written and tested today: the interface is a published standard, and only
-/// the addresses are an owner decision.
+/// HyperSwap V3 is a Uniswap V3 fork, so these signatures follow the published
+/// standard. Its core deployment addresses are verified (V-06); SENT's router
+/// and permanent lock still need deployment and governance configuration.
 ///
 /// WHY NOT THE REAL PACKAGE
 /// ------------------------

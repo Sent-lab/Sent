@@ -23,12 +23,13 @@ pragma solidity 0.8.28;
 /// detection, invalid-price behaviour, and — the load-bearing one — **no
 /// arbitrary manual override**.
 ///
-/// THE PROVIDER IS NOT DECIDED; THE BOUNDARY IS
-/// --------------------------------------------
-/// V-11 is open: which feed provides the snapshot on HyperEVM is an engineering
-/// validation still to be done (§253). That is exactly why an adapter exists —
-/// the factory depends on this interface, and swapping the feed changes one
-/// contract rather than the launch path.
+/// THE PROVIDER CANDIDATE IS IDENTIFIED; ITS PRODUCTION PATH IS NOT VERIFIED
+/// -------------------------------------------------------------------------
+/// V-11 has a credible xStocks/Chainlink v10 candidate on HyperEVM; Chainlink's
+/// current supported-network source lists HyperEVM Mainnet. SENT's signed-report
+/// access, v10 report handling and multiplier semantics still need validation.
+/// This boundary lets a verified implementation
+/// replace the current adapter without changing the launch path.
 ///
 /// A factory with no adapter cannot launch anything. That is the correct
 /// failure, and it is the same shape as `IGraduationRouter`: no router, no

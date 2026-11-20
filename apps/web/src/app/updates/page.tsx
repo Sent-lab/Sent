@@ -31,6 +31,16 @@ interface Entry {
 
 const ENTRIES: readonly Entry[] = [
   {
+    date: "2026-11-19",
+    title: "Launch readiness and operational clarity",
+    items: [
+      "The homepage now reads the live launch configuration, shows data freshness and explains when launch requirements are not met. Fee and Stockback figures are labelled as terms for enabled markets rather than current earnings.",
+      "Added a public Stockback dataset endpoint and a browser-side checker that rebuilds each Merkle root and dataset hash from the paged holder entries.",
+      "Added an attestor proposal flow that recomputes from an operator's indexed data and checks the EIP-712 digest against the vault. It does not hold keys or broadcast transactions.",
+      "Added opt-in keeper operations and handoff runbooks. These repository changes are not yet deployed to the public website or production services; mainnet launching remains disabled pending oracle, asset, router, operator and external review gates.",
+    ],
+  },
+  {
     date: "2026-09-03",
     title: "Live updates, the chart, and four bugs found by opening the page",
     items: [
@@ -92,8 +102,10 @@ export default function UpdatesPage(): JSX.Element {
       <header className={styles.head}>
         <h1 className={`${styles.title} m-primary`}>Updates</h1>
         <p className={`${styles.subtitle} m-secondary`}>
-          What changed, when, and what turned out to be wrong. Nothing here is shipped to
-          mainnet yet — SENT is pre-audit and not deployed.
+          What changed in the repository, when, and what turned out to be wrong. Core
+          contracts are deployed on HyperEVM, but these latest app and service changes are
+          not yet live on a public site; mainnet launches remain disabled and no external
+          security audit has been completed.
         </p>
       </header>
 

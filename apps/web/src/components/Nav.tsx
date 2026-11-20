@@ -19,6 +19,7 @@ import { useState } from "react";
 import { useWallet } from "../lib/wallet.ts";
 import { truncateAddress } from "../lib/format.ts";
 import { Logo } from "./Logo.tsx";
+import { TransactionCenter } from "./TransactionCenter.tsx";
 
 import styles from "./Nav.module.css";
 import type { JSX } from "react";
@@ -64,6 +65,11 @@ export function Nav(): JSX.Element {
         </ul>
 
         <div className={styles.actions}>
+          {/* §61: transaction context lives in the header, so it survives every
+              navigation the panels that started it do not. Renders nothing until
+              there is something to report. */}
+          <TransactionCenter />
+
           <ConnectButton />
 
           <button
@@ -140,14 +146,31 @@ function ConnectButton(): JSX.Element {
 
   if (wallet.address === null) {
     return (
-      <button
-        type="button"
-        className={styles.connect}
-        onClick={() => void wallet.connect()}
-        disabled={wallet.connecting}
-      >
-        {wallet.connecting ? "Check wallet" : "Connect"}
-      </button>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+        {wallet.wallets.length > 1 && (
+          <select
+            aria-label="Choose wallet"
+            value={wallet.selectedWalletId ?? ""}
+            onChange={(event) => wallet.selectWallet(event.target.value)}
+            style={{ maxWidth: 120, minHeight: 36, borderRadius: 8, padding: "0 7px" }}
+          >
+            {wallet.wallets.map((choice) => <option key={choice.id} value={choice.id}>{choice.name}</option>)}
+          </select>
+        )}
+        <button
+          type="button"
+          className={styles.connect}
+          onClick={() => void wallet.connect()}
+          disabled={wallet.connecting}
+          title={`Connect ${wallet.walletName ?? "wallet"}`}
+        >
+          {wallet.connecting
+            ? "Check wallet"
+            : wallet.localTestWallet
+              ? "Test wallet"
+              : `Connect${wallet.walletName ? ` ${wallet.walletName}` : ""}`}
+        </button>
+      </span>
     );
   }
 

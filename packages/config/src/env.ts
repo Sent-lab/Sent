@@ -62,6 +62,17 @@ function integer(env: Env, key: string, fallback: number): number {
   return Number(value);
 }
 
+/** Read an explicit boolean without treating typos as a silent false. */
+function boolean(env: Env, key: string, fallback: boolean): boolean {
+  const raw = env[key];
+  if (raw === undefined || raw.trim() === "") return fallback;
+
+  const value = raw.trim().toLowerCase();
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new ConfigError(`${key} must be "true" or "false", got "${raw}"`);
+}
+
 /** Read a 20-byte address, normalised to lower case. */
 function address(env: Env, key: string): `0x${string}` {
   const value = required(env, key);
@@ -136,6 +147,8 @@ export interface ApiEnv {
   readonly host: string;
   readonly refreshIntervalMs: number;
   readonly allowedOrigins: readonly string[];
+  /** Trust X-Forwarded-For only when a controlled ingress overwrites it. */
+  readonly trustProxy: boolean;
 }
 
 export function apiEnv(env: Env = process.env): ApiEnv {
@@ -144,6 +157,7 @@ export function apiEnv(env: Env = process.env): ApiEnv {
     host: optional(env, "API_HOST", "0.0.0.0"),
     refreshIntervalMs: integer(env, "API_REFRESH_INTERVAL_MS", 2_000),
     allowedOrigins: origins(env, "API_ALLOWED_ORIGINS"),
+    trustProxy: boolean(env, "API_TRUST_PROXY", false),
   };
 }
 

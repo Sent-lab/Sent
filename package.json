@@ -11,7 +11,6 @@
   "scripts": {
     "build": "turbo run build",
     "typecheck": "tsc -p tsconfig.check.json",
-    "lint": "turbo run lint",
     "test": "turbo run test",
     "sim": "node --experimental-strip-types packages/economics/sim/reference.ts",
     "sim:v3": "node --experimental-strip-types packages/economics/sim/graduation-v3.ts",

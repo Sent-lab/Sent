@@ -19,7 +19,291 @@ source, `PARTIAL`, or `BLOCKED` and escalated. Nothing in production may depend 
 > candidates to probe on-chain, and are recorded below with the PRIMARY read that confirmed
 > what they actually are.
 
-Last updated: Day 8.
+Last updated: 2026-11-20 (historical ledger below; read the dated updates immediately after this notice).
+
+## Remote CI failure reconciliation — 2026-11-20
+
+The latest GitHub Actions run visible from the logged-in repository is run
+[`33953526440`](https://github.com/Sent-lab/Sent/actions/runs/33953526440), on
+remote SHA `ac6fba1a7f7f1fbc413e6bc6d1eda6b892bee31b` (2026-09-05), not the
+current local worktree. Typecheck/build and Foundry jobs passed there. Two jobs
+failed: the economic gate's Docker-manifest check reported missing copies for
+`packages/observability/package.json` and `services/keeper/package.json`; the
+full-stack E2E job stopped in `tests/e2e/stack.ts` with an ABI parameter/value
+length mismatch while deploying `XStockRegistry`.
+
+The current working tree contains both Docker manifest copies in
+`infra/docker/Dockerfile`, and its E2E fixture deploys a `WrappedXStockFactory`
+then passes `(governance, wrapperFactory)` to `XStockRegistry`. These match the
+two recorded failure conditions, but that is source inspection only: no fresh
+CI run proves the fix. Local `main` is 12 commits ahead of `origin/main`, with
+additional uncommitted changes; none of the current worktree is represented by
+that remote run. No push was performed.
+
+## Fresh HyperEVM deployment gate re-check — 2026-11-20
+
+Read-only calls to the official HyperEVM RPC at block `51,708,543` reconfirmed
+that the deployed factory `0xcEa3AcF9b70cE9807a99bcBdF0F93A437518Eaeb` has a
+zero `router()` and zero `referencePrice()`, with `launchFee()` equal to
+`40000000000000000` wei (`0.04 HYPE`). Registry
+`0xA54BC1b31d17a6B9F76d6De1BE43B8efb8843c2B` reports `registeredCount() = 0`
+and the expected wrapper factory `0xc7b674f6Ec9de46852A25897305292a3d1E18d63`.
+Reward vault `0xF7dce0CC413D6d7F855A742A02545253Bbb0cB92` still reports a zero
+guardian, zero quorum and zero attestors; `launchConfigurationReady()` reverts
+because the deployed bytecode does not expose that source-level selector.
+
+At block `51,708,555`, Safe reads show governance
+`0x791fb66Ac5ff91eE7D3F1697f85c4D8b646D1e22` is 2-of-3, while Treasury
+`0xEd7709178EF1De028E965B4107f56b5AecBE92A2` is 1-of-1 with one owner. The
+Treasury Safe therefore does not meet the current mainnet deployment script's
+minimum 2-of-3 threshold. These observations keep launch, graduation, stockback
+and redeployment gates closed. No transaction or state change occurred.
+
+Primary evidence: read-only `eth_call` and `eth_blockNumber` against
+`https://rpc.hyperliquid.xyz/evm`, blocks `51,708,543` and `51,708,555`,
+2026-11-20.
+
+## Independent treasury routing audit — 2026-11-20
+
+Source review found two independently mutable fee destinations. The factory
+sends native launch fees to its own `treasury`; `FeeVault` settles ERC-20
+platform trading fees to its `treasury`. Both are initialized to the same
+configured Safe, but `LaunchpadFactory.setTreasury` does not update
+`FeeVault.treasury`, and `FeeVault.setTreasury` does not update the factory.
+This is intentional separate storage in the current source, so a one-sided
+governance update can split platform revenue across recipients without a revert.
+The deployment recovery runbook now requires both calls and read-back
+verification for a Treasury rotation, unless the two recipients are explicitly
+intended to differ. No contract code or chain state changed.
+
+Evidence: current source `contracts/src/LaunchpadFactory.sol` (constructor and
+`setTreasury`) and `contracts/src/FeeVault.sol` (constructor and `setTreasury`),
+2026-11-20.
+
+## Post-graduation fee asset decimals — 2026-11-20
+
+Static review found that `FeeVault.FeesAccrued` carries an `asset` field and
+post-graduation LP collection accrues both the launched TOKEN and the paired
+xStock quote asset. The indexer normalized both amounts with the market's quote
+decimals. On a 6-decimal quote market, this scaled TOKEN accruals by `10^12`;
+when a creator later claimed TOKEN fees, the claim handler also tried to read
+the launched token from `XStockRegistry`, where it is not registered. The
+resulting registry revert would stop that indexer batch.
+
+`services/indexer/src/ingest.ts` now resolves decimals per event asset: a token
+in the indexed factory launch map is fixed at 18 decimals; other fee assets are
+looked up in the xStock registry, with unknown assets still failing closed. This
+matches `LaunchMarket.collectPostGradFees`, which accrues token and quote fees
+separately. The creator API now also maps every creator's launched token to 18
+decimals so claimable and claim-history reads can display either fee asset. The
+page labels those amounts generically by asset and describes trade and pool fee
+earnings. This is a source-level correction only; no test, build, or live
+indexer run was performed. `pnpm typecheck` passed after all indexer/API/UI
+changes. No chain state changed.
+
+## HyperEVM RPC limits and public-beta bootstrap — 2026-11-20
+
+Hyperliquid's official HyperEVM JSON-RPC page documents a maximum `eth_getLogs`
+range of 50 blocks and says historical-state methods are unsupported on the
+default public RPC. Its rate-limit page sets a ceiling of 100 EVM JSON-RPC
+requests per minute per IP. The public-beta template had selected that endpoint
+while the indexer requested 500-block log ranges and polled every 2 seconds.
+Those defaults could fail the indexer at its first range and spend a large share
+of the endpoint's shared quota during catch-up. The indexer now defaults to a
+50-block range and a 15-second poll; the public-beta RPC URL is required rather
+than silently defaulted. The runbook requires a provider with archive access and
+quota suitable for both API and indexer, or a verified database restore. The
+new 50-block/15-second defaults were not built or exercised in this follow-up;
+the official public RPC is still not approved for public-beta bootstrap.
+
+At the latest recorded head (`51,706,686`) and the configured earliest cursor
+(`45,027,931`), replay spans about 6.68 million blocks. At a 50-block range,
+that is roughly 133,600 ranges. The current indexer reads a boundary block and
+at least one log range per batch, so even at the full 100-request/minute quota
+with no API traffic or retries, the lower-bound catch-up time is about 44.5
+hours. Shared API reads, launches that need a second log pass, and rate-limit
+retries make it longer. This is a measured release-operability blocker for the
+default public-beta topology, not a claim that the RPC is unavailable.
+
+Primary sources: Hyperliquid [HyperEVM JSON-RPC](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/hyperevm/json-rpc),
+[rate limits](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/rate-limits-and-user-limits),
+and [raw block data](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/hyperevm/raw-hyperevm-block-data).
+
+## Launch-fee exact-payment guard — 2026-11-20
+
+Review of the current public `LaunchpadFactory.launch` path found that it
+accepted `msg.value > launchFee` and forwarded the entire amount to the Treasury
+Safe. The website and SDK send the exact configured fee, but direct callers
+could accidentally pay an unadvertised extra amount. The factory now preserves
+the existing insufficient-fee error and rejects overpayment with
+`ExcessiveLaunchFee(sent, required)`; the package ABI includes the new error.
+The launch fee is now exact by contract, with no implicit Treasury tip or
+refund-call edge case. No tests or Solidity compile were run in this follow-up,
+and no chain state changed. `pnpm typecheck` passed after the ABI update; this
+does not compile Solidity or exercise the new revert path.
+
+## NVIDIA Pyth Pro option — 2026-11-20
+
+Pyth's current Terminal documentation describes an NVDA equity feed in a Pyth
+Pro package used by Polymarket. This proves catalog/package availability, not
+that SENT's Terminal trial can access the feed. The account's `My Feeds` list
+does not contain regular NVDA or NVDAX. Pyth's contract table lists its Pyth
+Pro verifier on HyperEVM at
+`0xACeA761c27A909d4D3895128EBe6370FDE2dF481`; its EVM guide requires the signed
+update to be verified and parsed in the consuming transaction. Pyth lists a
+1-wei EVM verification fee, excluding transaction gas and subscription cost.
+
+This gives SENT a technically supported route to evaluate for NVDAx, but the
+feed entitlement, subscription quote, price-unit/multiplier match for the exact
+NVDAx wrapper, and integration with SENT's launch transaction are unverified.
+The separately listed `Crypto.NVDAX/USD` stream (numeric Pro ID `1833`) is not
+assumed equivalent to the regular `Equity.US.NVDA/USD` feed. No key was read,
+plan changed, contract deployed, or transaction sent. Keep both NVIDIA routes
+disabled until those checks pass.
+
+Sources: Pyth [Terminal and package description](https://docs.pyth.network/pro/pyth-terminal),
+[HyperEVM contract addresses](https://docs.pyth.network/pro/contract-addresses),
+[EVM integration guide](https://docs.pyth.network/pro/use-prices-on-blockchain/evm),
+and [on-chain fees](https://docs.pyth.network/pro/on-chain-fees).
+
+## Pyth re-check — 2026-11-19
+
+The current first-party Pyth documentation changes the cost wording in the
+2026-11-18 snapshot, but does not establish a production-ready free equity feed
+for SENT:
+
+- Pyth Terminal currently offers a free API trial key with no credit card. The
+  same official docs say paid plans cover ongoing use; a trial is not a durable
+  production entitlement and the public page does not state its duration or
+  limits. Hermes requests now require an API key after the August 26, 2026 Core
+  upgrade.
+- Pyth's current Sponsored Feeds page includes HyperEVM among the EVM networks,
+  but its HyperEVM table currently displays no sponsored feed rows. SPYx is not
+  shown as a sponsored HyperEVM feed. A self-operated price pusher still needs a
+  Pyth Pro API key and pays the onchain gas for updates; the documentation warns
+  that tighter update thresholds raise that gas cost.
+- The 2026-11-18 direct HyperEVM read remains the actual chain observation: the
+  SPY equity value was stale by far more than SENT's 60-second freshness bound,
+  and the 24/7 SPY index feed reverted. The free API trial does not repair those
+  onchain observations or prove access to a fresh SPYx-compatible feed.
+- A fresh direct RPC read on 2026-11-19 reconfirmed the same state: `getPriceUnsafe`
+  returned `price=61075000`, `expo=-5`, `publishTime=1739981335`
+  (`2025-02-19T16:08:55Z`) for `Equity.US.SPY/USD`; `getPriceNoOlderThan(..., 60)`
+  reverted, and both reads for `Equity.Index.SPY/USD` reverted. The official
+  Sponsored Feeds page now lists `SPYX/USD` under Ethereum, but HyperEVM's current
+  sponsored table contains no SPY/SPYX equity row. This is a fresh check of the
+  chain and catalog, not proof that a Pyth Pro update subscription is unavailable.
+
+**Disposition:** Pyth remains an evaluation path only. Recheck the Terminal's
+current entitlement in the account and confirm a fresh, multiplier-compatible
+SPYx feed/update route before changing the oracle decision. Do not rely on the
+old claim that current data plans start at $500/month; current official docs
+describe a free trial and paid ongoing plans without publishing a universal
+price. No oracle config or onchain state changed from this research.
+
+Sources: [Pyth Terminal trial](https://docs.pyth.network/pro/pyth-terminal),
+[current sponsored feeds by network](https://docs.pyth.network/pro/sponsored-feeds),
+[Pyth Core upgrade and API-key requirement](https://docs.pyth.network/pro/pyth-core-upgrade).
+
+## External re-check — 2026-11-18
+
+This update preserves the Day 8 record as history and corrects its claims using
+new first-party API metadata and direct mainnet reads. These changes do **not**
+clear the production gates by themselves.
+
+- **V-02 remains verified for canonical deployment identity, but the old narrative is stale.**
+  xStocks' public asset API now lists HyperEVM deployments and V2 wrapper addresses.
+  Hyperliquid's `spotMetaAndAssetCtxs` metadata maps those V2 wrappers to Core spot
+  tokens and markets. For example, SPYx's official wrapper V2
+  `0xe7e553cd128f0011777323a0b44a7b96ea1cb540` matches `SPYX`'s `evmContract.address`
+  and spot market `@703`; the `spotPx(703)` HyperEVM read precompile responds.
+  Therefore the old statements that no xStock has a Core spot market are superseded.
+- **V-03 remains a production blocker for raw xStocks.** The raw issuer token rebases.
+  A non-rebasing V2 wrapper is a candidate quote asset, but SENT must verify its
+  provenance, transfer behavior, decimals, corporate-action conversion and accounting
+  against SENT's wrapper/market contracts before setting any registry gates.
+- **V-11 remains PARTIAL.** The xStocks API lists a HyperEVM Chainlink pull-based
+  Tokenized Asset (v10) stream for SPYx: feed ID
+  `0x000ac6ba1b453a15c1fe9dcd82265ca47bcd04e7b3667de1623617c45cef2a77`, verifier
+  `0x60fAa7faC949aF392DFc858F5d97E3EEfa07E9EB`, and 18 decimals. Fresh HyperEVM
+  reads confirm deployed code and `typeAndVersion()` returns `VerifierProxy 2.0.0`.
+  The xStocks API identifies that same address as the feed's verifier. This is a
+  credible integration path, not a configured SENT oracle: SENT currently consumes
+  a Chainlink-style `latestRoundData()` adapter, while Data Streams supplies signed
+  reports that must be fetched and verified. A direct request to the official latest
+  report endpoint returned HTTP 400 requiring `UserId`, `Timestamp` and
+  `HmacSignature` headers, so report delivery credentials are not public/anonymous.
+  The current official Data Streams network source now lists HyperEVM Mainnet
+  with verifier `0x60fAa7faC949aF392DFc858F5d97E3EEfa07E9EB`, matching the xStocks
+  metadata and the live proxy. This resolves the network-support discrepancy, but
+  not authorization for SENT's account to fetch this specific feed. On 2026-11-18,
+  an unauthenticated request to Chainlink's public discovery endpoint returned
+  175 live streams and did not include the xStocks SPYx v10 feed ID; it returned
+  three SPY/USD V11 equity streams instead. This is not proof that SPYx is
+  unavailable: Chainlink documents that hidden streams are excluded from public
+  discovery and require an entitled account's authenticated discovery request.
+  SENT has no credentials to perform that entitlement check. The public
+  SPY/USD V11 stream is not a substitute: it has no xStock multiplier, and the
+  HyperEVM address directory classifies it as a Streams verifier entry rather
+  than a push-feed proxy. It does not remove the access requirement or solve
+  SENT's wrapper conversion requirement. A first SENT v10 aggregator shim now
+  exists in source and compiles; it is not deployed, tested, or independently
+  audited. Its full-report envelope parsing and empty verifier fee-metadata call
+  match Chainlink's current EVM verification guide; this checks the documented
+  interface shape, not the shim's v10 decoding or live verification. An optional
+  server-only HMAC credential configuration and fixed-feed API route can return
+  signed SPYx payloads, but no credentials are configured and the live authorized
+  endpoint has not been verified. The create page now offers
+  a wallet-reviewed update when an asset's configured source reports the fixed
+  SPYx feed ID; launch config exposes each asset's adapter source. The user
+  reviews the SDK-built intent before sending it through their wallet, and the
+  transaction center tracks the update. No compatible source or deployed shim is
+  configured.
+  The new shim constructor binds it to one quote asset, the adapter checks that
+  optional binding against the asset being priced, and the page checks both the
+  feed ID and SPYx route identity (official V2 wrapper or SENT wrapper over the
+  canonical raw SPYx) before preparing a transaction. Deploy a separate shim per
+  selected wrapper; this source path has not been live-verified.
+  Expiry/freshness, multiplier treatment, market status, and weekend/split
+  handling remain unverified in SENT. Review against the
+  v10 schema and xStocks' multiplier guidance found and fixed a source-level gate:
+  the shim now rejects every report with a scheduled activation timestamp, rather
+  than only after activation. It also starts a 15-minute price-read cooldown on
+  first report and whenever the observed multiplier changes. A late report starts
+  that cooldown when SENT observes the change, which is conservative; this new
+  behavior is compiled but not tested, audited, or deployed.
+- **Pyth fallback recheck (PRIMARY, 2026-11-18):** a direct HyperEVM read of
+  Pyth `getPriceUnsafe` at `0xe9d69CdD6Fe41e7B621B4A688C5D1a68cB5c8ADc` for the
+  `Equity.US.SPY/USD` feed ID
+  `0x19e09bb805456ada3979a7d1cbb4b6d63babc3a0f8e8a9509f68afa5c4c11cd5`
+  returned `price=61075000`, `expo=-5`, `publishTime=1739981335`
+  (`2025-02-19T16:08:55Z`). The 60-second `getPriceNoOlderThan` used by
+  `PythAggregatorShim` therefore cannot serve it. The `Equity.Index.SPY/USD`
+  24/7 feed ID `0xf32c3fbdd20b846bb53395bf175c42955e00b1bffb5a778bb624982b318f5461`
+  reverts when read from the same HyperEVM contract. Current Pyth docs require an
+  API key for update endpoints. The Core Upgrade documentation at that time
+  described paid data plans; see the 2026-11-19 re-check above for current free
+  trial and paid-plan wording. This is not yet a viable production replacement
+  for the missing entitled SPYx stream.
+- **V-22 must be read narrowly.** No xStock HyperSwap V3 pool was confirmed in the
+  earlier audit. HyperCore spot markets now exist for several xStock wrappers. These
+  are different venues and do not supply SENT's missing HyperSwap position-manager
+  or permanent-lock configuration.
+- **Production state is still blocked on chain.** Direct calls to the deployed
+  LaunchpadFactory returned zero for `router()` and `referencePrice()`. The current
+  config also has an empty xStock allowlist and empty reference-price feeds.
+
+Primary sources: [xStocks asset API](https://docs.xstocks.fi/apis/openapi/assets),
+[xStocks oracle API](https://docs.xstocks.fi/apis/openapi/oracles/get_public_oracles_by_symbol),
+[Hyperliquid spot API](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/spot),
+[HyperEVM read precompiles](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/hyperevm/interacting-with-hypercore),
+[Chainlink Tokenized Asset v10 schema](https://docs.chain.link/data-streams/reference/report-schema-v10),
+[Chainlink signed-report verification](https://docs.chain.link/data-streams/tutorials/evm-onchain-report-verification),
+[Chainlink supported networks](https://docs.chain.link/data-streams/supported-networks),
+[Chainlink's Discovery endpoint and hidden-stream behavior](https://docs.chain.link/data-streams/reference/data-streams-api/discovery-endpoint),
+[Chainlink's published verifier network data](https://github.com/smartcontractkit/documentation/blob/main/src/features/feeds/data/StreamsNetworksData.ts),
+[Pyth's current update API authentication](https://docs.pyth.network/api-reference/hermes/latest-price-updates),
+and [Pyth Core Upgrade documentation](https://docs.pyth.network/pro/pyth-core-upgrade).
 
 ---
 
@@ -27,8 +311,8 @@ Last updated: Day 8.
 
 | Status | Count | Rows |
 |---|---|---|
-| VERIFIED | 11 | V-01, V-02, V-03, V-05, V-07, V-08, V-09, V-13, V-16, V-20, V-22 |
-| PARTIAL | 4 | V-06, V-10, V-11, V-15 |
+| VERIFIED | 12 | V-01, V-02, V-03, V-05, V-06, V-07, V-08, V-09, V-13, V-16, V-20, V-22 |
+| PARTIAL | 3 | V-10, V-11, V-15 |
 | UNVERIFIED | 4 | V-04, V-12, V-14, V-17 |
 | OWNER-BLOCKED | 1 | V-18 |
 | CLOSED | 1 | V-19 |
@@ -46,10 +330,11 @@ Last updated: Day 8.
 - **V-05** — they are also pausable and upgradeable behind proxies.
 - **V-22** — no xStock has a HyperSwap pool at any fee tier. Holders exist; an EVM-side market
   between them does not.
-- **V-11** — the launch anchor's mechanism is built and fork-tested against the real Pyth on
-  HyperEVM. What is missing is the FEED: Pyth's equity prices there are 63–561 days stale, its
-  24/7 variants were never published, and its public update API now returns 401. Nothing else
-  on this chain prices an xStock — no HyperSwap pool, no HyperCore spot, no equity perp.
+- **V-11** — the launch anchor's mechanism is built and fork-tested against Pyth, whose equity
+  feeds were stale in the Day 8 snapshot. The 2026-11-18 re-check found an xStocks-listed
+  Chainlink pull-based v10 stream candidate on HyperEVM; SENT has not integrated it or verified
+  report access yet. The earlier statement that no HyperCore xStock spot market existed is
+  superseded by the dated update above.
 
 §2 LOCKS every market to an official xStock, and the assets are there. What is not resolved is
 how the accounting meets a rebasing quote asset. `RebaseDetector` currently refuses the entire
@@ -393,7 +678,7 @@ ERC-20, and that users must independently verify the contract implementation and
 
 ---
 
-## V-06 — HyperSwap V3 core addresses · **PARTIAL**
+## V-06 — HyperSwap V3 core addresses · **VERIFIED · 2026-11-18**
 
 ```text
 UNKNOWN:            factory, NonfungiblePositionManager, SwapRouter, quoter on HyperEVM
@@ -401,8 +686,8 @@ WHY IT MATTERS:     graduation venue (LOCKED §17, §20)
 HOW TO VERIFY:      probe candidate addresses on-chain; confirm against first-party docs
 BLOCKS:             GraduationRouter, §416 geometry, LP lock
 OWNER:              Stream A
-STATUS:             PARTIAL — all three addresses located and mutually confirmed by
-                    PRIMARY on-chain read; first-party confirmation still absent
+STATUS:             VERIFIED — first-party deployment docs and live bytecode /
+                    factory-reference reads agree for factory, router, NPM and quoter
 ```
 
 **Result, Day 1 (PRIMARY):** a candidate SwapRouter surfaced by a SECONDARY source was probed
@@ -447,18 +732,19 @@ The loop was closed from the other end too: position #90652 (WHYPE / 0xb8ce59fc�
 `test/fork/HyperSwapFork.t.sol` re-asserts the mutual references on every run, so this cannot
 rot silently into a copied constant.
 
-**Still required before any address enters `packages/config`: first-party confirmation.**
-That has not moved. Measurement proves these contracts are a coherent Uniswap-V3 deployment
-serving one factory with 177,878 live positions. It does not prove they are the deployment
-HyperSwap's team considers canonical, or that they will not be superseded. Those are claims
-only a first party can make.
+**Day 10 correction (first-party docs + PRIMARY reads):** HyperSwap now publishes its V3
+deployment table at [docs.hyperswap.exchange](https://docs.hyperswap.exchange/docs/amm/contracts/hyper-evm/v3/).
+It lists factory `0xB1c0fa0B789320044A6F623cFe5eBda9562602E3`, SwapRouter01
+`0x4E2960a8cd19B467b82d26D83fAcb0fAE26b094D`, QuoterV2
+`0x03A918028f22D9E1473B7959C927AD7425A45C7C`, and position manager
+`0x6eDA206207c09e5428F281761DdC0D300851fBC8`. All four addresses return deployed
+bytecode on HyperEVM. `factory()` on SwapRouter01, QuoterV2 and the position manager
+returns the documented factory. This closes V-06 and these addresses are now recorded
+in `packages/config/src/chain.ts`.
 
-First-party docs at `docs.hyperswap.exchange` returned HTTP 403 to automated fetch; the
-`docs.hyperswap.pro` deployment page lists **V2 only** (factory
-`0x4df039804873717bff7d03694fb941cf0469b79e`, V2Router02
-`0xda0f518d521e0dE83fAdC8500C2D21b6a6C39bF9`) and no V3 section. The quoter is still not
-located, and is not needed: V-19's blended bound needs a quote, but the router quotes the
-post-grad leg through the pool it just created.
+The graduation router and SENT's own permanent lock are still not deployed/configured.
+The lock address is a SENT deployment output (V-09), not HyperSwap's DelegatedPositionVault:
+SENT needs its own lock interface and its custom fee-destination behavior.
 
 ---
 
@@ -628,10 +914,11 @@ NPM accepts `decreaseLiquidity` only from the owner or an approved operator; the
 owner and approves nobody. **There is no sender who could make the call.** That is a property
 of the arrangement, not a check somebody could find a way around.
 
-**Still owner-blocked:** first-party confirmation of the three HyperSwap addresses — the V3
-factory, the `NonfungiblePositionManager` and the `SwapRouter`. V-06 has now *located* all
-three by on-chain measurement and the fork suite asserts they are one deployment, which is a
-different and weaker thing than the vendor saying so.
+**Historical note (superseded 2026-11-18):** this section originally treated vendor
+confirmation as outstanding. HyperSwap's first-party deployment page now confirms the
+factory, `NonfungiblePositionManager`, `SwapRouter01`, and QuoterV2, and live HyperEVM
+code plus `factory()` reads agree. V-06 is VERIFIED; see its dated update above. SENT's
+own router and lock still require deployment and governance configuration.
 
 **All three are immutable in the router's constructor**, and the position manager is immutable
 in the lock as well. A wrong address is therefore not a configuration mistake to correct later:
@@ -711,6 +998,11 @@ theoretical.
 
 **Day 8, continued: the field is narrower than it looked, and it is now measured.**
 
+This section records the state observed on Day 8. Its conclusion that there were
+no HyperCore xStock spot markets and Pyth was the only available xStock price
+source was superseded by the 2026-11-18 external re-check at the top of this
+ledger. Keep this dated passage as history, not as current production guidance.
+
 The HyperCore precompiles above turned out **not** to price an xStock. `spotPx` reads a HIP-1
 spot market, and xStocks are EVM-native with no HIP-1 linkage (V-02) — so there is nothing for
 it to read. `oraclePx` prices perps, and a scan of all 233 perp assets on Hyperliquid found no
@@ -720,7 +1012,7 @@ SPX6900 memecoin.
 Combined with V-22 — **no xStock has a HyperSwap pool** — that leaves HyperEVM with no venue
 price for any of these assets at all.
 
-**Pyth is the only source that exists on this chain, and it is really there:**
+**Day 8 snapshot: Pyth was the only source known at that time:**
 
 ```text
 Pyth v1.4.6   0xe9d69CdD6Fe41e7B621B4A688C5D1a68cB5c8ADc
@@ -859,11 +1151,13 @@ STATUS:             UNVERIFIED
 ```text
 WHY IT MATTERS:     §542 warns about official RPC limitations; the indexer and realtime layer
                     depend on log range limits, WS stability and historical depth
-HOW TO VERIFY:      measure eth_getLogs range caps, WS behaviour, archive depth; evaluate
-                    redundant providers
+HOW TO VERIFY:      official docs confirm 50-block eth_getLogs cap, 100 EVM calls/min/IP,
+                    no JSON-RPC WebSocket, and no historical-state support on default RPC;
+                    select/test an archive provider and redundant endpoints
 BLOCKS:             indexer design, reorg strategy, realtime SLOs
 OWNER:              Stream C / H
-STATUS:             PARTIAL — endpoint reachable and advancing (V-01); limits not yet measured
+STATUS:             PARTIAL — public endpoint limits documented; provider failover,
+                    archive depth, replay duration and sustained workload remain unverified
 ```
 
 Redundant independent providers are required regardless, because §406 requires independently
@@ -982,15 +1276,14 @@ users learn to click past — which costs them the warnings that are.
 ## V-20 — HyperEVM block gas lanes vs. the cost of graduation · **VERIFIED · P0**
 
 ```text
-UNKNOWN:            the gas ceiling a graduating transaction must fit inside on HyperEVM
-WHY IT MATTERS:     LOCKED §14 graduates inside the buy that crosses the endpoint. If that
-                    transaction cannot be included in the block lane an ordinary buyer sends
-                    to, then the market that reaches qG cannot be graduated by the person who
-                    got it there - and every crossing buy fails for the user who makes it.
+UNKNOWN:            the gas ceiling a graduation transaction must fit inside on HyperEVM
+WHY IT MATTERS:     atomic graduation inside the crossing buy exceeded the ordinary lane.
+                    D-016 splits the crossing buy from migration; finalization still needs
+                    the large lane and markets remain unavailable during the handoff.
 CURRENT ASSUMPTION: (none needed - measured)
 HOW TO VERIFY:      sample eth_getBlockByNumber gasLimit across the tip; measure the
                     graduation path on a fork
-BLOCKS:             §14 atomic graduation, §16 failure handling, §178.4 release gate
+BLOCKS:             §14 graduation design, §16 failure handling, §178.4 release gate
 OWNER:              Stream A / H
 STATUS:             VERIFIED (PRIMARY) - the constraint is real; the RESPONSE is D-016
 ```
@@ -1028,10 +1321,16 @@ rise no matter what `block_gas_limit` was set to, failing as `OutOfGas` inside t
 deployment. That was not a tooling defect to work around. Isolate mode was reproducing the
 chain's actual ceiling, and it found this constraint before the block sampling did.
 
-**What this means, stated plainly.** A buy that crosses qG needs ~5.4M gas. A user who has not
-opted into the large lane cannot have that transaction included at all. So under §14 as
-written, the crossing buy fails for essentially every buyer, and the market stalls one wei
-short of graduating - permanently, since every subsequent attempt fails the same way.
+**Historical design consequence (superseded by D-016).** Under the earlier atomic design, a buy
+that crossed qG needed ~5.4M gas. A user who had not opted into the large lane could not have
+that transaction included, so the crossing buy failed for essentially every buyer.
+
+**Current design response — D-016.** The crossing transaction now closes the curve and refunds
+unspent quote without creating the pool. A separate, permissionless `finalizeGraduation()`
+performs the ~5.4M-gas migration on the large lane. Until it succeeds, the market remains in
+`GRADUATING`; curve trades are closed and the pool is not yet available. This removes the
+crossing-buy gas failure, while leaving a real handoff window and a keeper/holder finalization
+dependency. The decision log records the measured crossing-buy and migration costs.
 
 **NOT verified, and it matters.** The mechanism for opting an address into the large lane is
 a Hyperliquid L1 action, not an EVM call, so nothing above measures it. What is measured is
@@ -1181,3 +1480,472 @@ would be creating the first real EVM-side liquidity for tokenized equities on th
 of those dominates is a launch-strategy question, not a verification one.
 
 Recorded now because it is invisible until launch day, and expensive to discover then.
+
+---
+
+## Indexer bootstrap block re-check — 2026-11-19
+
+Read-only `eth_getTransactionReceipt` calls against HyperEVM RPC confirm:
+
+| Contract | Deployment transaction | Block | Receipt |
+| --- | --- | ---: | --- |
+| `XStockRegistry` (`0xA54BC1b31d17a6B9F76d6De1BE43B8efb8843c2B`) | `0xed7d84bd9a2a3ff93b4869afec466ae8f6aa350210ee9898464f4756352e7dbb` | 45,027,931 | success |
+| `LaunchpadFactory` (`0xcEa3AcF9b70cE9807a99bcBdF0F93A437518Eaeb`) | `0xa1693e14fb822204516f00b9a623b6deeb493a9a3e8c0ef4ce9f87a5eae20f04` | 45,027,992 | success |
+
+The indexer resolves the registry from the factory and includes registry logs in
+its `getLogs` address set. Therefore its bootstrap block must include the
+registry deployment, which predates the factory by 61 blocks. `START_BLOCK` is
+now `45027931` in `.env.example`; a future redeployment must recalculate the
+earliest monitored contract block. No container or chain transaction was run.
+
+## Chainlink SPYx stream metadata re-check — 2026-11-19
+
+A direct read-only request to xStocks' documented public Oracle API for
+`SPYx`, filtered to `HyperEVM` and `Chainlink`, returned one `PullBased` record:
+feed ID `0x000ac6ba1b453a15c1fe9dcd82265ca47bcd04e7b3667de1623617c45cef2a77`,
+`reportSchema=v10`, `decimals=18`, quote asset `USD`, and verifier
+`0x60fAa7faC949aF392DFc858F5d97E3EEfa07E9EB`. This confirms the exact stream
+metadata used by `ChainlinkTokenizedAssetAggregatorShim.decimals()` and its
+feed/verifier constants. It resolves the prior uncertainty about whether the
+SPYx-specific feed uses 8 or 18 decimals; it does not establish that SENT has
+authenticated report access, a production subscription, or a fresh payload.
+The V-11 disposition therefore remains **PARTIAL / P0**.
+
+Source: [xStocks Oracle API reference](https://docs.xstocks.fi/apis/openapi/oracles/get_public_oracles_by_symbol),
+with the current public response queried on 2026-11-19. Chainlink's official
+[v10 schema](https://docs.chain.link/data-streams/reference/report-schema-v10)
+defines report field types and market/corporate-action semantics; the xStocks
+API supplies this feed's decimals and deployment metadata.
+
+## HyperCore SPYX quote-asset unit re-check — 2026-11-19
+
+A fresh read-only `spotMetaAndAssetCtxs` request identifies market `@703` as
+base token index `846` (`SPYX`, `szDecimals=2`) and quote token index `0`
+(`USDC`). The accompanying context reports market prices in USDC. Thus the
+previous `spotPx(703)` observation scaled to `735.45 USDC` per SPYX; calling it
+`$735.45` silently assumed USDC parity. The BBO values are in the same quote
+unit. A HyperCore-based launch anchor needs a separately trusted USDC/USD
+conversion or explicit depeg bounds, in addition to market manipulation,
+liquidity, and freshness controls. This correction further narrows that option;
+it does not replace the Chainlink V-11 candidate or change the mainnet NO-GO.
+
+Source: Hyperliquid's [spot metadata and context API](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/spot).
+
+## HyperCore SPYX market live-liquidity re-check — 2026-11-19
+
+A fresh unauthenticated `spotMetaAndAssetCtxs` read identifies `@703` as token
+indices `[846, 0]` (SPYX/USDC), but its current context reports `midPx: null`,
+`dayNtlVlm: 0.0`, and `dayBaseVlm: 0.0`. Its `markPx` field is `0.99994`; with
+no current midpoint or reported volume, that value is not a usable SPYX/USD
+launch anchor. It is also denominated in the pair's quote token, USDC, so it
+would not independently solve the USDC/USD basis.
+
+A direct `spotPx(703)` read against the documented HyperEVM read precompile
+`0x0000000000000000000000000000000000000808` returned `PrecompileError` on
+mainnet. Hyperliquid's integration material describes direct order-book reads
+as a possible HyperEVM primitive, while its read-precompile guide specifies
+testnet for the listed L1Read calls. Until the mainnet precompile behavior,
+the market's usable depth, and its USDC/USD treatment are independently
+verified, this is not a substitute for a production equity/USD oracle.
+
+Sources: Hyperliquid [spot metadata and contexts](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/spot),
+[HyperEVM/HyperCore integration overview](https://hyperliquid.gitbook.io/hyperliquid-docs/hyperevm),
+and [read-precompile guide](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/hyperevm/interacting-with-hypercore).
+
+## HyperEVM launch-gate re-check — 2026-11-19
+
+At block `51,623,001`, a fresh read-only RPC check returned chain ID `999` and
+deployed code at the configured factory. `router()` and `referencePrice()` are
+zero; `launchFee()` is `40000000000000000` wei (`0.04 HYPE`). I resolved
+`REGISTRY()` from the factory, then read `registeredCount()` and
+`launchableAssets()` from that registry: count `0`, launchable list `[]`. The
+earlier probe of `launchableAssets()` against the factory itself reverted
+because that getter belongs to the registry; the corrected reads above match
+the production API's factory-to-registry lookup. No chain state changed.
+
+The local process environment and `.env.local.dev` contain neither Chainlink
+report credential. This confirms the workspace's API route cannot fetch a
+signed report as configured; it says nothing about secrets in a separate
+production secret manager. The report route now also has a PostgreSQL-backed,
+transactional token bucket shared across API replicas, with a five-request burst
+and one-request-per-second refill. It fails closed when the shared budget cannot
+be checked. This is an aggregate request-rate cap, not a provider subscription
+spend cap; the provider account's own quota and billing terms still govern.
+General API routes still have process-local limits, so a public deployment
+should use an ingress limit for broad traffic protection. The new database
+migration and API code have not been deployed in this check.
+
+## Chainlink Data Streams zero-budget check — 2026-11-19
+
+Chainlink's official changelog states that Data Streams free tiers were winding
+down, with access terminating on September 1, 2026, and directs users to move
+to paid subscriptions. That date has passed. SENT must not plan the SPYx v10
+route on an assumed free tier; the owner must confirm an existing entitlement
+or provide a subscription budget before production. The EVM verification call
+uses empty fee metadata under current subscription billing, but that only means
+there is no per-verification LINK payment from the user's wallet. It does not
+waive the offchain subscription/access requirement.
+
+Source: Chainlink's [Data Streams changelog](https://docs.chain.link/changelog?product=Data+Feeds),
+entry “Data Streams free tier winding down” (June 24, 2026), and its
+[onchain verification tutorial](https://docs.chain.link/data-streams/tutorials/evm-onchain-report-verification).
+
+## Pyth SPYX zero-budget alternative check — 2026-11-19
+
+Pyth's current sponsored-feed table lists `SPYX/USD` for Ethereum Mainnet, but
+does not list it under HyperEVM Mainnet. HyperEVM's sponsored list currently
+contains only `KHYPE/HYPE.RR`, `KHYPE/USD`, and `USDT0/USD`. Therefore the
+Ethereum SPYX feed cannot be treated as an automatically maintained HyperEVM
+price, and SENT cannot rely on a free Pyth push for the required launch oracle.
+
+Pyth Core is deployed on HyperEVM and charges no on-chain update fee on EVM.
+That makes a pull-update integration a plausible alternative to the current
+Chainlink shim from a transaction-fee perspective, but does not make the data
+path free: Pyth's August 2026 Core upgrade moved Hermes to authenticated API-key
+access, its docs say the key includes a free trial and paid plans cover ongoing
+use, and the sponsored-feed table warns that its push service can be delayed.
+An independently operated pusher would also incur update transaction gas. No
+Pyth report was fetched, verified, or submitted to HyperEVM in this check, and
+no Pyth adapter is implemented in SENT. The Pyth path is a research candidate,
+not a cleared production oracle or a zero-budget solution.
+
+Sources checked 2026-11-19: Pyth [sponsored feeds](https://docs.pyth.network/pro/sponsored-feeds),
+[HyperEVM contract addresses](https://docs.pyth.network/pro/contract-addresses),
+[Core update flow](https://docs.pyth.network/pro/use-prices-on-blockchain/evm),
+[Core upgrade/API-key requirement](https://docs.pyth.network/pro/pyth-core-upgrade),
+[API-key trial and subscription](https://docs.pyth.network/pro/acquire-api-key), and
+[on-chain update fees](https://docs.pyth.network/pro/on-chain-fees).
+
+## Fee and Stockback vault state re-check — 2026-11-19
+
+At block `51,623,586`, read-only RPC calls to the deployed vaults confirm the
+FeeVault treasury is `0xed7709178ef1de028e965b4107f56b5aecbe92a2` and its
+governance matches the factory Safe. The Governance Safe is version `1.4.1`,
+with 3 owners and threshold 2; the Treasury Safe is version `1.4.1`, with 1
+owner and threshold 1. The treasury signer and single-signer custody model
+should be confirmed before public platform fees are routed there. The
+HolderRewardVault governance also matches the Governance Safe, but
+`guardian()` is zero, `attestorCount()` is `0`, `quorum()` is `0`, and
+`claimsPaused()` is false. A zero quorum is intentionally rejected by
+`submitCommitment`; the reward path is therefore not configured even though the
+vault is deployed. Governance must set a guardian, onboard attestors and set a
+valid nonzero quorum before Stockback distributions can be submitted. No
+transaction or vault state change was made.
+
+The launch-config API now reads these fields from the factory's reward vault and
+includes them in its readiness result. The create UI blocks its launch intent
+when the guardian/quorum is missing or claims are paused. This is a web/API
+guard for the current deployment. The source factory now also checks the
+reward vault's `launchConfigurationReady()` before `launch()`, so direct
+callers are blocked in a deployment compiled from this source. The immutable
+factory already deployed on HyperEVM predates that check; a replacement
+deployment and complete reconfiguration are still required before the onchain
+restriction applies to mainnet.
+
+## Chainlink report daily cap — 2026-11-19
+
+The earlier shared PostgreSQL token bucket only capped request rate. If a
+public report endpoint were enabled with paid provider credentials, sustained
+traffic could still consume a large daily request allowance. A follow-on
+`0011_api_upstream_daily_budget.sql` migration adds a UTC-day counter for
+authenticated report-route requests to the shared row. The API requires
+`CHAINLINK_REPORT_DAILY_MAX_REQUESTS` whenever Chainlink report credentials are
+configured; requests fail closed when the shared database budget is unavailable,
+and daily exhaustion returns `429` with
+the reset delay and remaining-budget headers. The configured ceiling is an
+operator-selected cap and must not exceed the actual provider account quota; it
+does not prove a provider-side spend limit or entitlement.
+
+`pnpm typecheck` passed after the config, API and migration changes. The
+credential route remains disabled in this workspace because no Chainlink
+credentials or daily cap are configured. The migration and API change have not
+been deployed, and database concurrency behavior has not been tested.
+
+**Superseded 2026-11-20:** A licensing review found the public report-proxy
+design did not comply with Chainlink's current Fair Use Policy. The endpoint,
+its credentials/budget plumbing, and its migrations were removed before
+deployment. The public API no longer returns signed reports; a future updater
+must fetch privately and submit directly onchain after feed access and terms are
+confirmed. See the launch-readiness report for the current evidence.
+
+## NVDAx issuer token address re-check — 2026-11-20
+
+The xStocks public Assets API identifies the HyperEVM NVDAx issuer token as
+`0xc845b2894dbddd03858fd2d643b4ef725fe0849d` and its V2 wrapper as
+`0xa8ddb5cd96b5222afe198316e9a57caa642850d5`. Read-only calls to HyperEVM at
+block `51,700,018` returned deployed code for both. The issuer token reports
+`symbol=NVDAx`, `decimals=18`, and
+`multiplier=1.001701196801074`; the V2 wrapper reports `symbol=wNVDAx`,
+`decimals=18`, and `asset()` equal to the issuer token address. The wrapper's
+`asset()` binding and the xStocks API deployment record agree.
+
+This confirms the official address pair for candidate configuration; it does
+not pass SENT's eight registry gates, create SENT's own share-backed wrapper,
+verify a live Chainlink report, or make NVDAx launchable. `XSTOCK_ALLOWLIST`
+and `REFERENCE_PRICE_FEEDS` remain empty.
+
+Primary sources: xStocks [Assets API](https://docs.xstocks.fi/apis/openapi/assets)
+and the HyperEVM read-only RPC at `https://rpc.hyperliquid.xyz/evm` (block
+`51,700,018`).
+
+## NVDAx Chainlink v10 stream metadata — 2026-11-20
+
+The xStocks public oracle-by-symbol API returns a HyperEVM `PullBased`
+Chainlink Tokenized Asset v10 record for NVDAx: feed ID
+`0x000a37a55df2ef907d8fa06af6632bc16da58a62b68be2e1994efaa037a0918a`,
+18 report decimals, USD quote, and verifier proxy
+`0x60fAa7faC949aF392DFc858F5d97E3EEfa07E9EB`. The proxy address agrees with
+the existing SPYx v10 candidate and has already been read as deployed on
+HyperEVM. This verifies public stream metadata, not SENT's account entitlement,
+report freshness, decoded stream report for NVDAx, multiplier continuity, or
+an end-to-end call through SENT's shim. V-11 remains PARTIAL / P0.
+
+Primary source: xStocks [public oracle-by-symbol API](https://docs.xstocks.fi/apis/openapi/oracles/get_public_oracles_by_symbol),
+queried for `NVDAx` with `network=HyperEVM` on 2026-11-20.
+
+## HyperEVM launch-gate recheck — 2026-11-20
+
+Read-only RPC at block `51,703,586` reconfirmed chain ID `999` and the deployed
+factory's state: `router=0x0`, `referencePrice=0x0`, launch fee `0.04 HYPE`,
+and factory links to the recorded registry and reward vault. Registry
+`registeredCount=0`. The reward vault reports zero guardian, zero attestors,
+zero quorum, and `claimsPaused=false`; its source-level
+`launchConfigurationReady()` selector remains unsupported/reverting on this
+deployed bytecode. Mainnet launch remains blocked, and no transaction or state
+change occurred.
+
+Local public-stack validation on the same date passed `pnpm typecheck`, the
+`@sent/web` production build, and Docker Compose config parsing with temporary
+dummy deployment values. The unfilled public template correctly rejects missing
+factory, vault, and `START_BLOCK` values. No container was started. Test suites
+were not run.
+
+Evidence: read-only HyperEVM RPC `https://rpc.hyperliquid.xyz/evm` and local
+workspace command output, 2026-11-20.
+
+## Treasury Safe guard — 2026-11-20
+
+Read-only calls to the configured treasury returned a Safe with threshold `1`
+and one owner; the configured governance Safe returned threshold `2` and three
+owners. The production deployment script now validates both Safe interfaces
+and refuses treasury quorum below 2 or a threshold without a spare owner. The
+existing 1-of-1 treasury therefore cannot pass a new HyperEVM deployment until
+its Safe configuration is changed. A regression case was added for that exact
+rejection. This does not change the already deployed FeeVault's treasury or
+modify the Safe. No contract was deployed and no transaction was sent.
+
+Evidence: read-only calls to `getThreshold()` and `getOwners()` on the existing
+factory governance and treasury Safe addresses; local source changes in
+`contracts/script/Deploy.s.sol` and `contracts/test/Deploy.t.sol`, 2026-11-20.
+Solidity 0.8.28 with optimizer runs 400 and `viaIR` compiled the deploy script
+and guard suite successfully. Test functions were not executed.
+
+## GitHub release state — 2026-11-20
+
+The repository is public (`Sent-lab/Sent`), with local `main` 12 commits ahead
+of `origin/main` and additional uncommitted workspace changes. The only active
+workflow listed on GitHub is CI; no deployment workflow is configured there.
+The latest visible CI run, on 2026-09-05 at commit `ac6fba1`, failed its Docker
+manifest check because the image recipe omitted `packages/observability` and
+`services/keeper`. The current local Dockerfile includes both. That run also
+failed the full-stack job while deploying `XStockRegistry`: the old fixture
+supplied one constructor argument although the contract required governance
+and wrapper-factory addresses. The current local fixture deploys
+`WrappedXStockFactory` and supplies both arguments. These are source-level
+reconciliations only; no CI run has validated the current workspace. No commit,
+push, release, or deployment was made.
+
+Evidence: GitHub [run 33953526440](https://github.com/Sent-lab/Sent/actions/runs/33953526440),
+`gh repo view`, `gh workflow list`, local `git status`, Dockerfile and current
+E2E fixture, 2026-11-20.
+
+## Stockback zero-root and Guardian recheck — 2026-11-20
+
+Static review found that `submitCommitment` used a zero Merkle root as an
+empty-slot sentinel without rejecting it as input. A quorum-signed zero root
+could replace a valid pending distribution while remaining indistinguishable
+from an empty slot to activation and monotonicity logic. The vault now rejects
+zero roots before evaluating or storing the commitment; a regression case
+asserts the valid pending root, total and sequence survive the attempted
+replacement. Further review showed Guardian cancellation erased the only record
+of the highest accepted epoch: previously signed superseded data could be
+replayed, and the cumulative total could decrease in a newer sequence. A
+public per-market submission watermark now survives activation and cancellation;
+new regression coverage rejects old signatures and decreasing totals, then
+confirms a newer non-decreasing root still succeeds. The public getter lets
+operators read the accepted sequence and cumulative floor after a cancellation.
+Review also found
+`setGuardian(address(0))` could remove the emergency brake after launch. It now
+rejects zero addresses, and a regression case asserts the existing Guardian
+remains configured.
+
+Solidity 0.8.28, optimizer 400, `viaIR` compiled `Deploy`, `HolderRewardVault`,
+`DeployTest`, and `HolderRewardVaultTest`; the 77-entry vault ABI was generated
+from compiler output and `pnpm typecheck` passed. Tests were not executed. No
+deployment or chain state changed. Sources: current workspace
+`contracts/src/HolderRewardVault.sol` and
+`contracts/test/HolderRewardVault.t.sol`, 2026-11-20.
+
+## Pyth sponsored-equity availability recheck — 2026-11-20
+
+Pyth's live sponsored-feed table lists three HyperEVM Core feeds (KHYPE/HYPE.RR,
+KHYPE/USD and USDT0/USD) and no equities. Pyth Core EVM updates have a zero
+protocol update fee, but since the August 2026 upgrade Hermes requires an
+authenticated Pyth API key; network gas and feed entitlement still apply. Pyth
+Pro verifies signed reports in the consumer transaction for 1 wei per EVM
+verification, plus network gas. The public Pyth symbology API returns stable
+records for regular `Equity.US.NVDA/USD` (Hermes ID
+`b1073854ed24cbc755dc527418f52b7d271f6cc967bbf8d8129112b18860a593`),
+`Crypto.NVDAX/USD`
+(`4244d07890e4610f46bbde67de8f43a4bf8b569eebe904f136b469f148503b7f`)
+and `Crypto.NVDAX/NVDA.RR`
+(`b675c4e9f46d94afa9174a7df09966b77a2950970bb50a77ec8ad4fcfd8266f4`). The
+Core Hermes IDs differ from Pyth Pro numeric IDs. The user's Terminal screenshot
+shows a signed-in 14-day demo and 21 My Feeds results, but only part of the table
+is visible; it cannot establish whether NVDA/NVDAX is in the account or whether
+the API key is entitled to stream it. Catalog presence is not trial entitlement.
+We still need to decide whether SENT's wrapped NVDAX should be priced from the tokenized
+asset's USD feed or its redemption ratio against NVDA, and confirm its
+multiplier, session/freshness behavior, trial and ongoing API access, and gas
+payer. The repo's `PythAggregatorShim` is read-only and factory launch does not
+call Pyth `updatePriceFeeds`; a Hermes ID alone cannot supply a fresh anchor.
+Caller-supplied Pyth Core update data in the launch transaction is a candidate
+low-recurring-cost architecture (zero Core update fee, user pays gas), subject
+to access, integration and source-compliance review. Stock-backed launches
+remain disabled pending those checks. No token, subscription, API key, or chain
+state was changed.
+
+Sources: Pyth [sponsored HyperEVM feeds](https://docs.pyth.network/pro/sponsored-feeds),
+[Terminal equity package](https://docs.pyth.network/pro/pyth-terminal),
+[EVM on-chain updates](https://docs.pyth.network/pro/use-prices-on-blockchain/evm),
+[on-chain fees](https://docs.pyth.network/pro/on-chain-fees),
+[Core upgrade](https://docs.pyth.network/pro/pyth-core-upgrade),
+and [token permissions](https://docs.pyth.network/pro/faq#access-tokens--permissions).
+Feed symbols and Hermes IDs were queried from Pyth's public [symbology API](https://docs.pyth.network/api-reference/price-feeds/symbols),
+2026-11-20.
+
+## NVDAx issuer and on-chain cross-check — 2026-11-20
+
+The issuer's public NVDAx asset endpoint for HyperEVM returns raw asset
+`0xc845b2894dbddd03858fd2d643b4ef725fe0849d`, chain ID `999`, and V2 wrapper
+`0xa8ddb5cd96b5222afe198316e9a57caa642850d5`. The raw address matches the
+NVDAx constant in `DeployXStockPriceSource.s.sol`. The issuer multiplier endpoint
+returned `1.001701196801074`; at pinned HyperEVM block `51,706,107`, calling
+`multiplier()` on the raw token returned `1001701196801074000`, the same value
+at 1e18 scale. The issuer's cached price-data quote was `148.096`; that API
+value is not accepted as a launch oracle.
+
+At the same block, Pyth Core `getPriceNoOlderThan(..., 60)` for
+`Equity.US.NVDA/USD` reverted `StalePrice` (`0x19abf40e`). `Crypto.NVDAX/USD`
+and `Crypto.NVDAX/NVDA.RR` reverted `PriceFeedNotFound` (`0x14aebe68`), showing
+that these catalog feeds had no stored Core update at this observation. This
+does not invalidate the catalog feeds; they require a valid update before the
+read-only `PythAggregatorShim` can use them. The exact price denomination for
+SENT's wrapper is still not proven. No transaction or account change occurred.
+
+Evidence: read-only HyperEVM RPC at `https://rpc.hyperliquid.xyz/evm`, pinned
+block `51,706,107`; xStocks public API [`NVDAx asset metadata`](https://api.xstocks.fi/api/v2/public/assets/NVDAx?network=HyperEVM),
+[`multiplier`](https://api.xstocks.fi/api/v2/public/assets/NVDAx/multiplier?network=HyperEVM),
+and [`price data`](https://api.xstocks.fi/api/v2/public/assets/NVDAx/price-data?network=HyperEVM),
+2026-11-20.
+
+## Pyth trial vs. ongoing equity access — 2026-11-20
+
+The current Pyth Terminal pricing page lists Free at `$0/month` with no API
+access; Starter at `$500/month` with API access for crypto symbols; and Pro
+starting at `$2,500/month` with equities and limited redistribution rights.
+The user's account screenshot shows a 14-day demo trial, which is not an
+ongoing free equity API entitlement. Pyth Core's zero EVM update fee does not
+remove the API subscription cost or user-paid transaction gas. This makes Pyth
+equities incompatible with a verified `$0/month` public production budget once
+the trial ends, unless the provider grants a continuing sponsorship or a
+separate licensed distributor covers the feed. No plan was changed and no key
+was accessed.
+
+Source: Pyth [Terminal Plans & Pricing](https://app.pyth.com/plans),
+checked 2026-11-20. Pricing and package contents are provider-controlled and
+must be rechecked before production.
+
+## HyperCore NVDAX market-price recheck — 2026-11-20
+
+Hyperliquid `spotMetaAndAssetCtxs` maps `@702` to token indices `[845, 0]`
+(`NVDAX/USDC`), with NVDAX `szDecimals=2`. Its context reported mark `0.0001`,
+no mid-price and zero 24-hour volume. A separate `l2Book` response showed
+148.74/148.83 top prices with size 33.62 on each side. At pinned HyperEVM block
+`51,706,686`, read-only `spotPx(702)` returned raw `148610000`, which scales to
+`148.61 USDC` using the documented `10^(8 - szDecimals)` conversion. This
+cross-source disagreement means a live spot observation is not enough to prove
+freshness or price integrity. `spotPx` has no update timestamp; order-book depth
+is cancellable/manipulable; earlier calls to the precompile reverted; and USDC
+is not a direct USD observation. Do not use this route for an unrestricted
+launch anchor without a separate risk design and review. No chain state changed.
+
+Evidence: Hyperliquid public [`spotMetaAndAssetCtxs`](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/spot)
+and [`l2Book`](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint#l2-book)
+responses; read-only HyperEVM RPC at `https://rpc.hyperliquid.xyz/evm`, block
+`51,706,686`, 2026-11-20.
+
+## WHYPE MVP quote and HYPE/USD source — 2026-11-20
+
+Read-only HyperEVM RPC calls confirmed `WHYPE` at `0x5555555555555555555555555555555555555555`
+has deployed code, `symbol() = WHYPE`, and `decimals() = 18`. The Chainlink
+HyperEVM HYPE/USD standard proxy at
+`0x2b25bc41d55de29f3a2e163f8eebf63966b25b57` returned a positive 18-decimal
+answer and a recent `latestRoundData()` timestamp on 2026-11-20. Chainlink's
+current official address table marks this feed unrated and lists a 0.5% deviation
+and 86,400-second heartbeat. SENT's config uses the same 86,400-second maximum
+age and a broad $0.10–$10,000 sanity interval. That interval is an explicit MVP
+operator guard, not a Chainlink guarantee.
+
+The existing factory accepts ERC-20 quote assets through the registry, and
+`XStockRegistry.registerAsset` already supports a non-rebasing direct asset;
+governance must still register WHYPE, verify its decimals, set the registry gates,
+and enable it. The factory's USD anchor can price WHYPE through the existing
+ReferencePriceAdapter. The web now exposes the generic quote-asset label and a
+reviewed 1:1 HYPE/WHYPE wrap/unwrap flow.
+
+This does not clear the deployed launchpad: the current factory still lacks a
+graduation router and reference-price configuration, the live registry has no
+registered quote asset, the deployed reward vault lacks the readiness selector
+required by current launch code, and Treasury Safe threshold remains 1-of-1.
+No transaction was sent and no account or subscription was changed.
+
+Primary sources: Chainlink [HyperEVM feed address table](https://docs.chain.link/data-feeds/price-feeds/addresses?network=hyperevm&page=1&search=HYPE&showSvr=true);
+read-only RPC `https://rpc.hyperliquid.xyz/evm` (`eth_getCode`, `symbol`,
+`decimals`, and `latestRoundData`), 2026-11-20.
+
+## Signed-in Pyth My Feeds NVDA entitlement check — 2026-11-20
+
+With the user's authorization, the signed-in Pyth Terminal's **My Feeds** page
+was searched for `NVDA`. The page returned **0 results** out of 21 feeds. Its
+unfiltered list includes other equities (TSLA and QQQ), but no matching NVDA or
+NVDAX feed. This is stronger account-specific evidence than the earlier partial
+screenshot: this demo account's displayed My Feeds entitlement currently does
+not include NVIDIA. The page describes My Feeds as the feeds the plan entitles
+the account to stream.
+
+This read only proves the Terminal's displayed feed entitlement; it does not
+prove whether another product/API token could separately grant access, and it
+does not turn the public NVDAX catalog record into a usable SENT oracle. No feed
+was requested or added, no plan was changed, and no API key or credential was
+viewed. The UI search was cleared and the original My Feeds list restored.
+
+## WHYPE launch-anchor fork regression — 2026-11-20
+
+Added `contracts/test/fork/HypeReferencePriceFork.t.sol` and ran it against a
+read-only fork of HyperEVM using the official Chainlink HYPE/USD proxy and
+canonical WHYPE. Both checks passed: the real WHYPE reports 18 decimals, the
+feed produces a positive in-band answer no older than the configured 86,400
+seconds, and the adapter refuses the same answer once it is beyond that bound.
+The HyperSwap production-fork suite also passed all 5 tests; it measured
+graduation at about 5.39M gas, which still requires HyperEVM's large block lane.
+These results verify the code against live dependencies; they do not configure
+SENT's deployed factory or authorize a launch.
+
+A fresh read-only check at HyperEVM block `51,729,280` found the deployed
+factory's `router` and `referencePrice` still zero, WHYPE still not launchable
+in the deployed registry, and the deployed reward vault without the
+`launchConfigurationReady()` selector used by the current code. Its Guardian,
+quorum and attestor count read as zero. Governance Safe threshold is 2-of-3;
+Treasury Safe is still 1-of-1. The launch fee remains `0.04 HYPE`. Mainnet has
+not been changed.

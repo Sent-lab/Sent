@@ -20,6 +20,7 @@ import {
 } from "../src/env.ts";
 import {
   assertProductionConfigReady,
+  BASE_QUOTE_ASSETS,
   XSTOCK_ALLOWLIST,
   REFERENCE_PRICE_FEEDS,
   GRADUATION_ROUTER,
@@ -266,9 +267,9 @@ section("CORS origins are parsed strictly");
 section("Production readiness is still gated (§279)");
 
 {
-  // This must FAIL today. V-02/V-03/V-05/V-06/C-08 are open, and a guard that
-  // started passing while they are open would mean someone filled the constants
-  // in without recording the evidence.
+  // This must FAIL today. The live config still has no launchable asset, no
+  // price feed/router, and no guardian account; a guard that started passing
+  // without recording evidence would weaken the deployment gate.
   let refused = false;
   try {
     assertProductionConfigReady();
@@ -277,7 +278,7 @@ section("Production readiness is still gated (§279)");
   }
 
   check("mainnet config is not yet ready, and says so", refused);
-  check("the xStock allowlist is still empty", XSTOCK_ALLOWLIST.length === 0);
+  check("WHYPE is the MVP base quote asset", BASE_QUOTE_ASSETS.some((asset) => asset.symbol === "WHYPE"));
 
   /*
    * The launch anchor, checked here rather than left to the contract's own
@@ -289,19 +290,19 @@ section("Production readiness is still gated (§279)");
    * is immutable for the life of every market it prices, so there is no version
    * of "we will fix it after the first launch".
    */
-  check("no launch-anchor feed is configured yet (V-11)", REFERENCE_PRICE_FEEDS.length === 0);
+  check("the HYPE/USD launch-anchor feed is configured", REFERENCE_PRICE_FEEDS.some((feed) => feed.asset.toLowerCase() === BASE_QUOTE_ASSETS[0]?.erc20.toLowerCase()));
 
-  let namesTheAnchor = false;
+  let incorrectlyBlocksConfiguredAnchor = false;
   try {
     assertProductionConfigReady();
   } catch (error) {
-    namesTheAnchor = error instanceof Error && error.message.includes("V-11");
+    incorrectlyBlocksConfiguredAnchor =
+      error instanceof Error && error.message.includes("no launch-anchor price feed configured");
   }
 
-  // The guard must SAY which dependency is missing. A refusal that lists four
-  // problems and omits the fifth is one an operator resolves and then meets
-  // again.
-  check("and the refusal names it", namesTheAnchor);
+  // The HYPE feed is configured; remaining gates are onchain/deployment
+  // prerequisites, not a missing price source.
+  check("the configured launch anchor is no longer a readiness blocker", !incorrectlyBlocksConfiguredAnchor);
 
   /*
    * §180 requires "Graduation + permanent LP path proven".

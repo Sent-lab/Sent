@@ -2,33 +2,43 @@
 
 **Launch. Pair. Create market.**
 
-A permissionless fixed-supply token launchpad on HyperEVM, where every market is
-quoted against an official xStock — a tokenized equity — rather than a
-stablecoin or the native gas token.
+SENT is building a permissionless fixed-supply token launchpad on HyperEVM,
+designed for markets quoted against verified xStocks — tokenized equities —
+rather than a stablecoin or the native gas token. The public launch path is
+currently disabled while its oracle, asset and graduation requirements are
+completed.
 
-A market opens at a $2,000 reference market cap, trades two-way on a bonding
-curve, and **graduates automatically at $50,000** into permanently locked
-HyperSwap V3 liquidity. Holders earn **Stockback**: a share of every trade paid
-back to them in the market's own paired xStock, weighted by how much they held
-and for how long.
+When enabled, a market is designed to open at a $2,000 reference market cap and
+trade two-way on a bonding curve. At the $50,000 endpoint, the curve closes and
+refunds any unspent quote; a separate permissionless transaction then creates
+the permanently locked HyperSwap V3 liquidity. During that handoff, curve
+trading is closed until graduation succeeds. Stockback is designed to
+distribute part of each trade to holders in the market's paired asset, weighted
+by amount held and time held. These mechanisms are not currently available for
+public mainnet use.
 
-Creator allocation is 0%. Platform allocation is 0%. Nobody deposits liquidity.
+Protocol design: creator allocation is 0%, platform allocation is 0%, and the
+curve supplies the liquidity. These terms do not mean that a market can launch
+today; see the live status and gates below.
 
 ---
 
 ## Status
 
-> **Pre-audit and pre-deployment. Nothing here is live, and no contract has
-> touched mainnet.**
+> **Core contracts have been deployed on HyperEVM mainnet, but SENT is not
+> launch-enabled and is not open to public trading.** The factory currently has
+> no router or reference-price adapter configured, and the xStock registry has
+> no launchable assets. See [`docs/LAUNCH-READINESS-2026-11-18.md`](docs/LAUNCH-READINESS-2026-11-18.md)
+> for the current evidence and release gates.
 
 | | |
 |---|---|
-| Contracts | Core protocol complete except the graduation router |
-| Backend | Indexer, projection, API, realtime gateway, Stockback pipeline, workers |
-| Frontend | Discovery, trading terminal, chart, live tape, create and account |
-| Wallet signing | Wired; unverified against a browser extension |
+| Contracts | Core deployed; launch remains blocked until oracle, registry and graduation configuration are complete |
+| Backend | Services are implemented; production endpoints and operations are not configured |
+| Frontend | Discovery, trading terminal, chart, live tape, create and account; public deployment not configured |
+| Wallet signing | Wired; browser-extension flow still needs release verification |
 | External audit | Not started |
-| Deployment | None |
+| Deployment | Core contracts deployed on HyperEVM; app and production services are not publicly launched |
 
 The whole stack is exercised end to end against a local chain: contracts
 deployed, a market launched and traded, a real reorg performed and reconciled,
@@ -37,12 +47,14 @@ their own root. That suite found twelve defects that unit tests could not,
 every one of them in a seam between two components that were each correct on
 their own.
 
-**Not yet resolvable** — these depend on external facts that have not been
-confirmed, and the project deliberately refuses to guess them:
+**Still blocks a public mainnet launch** — these depend on external facts or
+operational decisions that have not been confirmed, and the project deliberately
+refuses to guess them:
 
-- canonical xStock ERC-20 addresses on HyperEVM
-- a HyperSwap primitive that locks LP principal while preserving fee rights
-- the launch-time reference price source
+- a verified xStock wrapper and accounting path for SENT's markets
+- deployment and Safe configuration of SENT's graduation router and permanent lock
+- an onchain launch-price source with an available signed-report delivery path
+- production service endpoints, operational accounts and legal distribution review
 
 The read surface is documented in [`docs/API.md`](docs/API.md).
 
@@ -53,26 +65,28 @@ with its evidence class. Nothing in production may depend on an unverified row.
 
 ## How it works
 
-**Pre-graduation.** A creator names a token, picks an official xStock pair, and
-pays about a dollar plus gas. The factory deploys a 1,000,000,000 fixed-supply
+**Pre-graduation (protocol design).** If mainnet launch is enabled, a creator can
+name a token, choose an approved xStock pair, and pay the configured launch fee
+plus gas. The factory deploys a 1,000,000,000 fixed-supply
 ERC-20 through creator-bound CREATE2 and opens a market against the chosen
 xStock. The whole supply goes to the market, which releases it along a linear
 curve. Buys cost 2%, sells 3% — a 1% core fee split 65/35 between creator and
 platform, plus a Stockback contribution of 1% on buys and 2% on sells that goes
 entirely to holders.
 
-**Graduation.** When the marginal price reaches 25× the launch price, the market
-graduates inside the triggering trade. There is no manual trigger for anyone.
-The endpoint is chosen so that curve collateral exactly equals the value of the
-remaining supply at the final price — which is why the HyperSwap position needs
-no creator or treasury top-up, and why a full-range mint consumes both sides with
-no meaningful dust.
+**Graduation (protocol design).** When the marginal price reaches 25× the launch price, the
+crossing trade closes the curve and refunds unspent quote. Anyone can then call
+`finalizeGraduation()` to create and permanently lock the HyperSwap position; no caller has a
+privileged trigger. Curve trading is unavailable until that transaction succeeds. The endpoint
+is chosen so that curve collateral exactly equals the value of the remaining supply at the final
+price — which is why the HyperSwap position needs no creator or treasury top-up, and why a
+full-range mint consumes both sides with bounded dust.
 
-**Post-graduation.** The curve closes permanently. The token address never
+**Post-graduation (protocol design).** The curve closes permanently. The token address never
 changes. LP principal is locked forever; the creator keeps 65% of eligible fee
 revenue for the life of the market.
 
-**Stockback.** Rewards are time-weighted over 24-hour epochs — amount held times
+**Stockback (protocol design).** Rewards are time-weighted over 24-hour epochs — amount held times
 time held — so a snapshot buy pays almost nothing. Independent attestors compute
 the same distribution from the same chain events and sign a cumulative Merkle
 commitment. Anyone may submit it; the submitter earns nothing. A guardian can
@@ -100,12 +114,13 @@ services/
   stockback/      TWAB to Merkle commitment pipeline
   finalizer/      Computes distributions from settled state. Never signs.
   worker/         Candles, reconciliation, health sweeps
+  keeper/         Graduation finalizer; watch-only by default
 apps/web/         Next.js application
 infra/            Container image, local stack, migrations, alerting
 tests/
   integration/    The projection SQL against a real PostgreSQL
   e2e/            The whole stack against a real chain
-docs/             API reference, comprehension pass, verify ledger, decisions
+docs/             API reference, readiness report, operational runbooks, verify ledger
 ```
 
 ---

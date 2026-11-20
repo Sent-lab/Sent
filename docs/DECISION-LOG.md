@@ -759,6 +759,13 @@ router's three HyperSwap addresses are immutable in its constructor and V-06 has
 no first-party confirmation, and the anchor feed is V-11 — Pyth's equity feeds on
 this chain are 63–561 days stale.
 
+**Day 10 correction (2026-11-18):** V-06 is now VERIFIED. HyperSwap's first-party
+V3 deployment page lists the factory, SwapRouter01, QuoterV2 and position manager;
+live HyperEVM code and the three child contracts' `factory()` reads agree. The
+factory's `router()` and `referencePrice()` remain zero, so the launch is still
+refused until SENT's graduation router/lock are deployed and an oracle is wired.
+See the dated V-06 and V-11 updates in `docs/VERIFY-LEDGER.md`.
+
 **What the block lanes cost, in order.** The deployment met V-20 three separate
 times, and only the first was expected:
 
@@ -783,3 +790,33 @@ itself the sole Stockback attestor and claim the reward vault after
 is `onlyGovernance` too, so it is not a brake at all until a Guardian Safe exists
 with signers governance does not control. `assertProductionConfigReady` now
 refuses without one.
+
+---
+
+## D-019 — Public MVP launches start in WHYPE; xStocks stay opt-in
+
+**Class:** PRODUCT SCOPE (user-directed)
+**Date:** 2026-11-20
+
+The first public SENT lane uses HyperEVM's wrapped native HYPE (`WHYPE`) as its
+quote asset. Creators can launch and trade without waiting for stock-data
+subscriptions or a stock-specific wrapper/oracle deployment. The UI wraps native
+HYPE into WHYPE at 1:1 and keeps the conversion reversible.
+
+The launch curve still uses a USD reference cap. The MVP HYPE/USD source is the
+standard Chainlink HyperEVM proxy, with a hard 24-hour freshness limit and an
+explicit broad sanity band. Chainlink's current address table marks this feed
+unrated and lists a 24-hour heartbeat; the UI must show the source timestamp.
+This is an inexpensive MVP oracle path, with the stated freshness and source
+quality trade-off, not a claim of premium uptime or independent rating.
+
+Stock pairs remain available only when governance registers and enables a
+verified quote asset and configures a live source for it. SPYx/NVDAx are not
+promised for the initial public opening: current Pyth catalog data alone does
+not establish an account entitlement or an on-chain update path. No stock feed
+is silently substituted for the HYPE/USD anchor.
+
+This decision changes the original xStock-only launch plan. The deployed
+contracts still need the router, oracle, HYPE registration, reward-vault
+readiness and Safe prerequisites below; this entry authorizes code/config work,
+not an on-chain transaction or a public launch announcement.

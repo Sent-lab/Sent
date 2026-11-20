@@ -111,21 +111,35 @@ export interface WireIntentReview {
  * describing an open finding on a wire that can no longer report one.
  */
 
+const configuredApiBase = process.env.NEXT_PUBLIC_API_URL?.trim();
+
+/**
+ * Local development has a useful default. A production build without an API
+ * URL must stay disconnected instead of making every visitor's browser call
+ * its own localhost, which can never be SENT's production API.
+ */
 export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+  configuredApiBase !== undefined && configuredApiBase !== ""
+    ? configuredApiBase.replace(/\/+$/, "")
+    : process.env.NODE_ENV === "development"
+      ? "http://localhost:8080"
+      : "";
 
 /** A transport failure, shaped like an API error so callers have one path. */
 export class ApiUnreachable extends Error {
-  readonly code = "NETWORK_UNREACHABLE";
+  readonly code: "NETWORK_UNREACHABLE" | "API_NOT_CONFIGURED";
   readonly retryable = true;
 
-  constructor(cause: unknown) {
+  constructor(cause: unknown, configurationMissing = false) {
     super(
-      // §42: contextual and recovery-oriented, never "Failed." The copy a user
-      // sees when the network drops is part of the product.
-      "Market data is reconnecting. Your funds and on-chain position are unchanged.",
+      configurationMissing
+        ? "Live market data is not connected for this deployment yet. Your funds and on-chain position are unchanged."
+        : // §42: contextual and recovery-oriented, never "Failed." The copy a user
+          // sees when the network drops is part of the product.
+          "Market data is reconnecting. Your funds and on-chain position are unchanged.",
     );
     this.name = "ApiUnreachable";
+    this.code = configurationMissing ? "API_NOT_CONFIGURED" : "NETWORK_UNREACHABLE";
     this.cause = cause;
   }
 }
@@ -223,11 +237,14 @@ const ENVELOPE_MAX_AGE_SECONDS = 600;
  * on the one fact the producer cannot know and the consumer can — how long the
  * answer took to arrive.
  */
-function aged(freshness: FreshnessEnvelope): FreshnessEnvelope {
+function aged(
+  freshness: FreshnessEnvelope,
+  maxAgeSeconds = ENVELOPE_MAX_AGE_SECONDS,
+): FreshnessEnvelope {
   if (freshness.state === "STALE") return freshness;
 
   const age = Math.floor(Date.now() / 1000) - freshness.serverTime;
-  if (age <= ENVELOPE_MAX_AGE_SECONDS) return freshness;
+  if (age <= maxAgeSeconds) return freshness;
 
   return { ...freshness, state: "STALE" };
 }
@@ -263,6 +280,7 @@ async function receive<T>(
   path: string,
   response: Response,
   guard: DataGuard | undefined,
+  maxEnvelopeAgeSeconds = ENVELOPE_MAX_AGE_SECONDS,
 ): Promise<ApiResult<T>> {
   // 4xx and 5xx still carry a typed body — including /health at 503, which is a
   // meaningful answer rather than a failure. Parsing it is how the UI shows
@@ -291,7 +309,9 @@ async function receive<T>(
       code: body["code"],
       message: body["message"],
       retryable: body["retryable"] === true,
-      freshness: isFreshness(freshness) ? aged(freshness) : disconnected(),
+      freshness: isFreshness(freshness)
+        ? aged(freshness, maxEnvelopeAgeSeconds)
+        : disconnected(),
     };
   }
 
@@ -312,7 +332,7 @@ async function receive<T>(
     return malformed<T>(path, "data does not match the expected shape", freshness);
   }
 
-  return { ok: true, data: data as T, freshness: aged(freshness) };
+  return { ok: true, data: data as T, freshness: aged(freshness, maxEnvelopeAgeSeconds) };
 }
 
 // --- guards, one per shape a caller indexes into ---------------------------
@@ -321,6 +341,28 @@ const pageOfItems: DataGuard = (data) => isRecord(data) && Array.isArray(data["i
 const listOfRows: DataGuard = (data) => Array.isArray(data);
 const anyObject: DataGuard = (data) => isRecord(data);
 const candleSet: DataGuard = (data) => isRecord(data) && Array.isArray(data["candles"]);
+const stockbackResponse: DataGuard = (data) => {
+  if (!isRecord(data)) return false;
+  const amount = (value: unknown): boolean =>
+    isRecord(value) && typeof value["value"] === "string" && /^\d+$/.test(value["value"]);
+  return (
+    typeof data["market"] === "string" &&
+    typeof data["account"] === "string" &&
+    typeof data["quoteDecimals"] === "number" &&
+    Number.isInteger(data["quoteDecimals"]) &&
+    data["quoteDecimals"] >= 0 &&
+    data["quoteDecimals"] <= 36 &&
+    amount(data["estimatedAccrued"]) &&
+    amount(data["claimable"]) &&
+    amount(data["lifetimeClaimed"]) &&
+    typeof data["epochSequence"] === "string" &&
+    /^\d+$/.test(data["epochSequence"]) &&
+    typeof data["epochEndsAt"] === "number" &&
+    (data["rewardVault"] === null || typeof data["rewardVault"] === "string") &&
+    (data["cumulative"] === undefined || (typeof data["cumulative"] === "string" && /^\d+$/.test(data["cumulative"]))) &&
+    (data["proof"] === undefined || Array.isArray(data["proof"]))
+  );
+};
 
 /**
  * An intent is held to a higher bar than the read endpoints.
@@ -359,6 +401,10 @@ async function request<T>(
   options: RequestOptions = {},
   guard?: DataGuard,
 ): Promise<ApiResult<T>> {
+  if (API_BASE === "") {
+    throw new ApiUnreachable(new Error("NEXT_PUBLIC_API_URL is not configured"), true);
+  }
+
   let response: Response;
 
   try {
@@ -375,7 +421,11 @@ async function request<T>(
     throw new ApiUnreachable(error);
   }
 
-  return receive<T>(path, response, guard);
+  const maxEnvelopeAgeSeconds =
+    options.revalidateSeconds === undefined
+      ? ENVELOPE_MAX_AGE_SECONDS
+      : Math.max(30, options.revalidateSeconds * 2);
+  return receive<T>(path, response, guard, maxEnvelopeAgeSeconds);
 }
 
 // ---------------------------------------------------------------------------
@@ -494,7 +544,7 @@ export function getStockback(
   account: string,
   options?: RequestOptions,
 ): Promise<ApiResult<StockbackResponse>> {
-  return request<StockbackResponse>(`/markets/${token}/stockback/${account}`, options, anyObject);
+  return request<StockbackResponse>(`/markets/${token}/stockback/${account}`, options, stockbackResponse);
 }
 
 export function getCreator(
@@ -589,6 +639,10 @@ export async function quote(
   body: QuoteRequestBody,
   options: RequestOptions = {},
 ): Promise<ApiResult<WireIntent>> {
+  if (API_BASE === "") {
+    throw new ApiUnreachable(new Error("NEXT_PUBLIC_API_URL is not configured"), true);
+  }
+
   let response: Response;
 
   try {

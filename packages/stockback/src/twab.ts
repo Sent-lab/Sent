@@ -100,8 +100,18 @@ export function computeEpochWeights(
   const end = epochEnd(epochId);
 
   const balances = new Map<string, bigint>();
+  const openingAccounts = new Set<string>();
   for (const [account, balance] of openingBalances) {
-    if (balance > 0n) balances.set(account.toLowerCase(), balance);
+    if (balance < 0n) {
+      throw new Error(`computeEpochWeights: negative opening balance for ${account} — epoch state is corrupt`);
+    }
+
+    const normalized = account.toLowerCase();
+    if (openingAccounts.has(normalized)) {
+      throw new Error(`computeEpochWeights: duplicate normalized opening account ${normalized}`);
+    }
+    openingAccounts.add(normalized);
+    if (balance > 0n) balances.set(normalized, balance);
   }
 
   const weights = new Map<string, bigint>();
@@ -117,12 +127,41 @@ export function computeEpochWeights(
     lastAccrual.set(account, until);
   };
 
-  const inEpoch = events
-    .filter((e) => e.timestamp >= start && e.timestamp < end)
-    .sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
+  /*
+   * Events can be shuffled by independent indexers, and many transactions in a
+   * block share the same second-resolution timestamp. Sorting by timestamp
+   * alone leaves ties in input order; applying a same-second debit before its
+   * matching credit can look like a negative balance even though the canonical
+   * end-of-second balance is valid. No time elapses between those records in
+   * this model, so net each account's deltas at a timestamp before integrating.
+   */
+  const deltasByTime = new Map<bigint, Map<string, bigint>>();
+  for (const event of events) {
+    if (event.timestamp < start || event.timestamp >= end) continue;
 
-  for (const event of inEpoch) {
     const account = event.account.toLowerCase();
+    let byAccount = deltasByTime.get(event.timestamp);
+    if (byAccount === undefined) {
+      byAccount = new Map();
+      deltasByTime.set(event.timestamp, byAccount);
+    }
+    byAccount.set(account, (byAccount.get(account) ?? 0n) + event.delta);
+  }
+
+  const atTime: { account: string; timestamp: bigint; delta: bigint }[] = [];
+  for (const [timestamp, byAccount] of deltasByTime) {
+    for (const [account, delta] of byAccount) atTime.push({ account, timestamp, delta });
+  }
+  atTime.sort((a, b) =>
+    a.timestamp < b.timestamp ? -1
+    : a.timestamp > b.timestamp ? 1
+    : a.account < b.account ? -1
+    : a.account > b.account ? 1
+    : 0,
+  );
+
+  for (const event of atTime) {
+    const account = event.account;
     accrue(account, event.timestamp);
 
     const next = (balances.get(account) ?? 0n) + event.delta;

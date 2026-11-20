@@ -42,6 +42,9 @@ importers:
       '@sent/api':
         specifier: workspace:*
         version: link:../../services/api
+      '@sent/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@sent/economics':
         specifier: workspace:*
         version: link:../../packages/economics
@@ -51,6 +54,9 @@ importers:
       '@sent/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+      '@sent/stockback':
+        specifier: workspace:*
+        version: link:../../packages/stockback
       next:
         specifier: ^15.5.4
         version: 15.5.25(@types/node@26.4.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -98,6 +104,9 @@ importers:
 
   packages/sdk:
     dependencies:
+      '@sent/config':
+        specifier: workspace:*
+        version: link:../config
       '@sent/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -152,6 +161,9 @@ importers:
       '@sent/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@sent/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@sent/database':
         specifier: workspace:*
         version: link:../../packages/database

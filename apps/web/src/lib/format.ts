@@ -33,7 +33,7 @@
 /**
  * THE SCALE OF A QUOTE VALUE THAT CAME OFF THE CHAIN (§12, §424)
  * --------------------------------------------------------------
- * Every quote-denominated figure the API serves is NORMALIZED to eighteen
+ * Market projection/trade figures the API serves are NORMALIZED to eighteen
  * places, not raw. `LaunchMarket` normalizes on the way in and holds
  * `curveCollateral` normalized; `Bought` and `Sold` emit `grossNormalized`,
  * `f.net`, the fees and `curveCollateral` — all normalized; `p0` is "wad quote
@@ -54,7 +54,9 @@
  * what `buy()` takes and what their wallet holds; the SDK normalizes it before
  * computing fees and renders the results back in raw units. So the wire field
  * is not wrong and is not going away — it answers "how do I read a balance",
- * not "how do I read the projection".
+ * not "how do I read the projection". Stockback entitlements are also kept in
+ * raw reward-token units because they become claim calldata; those must be
+ * formatted with their paired asset's quoteDecimals, not QUOTE_SCALE.
  *
  * Two functions rather than a constant passed by hand at each call site: a
  * number a caller supplies is a number a caller can get wrong, and this one was

@@ -18,12 +18,13 @@
 
 import Link from "next/link";
 
-import { listMarkets, isOk } from "../lib/api.ts";
+import { getLaunchConfig, listMarkets, isOk } from "../lib/api.ts";
 import { TokenCard } from "../components/TokenCard.tsx";
 import { FreshnessBadge } from "../components/Freshness.tsx";
 import { Logo } from "../components/Logo.tsx";
 import { MarketPulse } from "../components/MarketPulse.tsx";
 import { PlatformStats } from "../components/PlatformStats.tsx";
+import { isActionableFreshness } from "../lib/freshness.ts";
 
 import styles from "./page.module.css";
 import type { JSX } from "react";
@@ -51,7 +52,7 @@ export default async function HomePage(): Promise<JSX.Element> {
    * Six round trips in parallel. Sequentially they would stack six API
    * latencies into one server render.
    */
-  const [trending, fresh, nearGraduation, recentlyGraduated, topVolume, gainers] =
+  const [trending, fresh, nearGraduation, recentlyGraduated, topVolume, gainers, launchConfig] =
     await Promise.all([
       listMarkets({ sort: "TRENDING", limit: 6, status: "PRE_GRAD" }, { revalidateSeconds: 6 })
         .catch(() => null),
@@ -65,7 +66,33 @@ export default async function HomePage(): Promise<JSX.Element> {
       listMarkets({ sort: "VOLUME", limit: 6 }, { revalidateSeconds: 6 }).catch(() => null),
       listMarkets({ sort: "GAINERS", limit: 6, status: "PRE_GRAD" }, { revalidateSeconds: 6 })
         .catch(() => null),
+      // Unlike discovery rails, a launch gate must never fall back to a cached
+      // answer after the API or chain stops responding.
+      getLaunchConfig().catch(() => null),
     ]);
+
+  const launchConfigUsable =
+    launchConfig !== null &&
+    isOk(launchConfig) &&
+    isActionableFreshness(launchConfig.freshness);
+  const canLaunch = launchConfigUsable && launchConfig.data.ready;
+  const stockbackBlocksLaunch =
+    launchConfigUsable &&
+    launchConfig !== null &&
+    isOk(launchConfig) &&
+    launchConfig.data.graduationRouter !== null &&
+    launchConfig.data.launchable.some((asset) => asset.usdPriceWad !== null) &&
+    !launchConfig.data.stockback.ready;
+  const launchableAssets =
+    canLaunch && launchConfig !== null && isOk(launchConfig)
+      ? launchConfig.data.launchable.filter((asset) => asset.usdPriceWad !== null)
+      : [];
+  const launchStatus =
+    !launchConfigUsable
+      ? "unknown"
+      : canLaunch
+        ? "available"
+        : "unavailable";
 
   return (
     <div data-mode="experience">
@@ -85,28 +112,76 @@ export default async function HomePage(): Promise<JSX.Element> {
           </h1>
 
           <p className={`${styles.lede} m-secondary`}>
-            Permissionless fixed-supply launches on HyperEVM, quoted against official
-            xStocks. One billion tokens, no creator allocation, no platform allocation —
-            and liquidity that locks permanently when a market graduates.
+            SENT is building fixed-supply token markets paired with verified stock-backed
+            assets on HyperEVM. Launch access depends on live oracle, asset and graduation
+            checks; this page reports whether those checks currently pass.
           </p>
+
+          <section className={styles.launchStatus} data-state={launchStatus} aria-label="Live launch availability">
+            <div className={styles.launchStatusHeading}>
+              <span className={styles.statusDot} aria-hidden="true" />
+              <strong>
+                {launchStatus === "available"
+                  ? "Launches available"
+                  : launchStatus === "unavailable"
+                    ? "Launches not available yet"
+                    : "Launch availability could not be checked"}
+              </strong>
+              {launchConfig !== null && isOk(launchConfig) && (
+                <FreshnessBadge envelope={launchConfig.freshness} />
+              )}
+            </div>
+            <p className={styles.launchStatusDetail}>
+              {launchStatus === "available"
+                ? `Live price and graduation checks pass for ${launchableAssets
+                    .slice(0, 4)
+                    .map((asset) => asset.symbol)
+                    .join(", ")}${launchableAssets.length > 4 ? ` and ${launchableAssets.length - 4} more` : ""}. Review the launch fee and current price in the create flow before signing.`
+                : launchStatus === "unavailable"
+                  ? stockbackBlocksLaunch && launchConfig !== null && isOk(launchConfig)
+                    ? !launchConfig.data.stockback.factoryGuardMarkerPresent
+                      ? "Launches are held because the deployed factory is missing the expected Stockback guard marker. Governance must use and verify a guarded deployment."
+                      : !launchConfig.data.stockback.vaultReadinessCheckSupported
+                        ? "Launches are held because the reward vault does not expose the on-chain readiness check required by this factory."
+                        : !launchConfig.data.stockback.vaultConfigurationReady
+                          ? "Launches are held because the reward vault's on-chain readiness check is false."
+                          : launchConfig.data.stockback.guardian === null
+                            ? "Launches are held while governance configures the Stockback guardian. Rewards must be ready before a public market can open."
+                            : launchConfig.data.stockback.claimsPaused
+                              ? "Launches are held because Stockback claims are paused. Existing markets, if any, remain available to explore."
+                              : `Launches are held until Stockback's attestor quorum is configured (${launchConfig.data.stockback.attestorCount} attestors, quorum ${launchConfig.data.stockback.quorum}).`
+                    : "No market can be launched right now. SENT will not submit a launch transaction while its live requirements are missing. Existing markets, if any, remain available to explore."
+                  : launchConfig !== null &&
+                      isOk(launchConfig) &&
+                      !isActionableFreshness(launchConfig.freshness)
+                    ? `Launch requirements are ${launchConfig.freshness.state.toLowerCase()}. Refresh when the live chain view recovers; this status does not approve a launch.`
+                    : "The live launch configuration is unavailable. Check again later; do not treat a missing status as launch approval."}
+            </p>
+          </section>
 
           <div className={`${styles.heroActions} m-secondary`}>
             <Link href="/explore" className={styles.primaryCta}>
               Explore markets
             </Link>
             <Link href="/create" className={styles.secondaryCta}>
-              Launch a token
+              {canLaunch ? "Launch a token" : "View launch requirements"}
             </Link>
           </div>
 
-          {/* The economics, stated plainly. These are LOCKED values, not
-              marketing figures, so they are presented as facts rather than as
-              claims that need qualifying. */}
+          <p className={styles.termsLabel}>Protocol terms for enabled markets</p>
           <dl className={styles.facts}>
             <Fact term="Supply" detail="Fixed at launch. No mint, no burn." value="1B" />
             <Fact term="Creator allocation" detail="No premine. None." value="0%" />
-            <Fact term="Core trading fee" detail="65% creator, 35% platform." value="1%" />
-            <Fact term="Stockback" detail="Paid in the paired xStock." value="+1% / +2%" />
+            <Fact
+              term="Core trading fee"
+              detail="When enabled: 65% creator, 35% platform. Earned only from live trades."
+              value="1%"
+            />
+            <Fact
+              term="Stockback"
+              detail="When rewards are active: paid in the paired asset after attestation and activation."
+              value="+1% / +2%"
+            />
           </dl>
         </div>
       </section>
@@ -208,6 +283,12 @@ function Rail({
   href: string;
   result: Awaited<ReturnType<typeof listMarkets>> | null;
 }): JSX.Element {
+  const dataUnavailable =
+    result === null ||
+    (result !== null &&
+      isOk(result) &&
+      (result.freshness.state === "STALE" || result.freshness.state === "RECONNECTING"));
+
   return (
     <section className={styles.rail}>
       <header className={`${styles.railHead} m-secondary`}>
@@ -224,9 +305,9 @@ function Rail({
         </div>
       </header>
 
-      {result === null ? (
+      {dataUnavailable ? (
         <p className={styles.state}>
-          Market data is reconnecting. Your funds and on-chain position are unchanged.
+          Market data is stale or reconnecting, so this rail is hidden until it refreshes.
         </p>
       ) : !isOk(result) ? (
         <p className={styles.state}>{result.message}</p>

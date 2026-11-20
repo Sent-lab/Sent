@@ -50,7 +50,7 @@ const ITEMS: readonly Item[] = [
   {
     title: "Bonding curve and market contracts",
     state: "BUILDING",
-    body: "Linear curve, fixed supply, 1% core fee split 65/35, automatic in-transaction graduation. Written, fuzzed and covered by invariants; not yet audited and not deployed.",
+    body: "Core contracts are deployed on HyperEVM, but the factory is not launch-enabled: no reference-price source, launchable asset or graduation router is configured. Public mainnet launch remains closed; the contract set has not had an external security audit.",
   },
   {
     title: "Stockback",
@@ -79,8 +79,8 @@ const ITEMS: readonly Item[] = [
   },
   {
     title: "Wallet connection and signing",
-    state: "NEXT",
-    body: "The transaction builder is complete and byte-for-byte tested against the contracts. Connecting a wallet is the remaining step.",
+    state: "BUILDING",
+    body: "Browser wallet connection, network switching and reviewed transaction intents are wired in the app. Wallet-by-wallet release verification against the configured production deployment is still outstanding.",
   },
   {
     title: "Creator control centre",
@@ -88,14 +88,14 @@ const ITEMS: readonly Item[] = [
     body: "Launches, graduation progress and fee earnings for anyone who has launched a token, with claims sent straight to the fee vault. Two fee figures, never one: what the vault will pay now, and what has been earned all time.",
   },
   {
-    title: "xStock registry",
+    title: "xStock wrapper and registry gates",
     state: "EXPLORING",
-    body: "Blocked on verification of the official xStock contract addresses, their decimals and their Core token indices (V-02, V-03, V-05). These are facts about other people's contracts and will not be guessed.",
+    body: "HyperEVM xStocks exist, but SENT's launchable share-backed wrapper is not configured. Transfer behavior, decimals, multiplier conversion, Core mapping, price source, accounting and distribution gates still need evidence before governance enables a pair (V-02, V-03, V-05).",
   },
   {
     title: "Graduation to permanent liquidity",
     state: "EXPLORING",
-    body: "Blocked on confirming HyperSwap's position manager and the lock primitive that makes the position permanently non-withdrawable (V-06, V-09). Until both are verified, a launched market could trade but could not graduate.",
+    body: "HyperSwap V3 dependencies have been verified and a SENT lock/router deployment script is prepared, but SENT's own router and permanent lock are not deployed or connected to the factory. No launch should be enabled until the pair is deployed and verified (V-06, V-09).",
   },
   {
     title: "Security audit",

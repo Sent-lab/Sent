@@ -5,8 +5,8 @@
 # can be exercised end to end.
 #
 # What it does share with production is the SHAPE: the indexer is the only writer
-# that creates the schema, the finalizer computes but never signs, and every
-# service reads its configuration from the environment rather than a baked file.
+# that creates the schema, the finalizer computes but never signs, and the
+# graduation keeper is an explicit opt-in profile because it can send transactions.
 
 name: sent
 
@@ -17,8 +17,10 @@ services:
       POSTGRES_USER: sent
       POSTGRES_PASSWORD: sent
       POSTGRES_DB: sent
+    # This is a local development stack. Do not publish the database on every
+    # host interface; local tools may still connect through loopback.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -42,7 +44,7 @@ services:
       CHAIN_ID: ${CHAIN_ID:-999}
       FACTORY_ADDRESS: ${FACTORY_ADDRESS:?FACTORY_ADDRESS must be set}
       REWARD_VAULT_ADDRESS: ${REWARD_VAULT_ADDRESS:?REWARD_VAULT_ADDRESS must be set}
-      START_BLOCK: ${START_BLOCK:-0}
+      START_BLOCK: ${START_BLOCK:?Set START_BLOCK to the earliest monitored deployment block; use 0 only for an intentional full-history reindex}
       CONFIRMATIONS: ${CONFIRMATIONS:-20}
     depends_on:
       postgres:
@@ -64,8 +66,13 @@ services:
       # Without this the browser cannot call the API at all: the web tier is a
       # different origin and every request is preflighted.
       API_ALLOWED_ORIGINS: ${API_ALLOWED_ORIGINS:-http://localhost:3000}
+      # Forwarded headers are trusted only when a reverse proxy is actually in
+      # front of this API. The application defaults this to false as well.
+      API_TRUST_PROXY: ${API_TRUST_PROXY:-false}
+    # Keep the unauthenticated HTTP service on loopback. A production ingress
+    # should terminate HTTPS and proxy to a separately reviewed deployment.
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -96,7 +103,7 @@ services:
       REWARD_VAULT_ADDRESS: ${REWARD_VAULT_ADDRESS:?REWARD_VAULT_ADDRESS must be set}
       REALTIME_PORT: 8081
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     depends_on:
       postgres:
         condition: service_healthy
@@ -128,6 +135,35 @@ services:
         condition: service_healthy
       indexer:
         condition: service_started
+    restart: unless-stopped
+
+  # Opt-in because adding KEEPER_PRIVATE_KEY turns this process into an
+  # automatic HyperEVM transaction sender. Default `docker compose up` remains
+  # watch-free; an operator must explicitly select this profile and supply a
+  # funded, large-lane-enabled key when they intend to automate finalisation.
+  keeper:
+    profiles: ["keeper"]
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    environment:
+      SERVICE: keeper
+      DATABASE_URL: postgres://sent:sent@postgres:5432/sent
+      RPC_URL: ${RPC_URL:?RPC_URL must be set}
+      CHAIN_ID: ${CHAIN_ID:-999}
+      FACTORY_ADDRESS: ${FACTORY_ADDRESS:?FACTORY_ADDRESS must be set}
+      REWARD_VAULT_ADDRESS: ${REWARD_VAULT_ADDRESS:?REWARD_VAULT_ADDRESS must be set}
+      KEEPER_PRIVATE_KEY: ${KEEPER_PRIVATE_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      indexer:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9105/healthz >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
     restart: unless-stopped
 
 volumes:

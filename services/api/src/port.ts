@@ -20,7 +20,7 @@
  * behind on an explore page is what the freshness envelope exists to say.
  */
 
-import { createPublicClient, http, type PublicClient } from "viem";
+import { createPublicClient, http, toFunctionSelector, type PublicClient } from "viem";
 
 import {
   Database,
@@ -43,6 +43,7 @@ import {
   listClaimsByAccount,
   platformStats,
   listEpochs,
+  listDatasetEntries as dbListDatasetEntries,
   distributionStatus,
   marketHeat,
   livePresence,
@@ -53,6 +54,7 @@ import {
   launchMarketAbi,
   launchpadFactoryAbi,
   feeVaultAbi,
+  holderRewardVaultAbi,
   xStockRegistryAbi,
   referencePriceAdapterAbi,
 } from "@sent/contracts";
@@ -84,6 +86,8 @@ export interface LaunchableAsset {
   readonly decimals: number;
   /** What this wraps, when it wraps something. */
   readonly underlying: `0x${string}` | null;
+  /** The configured oracle contract, if one is attached to this asset. */
+  readonly priceSource: `0x${string}` | null;
   /**
    * The USD anchor a launch against this asset would use, or null when the
    * adapter cannot serve one (§402).
@@ -108,6 +112,20 @@ export interface LaunchPreconditions {
   readonly launchFee: bigint;
   /** The adapter, or null when governance has not set one (§402). */
   readonly referencePrice: `0x${string}` | null;
+  /** Live Stockback claim/attestation configuration, read from the factory vault. */
+  readonly stockback: {
+    readonly vault: `0x${string}`;
+    /** Necessary bytecode marker for the expected factory guard; not full equivalence proof. */
+    readonly factoryGuardMarkerPresent: boolean;
+    /** Whether the deployed reward vault exposes its source-level readiness check. */
+    readonly vaultReadinessCheckSupported: boolean;
+    /** Result of the deployed vault's own launchConfigurationReady() check. */
+    readonly vaultConfigurationReady: boolean;
+    readonly guardian: `0x${string}` | null;
+    readonly attestorCount: bigint;
+    readonly quorum: bigint;
+    readonly claimsPaused: boolean;
+  };
 }
 
 /** One function, declared here so no wider ERC-20 ABI is in scope. */
@@ -231,6 +249,7 @@ export class PostgresPort implements DataPort {
    */
   async loadLaunchPreconditions(): Promise<LaunchPreconditions> {
     const factory = this.config.factory;
+    const stockbackGuardSelector = toFunctionSelector("StockbackNotReady()").slice(2).toLowerCase();
 
     /*
      * The registry address comes from the FACTORY, not from configuration.
@@ -245,7 +264,7 @@ export class PostgresPort implements DataPort {
       functionName: "REGISTRY",
     })) as `0x${string}`;
 
-    const [assets, router, launchFee, adapter] = await Promise.all([
+    const [assets, router, launchFee, adapter, rewardVault, factoryCode] = await Promise.all([
       this.client.readContract({
         address: registry,
         abi: xStockRegistryAbi,
@@ -266,10 +285,52 @@ export class PostgresPort implements DataPort {
         abi: launchpadFactoryAbi,
         functionName: "referencePrice",
       }) as Promise<`0x${string}`>,
+      this.client.readContract({
+        address: factory,
+        abi: launchpadFactoryAbi,
+        functionName: "REWARD_VAULT",
+      }) as Promise<`0x${string}`>,
+      this.client.getBytecode({ address: factory }).catch(() => undefined),
     ]);
+
+    // A UI/API readiness check must not assume source code matches the deployed
+    // factory. The custom-error selector is emitted in runtime bytecode when
+    // launch() enforces StockbackNotReady; older factory deployments lack it.
+    const factoryGuardMarkerPresent =
+      factoryCode?.toLowerCase().includes(stockbackGuardSelector) ?? false;
 
     const ZERO = "0x0000000000000000000000000000000000000000";
     const referencePrice = adapter === ZERO ? null : adapter;
+    const [guardian, attestorCount, quorum, claimsPaused, vaultReadiness] = await Promise.all([
+      this.client.readContract({
+        address: rewardVault,
+        abi: holderRewardVaultAbi,
+        functionName: "guardian",
+      }) as Promise<`0x${string}`>,
+      this.client.readContract({
+        address: rewardVault,
+        abi: holderRewardVaultAbi,
+        functionName: "attestorCount",
+      }) as Promise<bigint>,
+      this.client.readContract({
+        address: rewardVault,
+        abi: holderRewardVaultAbi,
+        functionName: "quorum",
+      }) as Promise<bigint>,
+      this.client.readContract({
+        address: rewardVault,
+        abi: holderRewardVaultAbi,
+        functionName: "claimsPaused",
+      }) as Promise<boolean>,
+      this.client
+        .readContract({
+          address: rewardVault,
+          abi: holderRewardVaultAbi,
+          functionName: "launchConfigurationReady",
+        })
+        .then((ready) => ({ supported: true, ready: Boolean(ready) }))
+        .catch(() => ({ supported: false, ready: false })),
+    ]);
 
     // Decimals come from the REGISTRY, never from the token (§699). The symbol
     // is only a label and is read from the token, with the address alongside it
@@ -305,8 +366,21 @@ export class PostgresPort implements DataPort {
          */
         let usdPriceWad: bigint | null = null;
         let priceUpdatedAt: number | null = null;
+        let priceSource: `0x${string}` | null = null;
 
         if (referencePrice !== null) {
+          const source = await this.client
+            .readContract({
+              address: referencePrice,
+              abi: referencePriceAdapterAbi,
+              functionName: "sourceOf",
+              args: [token],
+            })
+            .catch(() => null);
+          if (source !== null && source.aggregator.toLowerCase() !== ZERO) {
+            priceSource = source.aggregator;
+          }
+
           const peek = await this.client
             .readContract({
               address: referencePrice,
@@ -333,6 +407,7 @@ export class PostgresPort implements DataPort {
             asset.wrappedUnderlying === "0x0000000000000000000000000000000000000000"
               ? null
               : asset.wrappedUnderlying,
+          priceSource,
           usdPriceWad,
           priceUpdatedAt,
         };
@@ -345,6 +420,16 @@ export class PostgresPort implements DataPort {
       router: router === ZERO ? null : router,
       launchFee,
       referencePrice,
+      stockback: {
+        vault: rewardVault,
+        factoryGuardMarkerPresent,
+        vaultReadinessCheckSupported: vaultReadiness.supported,
+        vaultConfigurationReady: vaultReadiness.ready,
+        guardian: guardian === ZERO ? null : guardian,
+        attestorCount,
+        quorum,
+        claimsPaused,
+      },
     };
   }
 
@@ -394,6 +479,15 @@ export class PostgresPort implements DataPort {
     return this.cachedEpochs.get(market.toLowerCase()) ?? null;
   }
 
+  listDatasetEntries(
+    market: string,
+    epochSequence: bigint,
+    cursor: string | null,
+    limit: number,
+  ) {
+    return dbListDatasetEntries(this.db, market, epochSequence, cursor, limit);
+  }
+
   getPulse(): PulseRow | null {
     return this.cachedPulse;
   }
@@ -440,10 +534,11 @@ export class PostgresPort implements DataPort {
   private cachedPulse: PulseRow | null = null;
 
   /*
-   * Not a BoundedCache. The pending set is bounded by the protocol itself - a
-   * market passes through GRADUATING once, briefly - so it is a whole small
-   * list rather than a keyed lookup that could grow. If it is ever large, that
-   * is the alert firing, not a cache to size.
+   * Not a BoundedCache. Each market enters GRADUATING at most once, but a
+   * keeper outage or repeated venue failure can leave markets pending, so the
+   * list can grow with launches. Keep the SQL query indexed and alert on age
+   * and count; if this grows materially, add pagination rather than silently
+   * evicting markets that still need finalization.
    */
   private cachedPending: readonly PendingGraduationRow[] = [];
 
@@ -531,6 +626,8 @@ export class PostgresPort implements DataPort {
       claims: claims.map((c) => ({
         token: c.token,
         symbol: c.symbol,
+        rewardSymbol: this.symbolOf(c.rewardAsset),
+        quoteDecimals: c.quoteDecimals,
         amount: c.amount,
         timestamp: c.timestamp,
         blockNumber: c.blockNumber,
@@ -732,9 +829,7 @@ export class PostgresPort implements DataPort {
    * so a holder with a real entitlement was being shown nothing — the failure is
    * quiet, and on the side that looks like the user simply earned nothing.
    */
-  async loadStockback(market: string, account: string, quoteDecimals: number): Promise<void> {
-    void quoteDecimals;
-
+  async loadStockback(market: string, account: string): Promise<void> {
     const [commitment, claimed, latest] = await Promise.all([
       getActiveCommitment(this.db, market),
       getClaimedTotal(this.db, market, account),
@@ -798,6 +893,21 @@ export class PostgresPort implements DataPort {
     ]);
 
     const vault = await this.resolveFeeVault();
+    const decimalsByAsset = new Map<string, number>();
+    for (const view of views) {
+      decimalsByAsset.set(view.quoteAsset.toLowerCase(), view.quoteDecimals);
+      // Post-graduation LP fees can be paid in the market's SENT token as well
+      // as its paired xStock. Every factory-launched SENT token is fixed at 18
+      // decimals and is not an entry in XStockRegistry.
+      decimalsByAsset.set(view.token.toLowerCase(), 18);
+    }
+    const decimalsFor = (asset: string): number => {
+      const decimals = decimalsByAsset.get(asset.toLowerCase());
+      if (decimals === undefined) {
+        throw new Error(`[api] no creator launch supplies decimals for fee asset ${asset}`);
+      }
+      return decimals;
+    };
 
     /*
      * An RPC failure must not become a zero.
@@ -811,7 +921,7 @@ export class PostgresPort implements DataPort {
      * is the page's existing signal for "claiming is unavailable right now".
      * Partial truth about money is worse than a stated gap.
      */
-    let claimable: { asset: `0x${string}`; symbol: string; amount: bigint }[] | null = [];
+    let claimable: { asset: `0x${string}`; symbol: string; amount: bigint; decimals: number }[] | null = [];
 
     if (vault === null) {
       claimable = null;
@@ -830,6 +940,7 @@ export class PostgresPort implements DataPort {
               asset: accrual.asset,
               symbol: this.symbolOf(accrual.asset),
               amount: balance,
+              decimals: decimalsFor(accrual.asset),
             });
           }
         } catch {
@@ -852,6 +963,7 @@ export class PostgresPort implements DataPort {
         asset: c.asset,
         symbol: this.symbolOf(c.asset),
         amount: c.amount,
+        decimals: decimalsFor(c.asset),
         recipient: c.recipient,
         timestamp: c.timestamp,
         blockNumber: c.blockNumber,

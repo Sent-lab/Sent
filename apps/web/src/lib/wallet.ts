@@ -26,23 +26,11 @@
  * not only at connect.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { WireIntent } from "./api.ts";
 import { toTransactionRequest } from "./tx.ts";
-
-/** The subset of EIP-1193 this app uses. */
-interface Eip1193Provider {
-  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
-  on(event: string, handler: (...args: never[]) => void): void;
-  removeListener(event: string, handler: (...args: never[]) => void): void;
-}
-
-declare global {
-  interface Window {
-    ethereum?: Eip1193Provider;
-  }
-}
+import { discoverInjectedWallets, type DiscoveredWallet, type Eip1193Provider } from "./injectedWallets.ts";
 
 export const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? "999");
 
@@ -66,6 +54,10 @@ export interface WalletState {
   readonly wrongChain: boolean;
   readonly connecting: boolean;
   readonly error: string | null;
+  readonly localTestWallet: boolean;
+  readonly wallets: readonly Pick<DiscoveredWallet, "id" | "name">[];
+  readonly selectedWalletId: string | null;
+  readonly walletName: string | null;
 }
 
 /** One `eth_call`: a read of chain state, signing nothing and costing nothing. */
@@ -75,6 +67,7 @@ export interface ChainRead {
 }
 
 export interface Wallet extends WalletState {
+  selectWallet(id: string): void;
   connect(): Promise<void>;
   send(intent: WireIntent): Promise<`0x${string}`>;
   switchChain(): Promise<void>;
@@ -93,9 +86,14 @@ export interface Wallet extends WalletState {
    * granted an account, so a rate can be shown to someone still deciding.
    */
   read(request: ChainRead): Promise<`0x${string}`>;
+  /** Native HyperEVM balance, read from the same injected wallet provider. */
+  nativeBalance(account: `0x${string}`): Promise<bigint>;
 }
 
 export function useWallet(): Wallet {
+  const providerRef = useRef<Eip1193Provider | null>(null);
+  const [discovered, setDiscovered] = useState<DiscoveredWallet[]>([]);
+  const [selectedWalletId, setSelectedWalletId] = useState<string | null>(null);
   const [state, setState] = useState<WalletState>({
     // Resolved in an effect, never during render: `window` does not exist on
     // the server, and reading it here would make the first client render
@@ -106,13 +104,44 @@ export function useWallet(): Wallet {
     wrongChain: false,
     connecting: false,
     error: null,
+    localTestWallet: false,
+    wallets: [],
+    selectedWalletId: null,
+    walletName: null,
   });
 
   useEffect(() => {
-    const provider = window.ethereum;
-    if (provider === undefined) return;
+    const legacy = window.ethereum ?? installLocalAnvilProvider();
+    void discoverInjectedWallets(legacy).then((wallets) => {
+      setDiscovered(wallets);
+      setState((current) => ({ ...current, wallets: wallets.map(({ id, name }) => ({ id, name })) }));
+      const preferred = wallets.find((wallet) => wallet.name.toLowerCase().includes("metamask")) ?? wallets[0];
+      if (preferred !== undefined) setSelectedWalletId((current) => current ?? preferred.id);
+    });
+  }, []);
 
-    setState((current) => ({ ...current, available: true }));
+  const selected = discovered.find((wallet) => wallet.id === selectedWalletId) ?? null;
+
+  useEffect(() => {
+    const provider = selected?.provider ?? null;
+    providerRef.current = provider;
+    setState((current) => ({
+      ...current,
+      available: provider !== null,
+      address: null,
+      chainId: null,
+      wrongChain: false,
+      localTestWallet: provider?.isSentLocalAnvil === true,
+      selectedWalletId: selected?.id ?? null,
+      walletName: selected?.name ?? null,
+    }));
+    if (provider === null) return;
+
+    setState((current) => ({
+      ...current,
+      available: true,
+      localTestWallet: provider.isSentLocalAnvil === true,
+    }));
 
     // Already-authorised accounts, without prompting. `eth_accounts` returns
     // what the user previously granted; `eth_requestAccounts` would open a
@@ -151,11 +180,15 @@ export function useWallet(): Wallet {
       provider.removeListener("accountsChanged", onAccounts);
       provider.removeListener("chainChanged", onChain);
     };
+  }, [selected]);
+
+  const selectWallet = useCallback((id: string) => {
+    setSelectedWalletId(id);
   }, []);
 
   const connect = useCallback(async () => {
-    const provider = window.ethereum;
-    if (provider === undefined) {
+    const provider = providerRef.current;
+    if (provider === null) {
       throw new WalletError("NO_WALLET", "No wallet was found in this browser.");
     }
 
@@ -180,8 +213,8 @@ export function useWallet(): Wallet {
   }, []);
 
   const switchChain = useCallback(async () => {
-    const provider = window.ethereum;
-    if (provider === undefined) return;
+    const provider = providerRef.current;
+    if (provider === null) return;
 
     try {
       await provider.request({
@@ -210,8 +243,8 @@ export function useWallet(): Wallet {
    */
   const send = useCallback(
     async (intent: WireIntent): Promise<`0x${string}`> => {
-      const provider = window.ethereum;
-      if (provider === undefined) {
+      const provider = providerRef.current;
+      if (provider === null) {
         throw new WalletError("NO_WALLET", "No wallet was found in this browser.");
       }
       if (state.address === null) {
@@ -238,6 +271,22 @@ export function useWallet(): Wallet {
         );
       }
 
+      // The selected account can change after React renders the button. Do not
+      // send with the stale `from` address captured by this callback: make the
+      // user review again against the account the wallet currently exposes.
+      const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
+      const activeAddress = accounts[0]?.toLowerCase() ?? null;
+      if (activeAddress !== state.address.toLowerCase()) {
+        setState((current) => ({
+          ...current,
+          address: activeAddress as `0x${string}` | null,
+        }));
+        throw new WalletError(
+          "ACCOUNT_CHANGED",
+          "The active wallet account changed. Review the transaction again before sending.",
+        );
+      }
+
       const hash = (await provider.request({
         method: "eth_sendTransaction",
         params: [toTransactionRequest(intent, state.address)],
@@ -249,8 +298,8 @@ export function useWallet(): Wallet {
   );
 
   const read = useCallback(async (request: ChainRead): Promise<`0x${string}`> => {
-    const provider = window.ethereum;
-    if (provider === undefined) {
+    const provider = providerRef.current;
+    if (provider === null) {
       throw new WalletError("NO_WALLET", "No wallet was found in this browser.");
     }
 
@@ -277,7 +326,17 @@ export function useWallet(): Wallet {
     })) as `0x${string}`;
   }, []);
 
-  return { ...state, connect, send, switchChain, read };
+  const nativeBalance = useCallback(async (account: `0x${string}`): Promise<bigint> => {
+    const provider = providerRef.current;
+    if (provider === null) throw new WalletError("NO_WALLET", "No wallet was found in this browser.");
+    const chain = Number((await provider.request({ method: "eth_chainId" })) as string);
+    if (chain !== CHAIN_ID) throw new WalletError("WRONG_CHAIN", `Switch to chain ${CHAIN_ID} to read this balance.`);
+    const raw = (await provider.request({ method: "eth_getBalance", params: [account, "latest"] })) as string;
+    if (!/^0x[0-9a-f]+$/i.test(raw)) throw new WalletError("BAD_BALANCE", "The wallet returned an invalid HYPE balance.");
+    return BigInt(raw);
+  }, []);
+
+  return { ...state, selectWallet, connect, send, switchChain, read, nativeBalance };
 }
 
 function applyAccounts(
@@ -292,6 +351,106 @@ function applyAccounts(
     chainId,
     wrongChain: accounts.length > 0 && chainId !== CHAIN_ID,
   }));
+}
+
+/**
+ * A disposable, unlocked Anvil account for local UI testing only.
+ *
+ * The helper is opt-in at dev-server startup, localhost-only, and hard-pinned
+ * to chain 31337. It proxies every read and transaction to Anvil; it contains
+ * no key and is never installed when a real browser wallet is present.
+ */
+function installLocalAnvilProvider(): Eip1193Provider | undefined {
+  if (
+    process.env.NODE_ENV !== "development" ||
+    process.env.NEXT_PUBLIC_CHAIN_ID !== "31337" ||
+    process.env.NEXT_PUBLIC_ENABLE_ANVIL_WALLET !== "true" ||
+    (window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1")
+  ) {
+    return undefined;
+  }
+
+  const rpcUrl = "http://127.0.0.1:8545";
+  const listeners = new Map<string, Set<(...args: never[]) => void>>();
+  let connectedAccount: string | null = null;
+
+  const rpc = async (method: string, params: unknown[] = []): Promise<unknown> => {
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    });
+    if (!response.ok) throw new Error(`Local Anvil RPC returned HTTP ${response.status}`);
+
+    const body = (await response.json()) as {
+      result?: unknown;
+      error?: { code?: number; message?: string };
+    };
+    if (body.error !== undefined) {
+      const error = new Error(body.error.message ?? `Local Anvil RPC failed: ${method}`) as Error & {
+        code?: number;
+      };
+      if (body.error.code !== undefined) error.code = body.error.code;
+      throw error;
+    }
+    return body.result;
+  };
+
+  const provider: Eip1193Provider = {
+    isSentLocalAnvil: true,
+    async request({ method, params = [] }) {
+      if (method === "eth_accounts") {
+        return connectedAccount === null ? [] : [connectedAccount];
+      }
+      if (method === "eth_requestAccounts") {
+        const chainId = await rpc("eth_chainId");
+        if (chainId !== "0x7a69") {
+          throw new Error("The local wallet only connects to Anvil chain 31337.");
+        }
+        const accounts = (await rpc("eth_accounts")) as string[];
+        connectedAccount = accounts[0] ?? null;
+        const handlers = listeners.get("accountsChanged");
+        for (const handler of handlers ?? []) {
+          handler((connectedAccount === null ? [] : [connectedAccount]) as never);
+        }
+        return connectedAccount === null ? [] : [connectedAccount];
+      }
+      if (method === "eth_sendTransaction") {
+        const transaction = params[0] as { from?: string } | undefined;
+        if (connectedAccount === null || transaction?.from?.toLowerCase() !== connectedAccount) {
+          const error = new Error("Connect the local test wallet before sending.") as Error & {
+            code?: number;
+          };
+          error.code = 4100;
+          throw error;
+        }
+        return rpc(method, params);
+      }
+      if (method === "wallet_switchEthereumChain") {
+        const requested = (params[0] as { chainId?: string } | undefined)?.chainId;
+        if (requested !== "0x7a69") {
+          const error = new Error("The local wallet only supports Anvil chain 31337.") as Error & {
+            code?: number;
+          };
+          error.code = 4902;
+          throw error;
+        }
+        return null;
+      }
+      return rpc(method, params);
+    },
+    on(event, handler) {
+      const handlers = listeners.get(event) ?? new Set<(...args: never[]) => void>();
+      handlers.add(handler);
+      listeners.set(event, handlers);
+    },
+    removeListener(event, handler) {
+      listeners.get(event)?.delete(handler);
+    },
+  };
+
+  window.ethereum = provider;
+  return provider;
 }
 
 /** EIP-1193 code 4001. A rejected prompt is a choice, not an error. */

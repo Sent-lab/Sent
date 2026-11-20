@@ -68,6 +68,49 @@
   color: var(--text-dim);
 }
 
+.launchStatus {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  width: min(100%, 760px);
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
+}
+
+.launchStatus[data-state="available"] {
+  border-color: var(--volt-deep);
+}
+
+.launchStatusHeading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.statusDot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.launchStatus[data-state="available"] .statusDot {
+  background: var(--volt);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--volt) 65%, transparent);
+}
+
+.launchStatusDetail {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
 .heroActions {
   display: flex;
   flex-wrap: wrap;
@@ -111,6 +154,14 @@
   margin-top: var(--s-8);
   padding-top: var(--s-8);
   border-top: 1px solid var(--border);
+}
+
+.termsLabel {
+  margin-top: var(--s-5);
+  color: var(--text-dim);
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .fact {

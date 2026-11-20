@@ -65,6 +65,19 @@ The distinction is not decoration. A portfolio value is `CALCULATED` because
 selling the position walks down the curve and returns less; a price is
 `INDEXED` because it is what the chain last said.
 
+### Signed oracle reports are not a public API
+
+SENT does not return Chainlink Data Streams reports from its public API. Each
+report subscriber must use reports under its own Data Streams access; the API
+must not act as a report proxy for public visitors. A future SENT updater must
+fetch an entitled report privately and submit it directly to the feed-pinned
+onchain verifier. The web client only reads the resulting onchain price state.
+
+SPYx and NVDAx v10 feed metadata and shim support do not establish account
+entitlement, licensing, subscription cost, or live launch readiness. Until the
+private onchain updater and its access terms are verified, a stale or empty
+price source keeps launches disabled.
+
 ---
 
 ## Markets
@@ -77,7 +90,7 @@ The explore listing, as a page.
 |---|---|---|
 | `sort` | `NEWEST` | `NEWEST`, `PROGRESS`, `VOLUME`, `HOLDERS`, `TRENDING`, `GAINERS`, `RECENTLY_GRADUATED` |
 | `status` | — | `PRE_GRAD`, `GRADUATING`, or `GRADUATED` |
-| `quoteAsset` | — | filter to one xStock |
+| `quoteAsset` | — | filter to one quote asset, such as WHYPE or an enabled stock wrapper |
 | `q` | — | name, ticker, or an exact address |
 | `limit` | 25 | capped |
 | `offset` | 0 | |
@@ -241,6 +254,16 @@ deliberately **not** "what is claimable": money funded into an unattested epoch
 belongs to holders and is payable to nobody, and collapsing the two reports a
 solvency problem that does not exist.
 
+### `GET /v1/markets/:token/epochs/:sequence/entries`
+
+The ordered leaf data for one computed epoch, paged in ascending account order.
+Each page contains at most 500 `{ account, cumulative }` entries and a
+`nextCursor`; pass that cursor to fetch the next page. The response also carries
+`merkleRoot`, `datasetHash`, and `holderCount`. Concatenate all pages and rebuild
+the tree with the same double-hashed leaf and sorted-pair rules described in
+`packages/stockback/src/merkle.ts` to check both hashes independently. A missing
+epoch returns `DATASET_NOT_FOUND`; invalid sequence/cursor values return 400.
+
 ### `GET /v1/markets/:token/stockback/:account`
 
 One holder's position on one market.
@@ -251,6 +274,12 @@ on-chain, and the `proof` is served with it — a claimable amount without a pro
 is a number the user cannot act on. `estimatedAccrued` comes from the newest
 dataset this node computed, which nobody has signed and the vault will not
 honour.
+
+All amount strings on this route are **raw quote-token units**, including
+`estimatedAccrued`, `claimable`, `lifetimeClaimed`, and `cumulative`. Use the
+market's `quoteDecimals` to format them. Keep `claimable` raw when building the
+on-chain claim; converting it through an 18-decimal display value can change
+the payout by orders of magnitude for tokens such as USDC.
 
 ---
 
@@ -337,14 +366,13 @@ both, and their reviews explain why the step exists.
 
 Holdings, cross-market Stockback, claim history, launch count.
 
-`portfolioValue` is a **mark**, marked `CALCULATED`. Every holding is valued at
-the curve's current price; selling the whole position walks down the curve and
-returns less, sometimes much less on a thin market. The only thing that can
-answer "what would I get" is a sell quote against the chain.
-
-`totalClaimable` only ever includes attested roots. A cross-market "claim
-everything" figure that included unattested arithmetic would be a total the
-vault refuses to pay, offered as a button.
+Balances remain grouped by market/asset. Stockback amounts are raw units and
+each market carries `quoteDecimals`; creator claims include their reward
+symbol. Stockback claim history also carries `quoteDecimals` because the event
+amount is raw reward-token units. The response deliberately has no cross-market `portfolioValue` or
+`totalClaimable`: adding unlike assets produces a number with no currency and
+can imply the user can claim unattested amounts. A holding's marked value also
+does not predict sale proceeds; use a sell quote against the chain.
 
 An address with nothing is `200` with empty arrays, not `404`. Everyone starts
 there, and a 404 makes a first visit look broken rather than empty (§209).
@@ -352,7 +380,9 @@ there, and a 404 makes a first visit look broken rather than empty (§209).
 ### `GET /v1/accounts/:address/stockback`
 
 The Stockback half on its own, so a claim centre does not pay for holdings and
-history it will not render.
+history it will not render. Each row carries `quoteDecimals`; all Stockback
+amount strings are raw token units, and claimable values stay raw for the
+on-chain claim. This endpoint has no cross-market total.
 
 ### `GET /v1/creators/:address`
 
@@ -363,6 +393,12 @@ history it will not render.
 | `claimable` | the **vault** (§423) | what a claim would pay right now |
 | `accrued` | the projection | everything ever earned |
 | `claims` | the projection | every withdrawal, newest first |
+
+Each `claimable` entry contains the reward asset's `decimals`; `amount` is a
+raw vault balance. Format and build the claim using those same decimals. The
+`accrued` projection is normalized to 18 decimals, so do not add it to raw
+claimable values or combine amounts across assets. Creator `claims` are raw
+event amounts and carry their own `decimals` field too.
 
 Summing indexed accruals for `claimable` would tell a creator they can withdraw
 money already in their wallet, and the claim would revert with `NothingToClaim`

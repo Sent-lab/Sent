@@ -3,7 +3,7 @@
 /**
  * SENT — create a token (§219).
  *
- * §219's progression: identity, xStock pair, metadata, vanity address, preview,
+ * §219's progression: identity, quote asset, metadata, vanity address, preview,
  * review, launch. Single page rather than a wizard — the form is short enough
  * that steps would add ceremony without adding clarity, and §219 allows either
  * as long as the user always knows where they are.
@@ -60,11 +60,19 @@ import {
   type MetadataProblem,
 } from "@sent/sdk";
 
-import { getLaunchConfig, isOk, type LaunchConfigResponse } from "../../lib/api.ts";
+import {
+  getLaunchConfig,
+  isOk,
+  type LaunchConfigResponse,
+  type WireIntent,
+} from "../../lib/api.ts";
 import { previewLaunchAddress } from "../../lib/chain.ts";
 import { formatFixed, formatUsd, truncateAddress } from "../../lib/format.ts";
 import { useWallet, CHAIN_ID } from "../../lib/wallet.ts";
+import { track } from "../../lib/transactions.ts";
+import { isActionableFreshness } from "../../lib/freshness.ts";
 import { IntentReview } from "../../components/IntentReview.tsx";
+import { FreshnessBadge, type FreshnessEnvelope } from "../../components/Freshness.tsx";
 
 import styles from "./create.module.css";
 
@@ -95,11 +103,40 @@ export default function CreatePage(): JSX.Element {
 
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [config, setConfig] = useState<LaunchConfigResponse | null>(null);
+  const [configFreshness, setConfigFreshness] = useState<FreshnessEnvelope | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [predicted, setPredicted] = useState<`0x${string}` | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const refreshLaunchConfig = useCallback(async (signal?: AbortSignal): Promise<void> => {
+    const result = await getLaunchConfig(signal === undefined ? undefined : { signal }).catch(
+      () => null,
+    );
+    if (signal?.aborted) return;
+
+    if (result === null || !isOk(result)) {
+      setConfig(null);
+      setConfigFreshness(result === null ? null : result.freshness);
+      setConfigError(
+        result === null
+          ? "Could not reach the API to check what can be launched."
+          : result.message,
+      );
+      return;
+    }
+
+    setConfig(result.data);
+    setConfigFreshness(result.freshness);
+    setConfigError(null);
+    if (result.data.launchable.length === 1) {
+      const only = result.data.launchable[0]!;
+      setDraft((current) =>
+        current.quoteAsset === "" ? { ...current, quoteAsset: only.token } : current,
+      );
+    }
+  }, []);
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]): void =>
     setDraft((current) => ({ ...current, [key]: value }));
@@ -107,37 +144,15 @@ export default function CreatePage(): JSX.Element {
   useEffect(() => {
     const controller = new AbortController();
 
-    void (async () => {
-      const result = await getLaunchConfig({ signal: controller.signal }).catch(() => null);
-      if (controller.signal.aborted) return;
-
-      if (result === null || !isOk(result)) {
-        setConfigError(
-          result === null
-            ? "Could not reach the API to check what can be launched."
-            : result.message,
-        );
-        return;
-      }
-
-      setConfig(result.data);
-      setConfigError(null);
-
-      // Pre-select when there is exactly one choice. With several, the creator
-      // picks — the pair is an economic decision, not a default.
-      if (result.data.launchable.length === 1) {
-        set("quoteAsset", result.data.launchable[0]!.token);
-      }
-    })();
+    void refreshLaunchConfig(controller.signal);
 
     return () => controller.abort();
-  }, []);
+  }, [refreshLaunchConfig]);
 
   const asset = useMemo(
     () => config?.launchable.find((a) => a.token === draft.quoteAsset) ?? null,
     [config, draft.quoteAsset],
   );
-
   /*
    * The metadata, exactly as it will be hashed.
    *
@@ -171,7 +186,11 @@ export default function CreatePage(): JSX.Element {
   const metadataProblems = useMemo(() => validateMetadata(metadata), [metadata]);
   const problems = useMemo(() => validate(draft), [draft]);
 
-  const ready = config?.ready === true;
+  const readinessFresh =
+    configFreshness !== null && isActionableFreshness(configFreshness);
+  const ready = config?.ready === true && readinessFresh;
+  const launchFeeWei =
+    config !== null && readinessFresh ? BigInt(config.launchFee) : null;
   const complete =
     problems.length === 0 &&
     metadataProblems.length === 0 &&
@@ -279,7 +298,66 @@ export default function CreatePage(): JSX.Element {
     setSent(null);
 
     try {
-      setSent(await wallet.send(wire));
+      // Refresh the chain-derived fee, router, asset and anchor immediately
+      // before opening the wallet. If anything the creator reviewed changed,
+      // show the new values and require a second review instead of signing the
+      // stale intent.
+      const latest = await getLaunchConfig().catch(() => null);
+      if (latest === null || !isOk(latest)) {
+        setConfig(null);
+        setConfigFreshness(latest === null ? null : latest.freshness);
+        setConfigError(
+          latest === null
+            ? "Could not reach the API to check what can be launched."
+            : latest.message,
+        );
+        setError("Could not verify the latest launch requirements. No transaction was sent.");
+        return;
+      }
+
+      setConfig(latest.data);
+      setConfigFreshness(latest.freshness);
+      setConfigError(null);
+
+      if (!isActionableFreshness(latest.freshness)) {
+        setError(
+          `The launch check is ${latest.freshness.state.toLowerCase()}. Wait for a live chain view, then review again. No transaction was sent.`,
+        );
+        return;
+      }
+
+      const latestAsset = latest.data.launchable.find(
+        (candidate) => candidate.token.toLowerCase() === draft.quoteAsset.toLowerCase(),
+      );
+      const reviewedAsset = asset;
+      const reviewChanged =
+        !latest.data.ready ||
+        latest.data.factory.toLowerCase() !== config?.factory.toLowerCase() ||
+        latest.data.graduationRouter?.toLowerCase() !== config?.graduationRouter?.toLowerCase() ||
+        latest.data.referencePrice?.toLowerCase() !== config?.referencePrice?.toLowerCase() ||
+        latest.data.launchFee !== config?.launchFee ||
+        latestAsset === undefined ||
+        latestAsset.usdPriceWad === null ||
+        reviewedAsset === null ||
+        latestAsset.symbol !== reviewedAsset.symbol ||
+        latestAsset.decimals !== reviewedAsset.decimals ||
+        latestAsset.usdPriceWad !== reviewedAsset.usdPriceWad ||
+        latestAsset.priceSource?.toLowerCase() !== reviewedAsset.priceSource?.toLowerCase() ||
+        latestAsset.underlying?.toLowerCase() !== reviewedAsset.underlying?.toLowerCase();
+
+      if (reviewChanged) {
+        setError(
+          "The launch fee, route or price changed since you reviewed it. Check the updated details and submit again. No transaction was sent.",
+        );
+        return;
+      }
+
+      const hash = await wallet.send(wire);
+      // No token deep link: the address does not exist until this lands, and a
+      // link to a market that has not been created yet is a 404 with a promise
+      // attached.
+      track({ hash, summary: wire.review.summary });
+      setSent(hash);
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -289,7 +367,7 @@ export default function CreatePage(): JSX.Element {
     } finally {
       setSubmitting(false);
     }
-  }, [wallet, wire]);
+  }, [asset, config, draft.quoteAsset, wallet, wire]);
 
   return (
     <div className={`${styles.page} container`} data-mode="experience">
@@ -299,6 +377,13 @@ export default function CreatePage(): JSX.Element {
           One billion tokens, fixed at launch. You receive no allocation and neither does
           the platform — the entire supply goes to the curve.
         </p>
+        {CHAIN_ID === 31337 && (
+          <p className={styles.localNotice} role="note">
+            Local test chain. The NVDAx quote and price feed here are mocks; this does not create
+            real stock exposure. The local test wallet sends only to Anvil.
+          </p>
+        )}
+        {configFreshness !== null && <FreshnessBadge envelope={configFreshness} />}
       </header>
 
       {/*
@@ -317,16 +402,16 @@ export default function CreatePage(): JSX.Element {
         <Term
           label="Launch cost"
           value={
-            config === null
-              ? "Gas only"
-              : BigInt(config.launchFee) === 0n
+            launchFeeWei === null
+              ? "Not confirmed"
+              : launchFeeWei === 0n
                 ? "Gas only"
-                : `${formatFixed(BigInt(config.launchFee), 18, { places: 4 })} HYPE`
+                : `${formatFixed(launchFeeWei, 18, { places: 4 })} HYPE`
           }
           detail={
-            config === null
-              ? "Plus the protocol launch fee if governance has set one."
-              : BigInt(config.launchFee) === 0n
+            launchFeeWei === null
+              ? "The live factory could not be checked, so SENT cannot confirm the protocol fee."
+              : launchFeeWei === 0n
                 ? "Governance has not set a launch fee. You pay gas and nothing else."
                 : "The protocol launch fee, read from the factory, plus gas."
           }
@@ -355,27 +440,31 @@ export default function CreatePage(): JSX.Element {
 
           <div className={styles.field}>
             <label className={styles.label} htmlFor="quote-asset">
-              xStock pair
+              Quote asset
             </label>
             <select
               id="quote-asset"
               className={styles.select}
               value={draft.quoteAsset}
               onChange={(event) => set("quoteAsset", event.target.value)}
-              disabled={config === null || config.launchable.length === 0}
+              disabled={config === null || config.launchable.length === 0 || !readinessFresh}
             >
               {config === null ? (
                 <option value="">Checking the registry…</option>
               ) : config.launchable.length === 0 ? (
-                <option value="">No xStock is enabled yet</option>
+                <option value="">No quote asset is enabled yet</option>
               ) : (
                 <>
-                  <option value="">Choose an xStock</option>
+                  <option value="">Choose a quote asset</option>
                   {config.launchable.map((a) => (
-                    <option key={a.token} value={a.token} disabled={a.usdPriceWad === null}>
+                    <option key={a.token} value={a.token}>
                       {a.symbol === "" ? truncateAddress(a.token) : a.symbol}
                       {a.underlying !== null ? " (wrapper)" : ""}
-                      {a.usdPriceWad === null ? " — no price feed" : ""}
+                      {a.usdPriceWad === null
+                        ? a.priceSource === null
+                          ? " — no configured price source"
+                          : " — price unavailable"
+                        : ""}
                     </option>
                   ))}
                 </>
@@ -439,8 +528,23 @@ export default function CreatePage(): JSX.Element {
             <p className={styles.blocked}>
               {asset.symbol} has no readable price right now — its feed is missing, stale
               or outside the band governance configured. A launch against it would be
-              refused on chain, so it cannot be selected.
+              refused on chain, so it cannot launch yet.
             </p>
+          )}
+
+          {asset !== null && asset.usdPriceWad === null && (
+            <section aria-label="Quote asset price availability" className={styles.field}>
+              {asset.priceSource === null ? (
+                <p className={styles.blocked}>
+                  No onchain price source is configured for this asset, so it cannot be used for a launch yet.
+                </p>
+              ) : (
+                <p className={styles.blocked}>
+                  A fresh price report has not been verified onchain for {asset.symbol}. SENT keeps
+                  launch disabled until its oracle updater records a current report.
+                </p>
+              )}
+            </section>
           )}
 
           <Field
@@ -524,7 +628,11 @@ export default function CreatePage(): JSX.Element {
               onClick={() => void wallet.connect()}
               disabled={wallet.connecting}
             >
-              {wallet.connecting ? "Check your wallet" : "Connect wallet"}
+              {wallet.connecting
+                ? "Check your wallet"
+                : wallet.localTestWallet
+                  ? "Connect local test wallet"
+                  : "Connect wallet"}
             </button>
           ) : wallet.wrongChain ? (
             <button
@@ -557,17 +665,54 @@ export default function CreatePage(): JSX.Element {
             <p className={styles.blocked}>{configError}</p>
           ) : config === null ? (
             <p className={styles.blocked}>Checking what can be launched…</p>
+          ) : !readinessFresh ? (
+            <p className={styles.blocked}>
+              Launching is held because the current chain view is{" "}
+              {configFreshness?.state.toLowerCase() ?? "unavailable"}. Wait for a live check
+              before preparing a transaction.
+            </p>
           ) : config.launchable.length === 0 ? (
             <p className={styles.blocked}>
-              No xStock is registered and enabled yet, so there is nothing to pair against.
-              Governance registers an asset and passes its §420 gates before it can be a
-              quote asset here.
+              No quote asset is registered and enabled yet, so there is nothing to pair against.
+              Governance must register and enable WHYPE or a verified stock wrapper before it can
+              be used here.
             </p>
           ) : config.graduationRouter === null ? (
             <p className={styles.blocked}>
               The graduation router is not set. A market launched now would trade normally
               and then refuse to graduate — permanently, for everyone holding it — so
               launching is held until governance sets it.
+            </p>
+          ) : config.referencePrice === null ? (
+            <p className={styles.blocked}>
+              Governance has not connected the reference-price adapter. SENT cannot verify
+              the {asset?.symbol ?? "quote asset"}/USD anchor that determines a new market&apos;s starting price, so
+              launching stays held.
+            </p>
+          ) : !config.stockback.ready ? (
+            <p className={styles.blocked}>
+              Stockback is not ready for this launch.{" "}
+              {!config.stockback.factoryGuardMarkerPresent
+                ? "The deployed factory is missing the expected Stockback guard marker. Governance must use and verify a guarded factory deployment before launches can open."
+                : !config.stockback.vaultReadinessCheckSupported
+                  ? "The deployed reward vault does not expose the on-chain launch-readiness check required by the factory."
+                  : !config.stockback.vaultConfigurationReady
+                    ? "The reward vault's on-chain readiness check is false. Review its guardian, attestor quorum and claim pause settings."
+                : config.stockback.guardian === null
+                  ? "Governance has not assigned the reward guardian."
+                  : config.stockback.claimsPaused
+                    ? "Reward claims are currently paused."
+                    : BigInt(config.stockback.quorum) === 0n ||
+                        BigInt(config.stockback.quorum) > BigInt(config.stockback.attestorCount)
+                      ? `The attestor quorum is not configured (${config.stockback.attestorCount} attestors, quorum ${config.stockback.quorum}).`
+                      : "The reward vault configuration is incomplete."}{" "}
+              Launching stays held until Stockback can accept distributions safely.
+            </p>
+          ) : !config.launchable.some((candidate) => candidate.usdPriceWad !== null) ? (
+            <p className={styles.blocked}>
+              No enabled quote asset currently has a fresh, in-range USD price. Governance must
+              configure a valid source, or the existing feed must become readable, before
+              any market can launch.
             </p>
           ) : null}
 

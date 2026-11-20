@@ -32,9 +32,14 @@ import {IPyth, PythStructs} from "./interfaces/IPyth.sol";
  *     71 days, SPY 561 days. The 24/7 equity variants have never been pushed at
  *     all and revert.
  *
- * Nothing else on this chain prices an xStock. There is no HyperSwap pool for
- * any of them (V-22) and no HyperCore spot market, because they are EVM-native
- * and were never HIP-1 linked (V-02). Pyth is the only source that exists.
+ * HISTORICAL NOTE (Day 8): at the time of the original investigation, no
+ * HyperCore xStock spot markets or HyperSwap pools had been found, and Pyth's
+ * equity prices were stale. A 2026-11-18 re-check found HyperCore spot markets
+ * for several xStock V2 wrappers and an xStocks-listed Chainlink Tokenized
+ * Asset (v10) pull stream on HyperEVM. That stream is not a `latestRoundData()`
+ * feed and has not been integrated here. See docs/VERIFY-LEDGER.md and
+ * docs/LAUNCH-READINESS-2026-11-18.md. This shim remains fail-closed and is not
+ * evidence that Pyth is a usable xStock launch-price source.
  *
  * THE STALENESS IS THE WHOLE POINT, NOT A PROBLEM TO ROUTE AROUND
  * ---------------------------------------------------------------

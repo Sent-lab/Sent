@@ -33,6 +33,7 @@
 
 import { getEpochs, isOk } from "../lib/api.ts";
 import { formatQuoteCompact } from "../lib/format.ts";
+import { VerifyDatasetButton } from "./VerifyDatasetButton.tsx";
 
 import styles from "./DistributionHistory.module.css";
 import type { JSX } from "react";
@@ -129,6 +130,7 @@ export async function DistributionHistory({
                   <th scope="col">Weight</th>
                   <th scope="col">Root</th>
                   <th scope="col">State</th>
+                  <th scope="col">Check</th>
                 </tr>
               </thead>
               <tbody>
@@ -163,6 +165,15 @@ export async function DistributionHistory({
                         </span>
                       )}
                     </td>
+                    <td>
+                      <VerifyDatasetButton
+                        token={token}
+                        sequence={e.epochSequence}
+                        merkleRoot={e.merkleRoot}
+                        datasetHash={e.datasetHash}
+                        holderCount={e.holderCount}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -170,9 +181,10 @@ export async function DistributionHistory({
           </div>
 
           <p className={styles.note}>
-            Pool, holders and weight are the inputs the root is derived from, published so
-            the total can be recomputed without trusting this service. Hover a root for the
-            dataset hash it was built from.
+            The public entries let you rebuild and check each root and dataset hash in your
+            browser. The checker reads the whole paged dataset and uses the same
+            deterministic Merkle encoding as the contracts expect; it does not submit a
+            transaction. Hover a root for the dataset hash it was built from.
           </p>
         </details>
       )}

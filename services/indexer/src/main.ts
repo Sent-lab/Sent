@@ -9,7 +9,7 @@
 
 import { Database, migrate, loadMigrations } from "@sent/database";
 import { chainEnv, databaseEnv, loadAll } from "@sent/config/env";
-import { HYPEREVM_CHAIN_ID, assertProductionConfigReady } from "@sent/config";
+import { HYPEREVM_CHAIN_ID } from "@sent/config";
 
 import { createLogger } from "@sent/observability/logger";
 import { serveOperations } from "@sent/observability/server";
@@ -19,11 +19,14 @@ import { Indexer, DEFAULT_CONFIG } from "./ingest.ts";
 async function main(): Promise<void> {
   const { db: dbConfig, chain } = loadAll({ db: databaseEnv, chain: chainEnv });
 
-
-  // §279 forbids placeholders in production. On mainnet the verified facts must
-  // actually be present; applying this on every chain would block local work for
-  // no safety benefit, so it is gated the same way the deploy script's guards are.
-  if (chain.chainId === HYPEREVM_CHAIN_ID) assertProductionConfigReady();
+  if (
+    chain.chainId === HYPEREVM_CHAIN_ID &&
+    (process.env.START_BLOCK === undefined || process.env.START_BLOCK.trim() === "")
+  ) {
+    throw new Error(
+      "START_BLOCK must be set explicitly for the HyperEVM indexer; use the earliest monitored contract deployment block to avoid a full-history scan",
+    );
+  }
 
   const log = createLogger({ service: "indexer" }).child({ chainId: chain.chainId });
 

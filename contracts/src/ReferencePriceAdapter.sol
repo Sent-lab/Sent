@@ -17,6 +17,11 @@ interface IAggregatorV3 {
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
 }
 
+/// @notice Optional guard for report feeds whose price belongs to one asset only.
+interface IAssetBoundAggregator {
+    function priceAsset() external view returns (address);
+}
+
 /// @title ReferencePriceAdapter
 /// @notice The launch anchor, read from a feed rather than from the caller
 ///         (§135, §402).
@@ -90,6 +95,7 @@ contract ReferencePriceAdapter is IReferencePriceAdapter {
     error ZeroAddress();
     error NoSource(address asset);
     error StalePrice(address asset, uint256 updatedAt, uint256 maxAge);
+    error FuturePrice(address asset, uint256 updatedAt, uint256 nowTimestamp);
     error NonPositivePrice(address asset, int256 answer);
     error PriceOutOfBand(address asset, uint256 usdWad, uint256 minUsdWad, uint256 maxUsdWad);
     error IncompleteRound(address asset);
@@ -135,7 +141,8 @@ contract ReferencePriceAdapter is IReferencePriceAdapter {
         (bool readable, uint256 price, uint256 at) = _tryRead(source, asset);
         if (!readable) return (false, 0, at);
 
-        if (at == 0 || block.timestamp - at > source.maxAge) return (false, 0, at);
+        if (at == 0 || at > block.timestamp) return (false, 0, at);
+        if (block.timestamp - at > source.maxAge) return (false, 0, at);
         if (price < source.minUsdWad || price > source.maxUsdWad) return (false, 0, at);
 
         return (true, price, at);
@@ -210,6 +217,8 @@ contract ReferencePriceAdapter is IReferencePriceAdapter {
         // what makes the difference visible in a trace.
         if (at == 0) revert IncompleteRound(asset);
 
+        if (at > block.timestamp) revert FuturePrice(asset, at, block.timestamp);
+
         if (block.timestamp - at > source.maxAge) {
             revert StalePrice(asset, at, source.maxAge);
         }
@@ -232,6 +241,19 @@ contract ReferencePriceAdapter is IReferencePriceAdapter {
         view
         returns (bool readable, uint256 usdWad, uint256 updatedAt)
     {
+        // Most AggregatorV3 feeds are not asset-bound, so a missing optional
+        // selector preserves their existing behavior. SENT's signed xStock shim
+        // implements it; a source configured against the wrong quote token then
+        // becomes unreadable instead of silently anchoring that token to SPYx.
+        (bool bindingCallSucceeded, bytes memory bindingData) = source.aggregator.staticcall(
+            abi.encodeWithSelector(IAssetBoundAggregator.priceAsset.selector)
+        );
+        if (bindingCallSucceeded && bindingData.length != 0) {
+            if (bindingData.length != 32) return (false, 0, 0);
+            address boundAsset = abi.decode(bindingData, (address));
+            if (boundAsset == address(0) || boundAsset != asset) return (false, 0, 0);
+        }
+
         try IAggregatorV3(source.aggregator).latestRoundData() returns (
             uint80, int256 answer, uint256, uint256 at, uint80
         ) {

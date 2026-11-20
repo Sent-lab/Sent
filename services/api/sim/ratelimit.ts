@@ -143,9 +143,8 @@ section("Clients are independent");
    * Without a bound the limiter becomes the memory-exhaustion vector it was
    * added to prevent.
    *
-   * Eviction is the whole map at once, deliberately. Evicting individually
-   * would reset the budget of whichever client is chosen — which is exactly
-   * what an attacker would aim for.
+   * At capacity only fully refilled buckets can be forgotten. Clearing the
+   * map would let a source-key churn reset every client's budget.
    */
   const limiter = new RateLimiter({ refillPerSecond: 1, capacity: 1 }, 100);
   const t = 1_000_000;

@@ -1,0 +1,216 @@
+# SENT — single-host public beta topology.
+#
+# One VM runs the web/API/realtime/indexer/worker/finalizer stack and Postgres.
+# Caddy is the only public ingress and terminates HTTPS/WSS. This is a low-cost
+# beta layout, not the multi-replica production topology in the masterplan.
+
+name: sent
+
+x-backend: &backend
+  image: sent-backend:${SENT_IMAGE_TAG:-local}
+  build:
+    context: ../..
+    dockerfile: infra/docker/Dockerfile
+  restart: unless-stopped
+  logging:
+    driver: local
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a long random POSTGRES_PASSWORD}
+      POSTGRES_DB: sent
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sent -d sent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  indexer:
+    <<: *backend
+    environment:
+      SERVICE: indexer
+      DATABASE_URL: postgres://sent:${POSTGRES_PASSWORD}@postgres:5432/sent
+      RPC_URL: ${RPC_URL:?Set the HyperEVM RPC URL}
+      CHAIN_ID: ${CHAIN_ID:-999}
+      FACTORY_ADDRESS: ${FACTORY_ADDRESS:?Set the deployed SENT factory address}
+      REWARD_VAULT_ADDRESS: ${REWARD_VAULT_ADDRESS:?Set the deployed reward vault address}
+      START_BLOCK: ${START_BLOCK:?Set the earliest deployed contract block}
+      CONFIRMATIONS: ${CONFIRMATIONS:-20}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9101/healthz >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  api:
+    <<: *backend
+    environment:
+      SERVICE: api
+      DATABASE_URL: postgres://sent:${POSTGRES_PASSWORD}@postgres:5432/sent
+      RPC_URL: ${RPC_URL:?Set the HyperEVM RPC URL}
+      CHAIN_ID: ${CHAIN_ID:-999}
+      FACTORY_ADDRESS: ${FACTORY_ADDRESS:?Set the deployed SENT factory address}
+      REWARD_VAULT_ADDRESS: ${REWARD_VAULT_ADDRESS:?Set the deployed reward vault address}
+      API_HOST: 0.0.0.0
+      API_PORT: 8080
+      API_ALLOWED_ORIGINS: https://${WEB_DOMAIN:?Set WEB_DOMAIN}
+      API_TRUST_PROXY: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      indexer:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  realtime:
+    <<: *backend
+    environment:
+      SERVICE: realtime
+      DATABASE_URL: postgres://sent:${POSTGRES_PASSWORD}@postgres:5432/sent
+      RPC_URL: ${RPC_URL:?Set the HyperEVM RPC URL}
+      CHAIN_ID: ${CHAIN_ID:-999}
+      FACTORY_ADDRESS: ${FACTORY_ADDRESS:?Set the deployed SENT factory address}
+      REWARD_VAULT_ADDRESS: ${REWARD_VAULT_ADDRESS:?Set the deployed reward vault address}
+      REALTIME_HOST: 0.0.0.0
+      REALTIME_PORT: 8081
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9104/healthz >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    <<: *backend
+    environment:
+      SERVICE: worker
+      DATABASE_URL: postgres://sent:${POSTGRES_PASSWORD}@postgres:5432/sent
+    depends_on:
+      postgres:
+        condition: service_healthy
+      indexer:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9103/healthz >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  finalizer:
+    <<: *backend
+    environment:
+      SERVICE: finalizer
+      DATABASE_URL: postgres://sent:${POSTGRES_PASSWORD}@postgres:5432/sent
+    depends_on:
+      postgres:
+        condition: service_healthy
+      indexer:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9102/healthz >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  web:
+    image: sent-web:${SENT_IMAGE_TAG:-local}
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: https://${API_DOMAIN:?Set API_DOMAIN}
+        NEXT_PUBLIC_REALTIME_URL: wss://${REALTIME_DOMAIN:?Set REALTIME_DOMAIN}
+        NEXT_PUBLIC_CHAIN_ID: ${CHAIN_ID:-999}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      WEB_DOMAIN: ${WEB_DOMAIN:?Set WEB_DOMAIN}
+      API_DOMAIN: ${API_DOMAIN:?Set API_DOMAIN}
+      REALTIME_DOMAIN: ${REALTIME_DOMAIN:?Set REALTIME_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.public:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      realtime:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Keep transaction signing out of the default public stack. Enable the
+  # `keeper` profile only after a separate operator key has been provisioned.
+  keeper:
+    <<: *backend
+    profiles: ["keeper"]
+    environment:
+      SERVICE: keeper
+      DATABASE_URL: postgres://sent:${POSTGRES_PASSWORD}@postgres:5432/sent
+      RPC_URL: ${RPC_URL:?Set the HyperEVM RPC URL}
+      CHAIN_ID: ${CHAIN_ID:-999}
+      FACTORY_ADDRESS: ${FACTORY_ADDRESS:?Set the deployed SENT factory address}
+      REWARD_VAULT_ADDRESS: ${REWARD_VAULT_ADDRESS:?Set the deployed reward vault address}
+      KEEPER_PRIVATE_KEY: ${KEEPER_PRIVATE_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      indexer:
+        condition: service_started
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

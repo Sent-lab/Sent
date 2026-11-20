@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.28;
 
-/// @title SENT XStockRegistry
-/// @notice The allowlist of official xStock quote assets a market may pair against.
+/// @title SENT Quote Asset Registry
+/// @notice The allowlist of verified quote assets a market may pair against.
 ///
-/// LOCKED (§2, §6, §421): the quote asset must be an official/canonical HyperEVM
-/// xStock representation. Nothing else may ever become a quote asset.
+/// LOCKED (§2, §6, §421): every quote asset must be registered and pass all
+/// eight gates before new markets may use it. The public MVP includes the
+/// canonical WHYPE wrapper; stock-backed wrappers remain separately gated.
 ///
 /// §420 is the governing rule and it is deliberately strict:
 ///
 ///   "The production registry must be allowlist-based per verified HyperEVM
-///    deployment. Do not infer availability from the global xStocks product
-///    catalog."
+///    deployment. Do not infer availability from a product catalog or token
+///    symbol."
 ///
 /// WHY AN ALLOWLIST AND NOT A LINKAGE CHECK
 /// ----------------------------------------

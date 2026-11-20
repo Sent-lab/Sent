@@ -52,7 +52,8 @@ contract DecRouter is IGraduationRouter {
 /// an entire class of bug: any place that mixes a normalized amount with a raw one
 /// is invisible at 18 decimals and wrong by a power of ten everywhere else.
 ///
-/// Real xStocks are not guaranteed to be 18 decimals, and V-03 is still open, so
+/// Real xStocks are not guaranteed to be 18 decimals, and each candidate wrapper
+/// still needs asset-specific normalized-accounting evidence, so
 /// this suite exercises the full path — buy, sell, fee settlement, vault
 /// accounting, solvency — against 6- and 8-decimal assets.
 contract DecimalsTest is Test {

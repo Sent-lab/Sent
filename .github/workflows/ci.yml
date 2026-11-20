@@ -101,7 +101,7 @@ jobs:
           git diff --exit-code contracts/test/fixtures/
 
   workspace:
-    name: Typecheck / lint / build
+    name: Typecheck
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

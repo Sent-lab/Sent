@@ -1,0 +1,231 @@
+/*
+ * Transaction center (§61).
+ *
+ * A header control that reports and a popover that lists. Neither takes the
+ * screen: §61 is explicit that this must not block, and the whole visual budget
+ * here is spent on being legible at a glance and then getting out of the way.
+ */
+
+.wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  /* §84/§227: a real touch target, matched to the connect button beside it. */
+  min-height: 34px;
+  padding-inline: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.trigger:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--volt);
+  outline-offset: 2px;
+}
+
+.trigger[data-busy="true"] {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text-dim);
+  flex-shrink: 0;
+}
+
+/*
+ * The pulse marks work in progress, and it is the only moving thing in the
+ * header. It animates opacity alone — a transform on a 7px dot buys nothing and
+ * a background animation would repaint the button behind it.
+ *
+ * The global reduced-motion rule collapses this to a static dot, which still
+ * reads correctly because the label beside it already says "N pending" (§84).
+ */
+.trigger[data-busy="true"] .dot {
+  background: var(--warn);
+  animation: pulse 1.4s var(--ease-in-out) infinite;
+}
+
+.trigger[data-failed="true"] .dot {
+  background: var(--down);
+}
+
+@keyframes pulse {
+  50% { opacity: 0.25; }
+}
+
+.panel {
+  position: absolute;
+  top: calc(100% + var(--s-2));
+  right: 0;
+  z-index: var(--z-drawer);
+  width: min(360px, calc(100vw - var(--s-8)));
+  padding: var(--s-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  /* A popover floats over content, so it needs a real edge rather than only a
+     border — without the shadow it reads as part of the page beneath it. */
+  box-shadow: 0 18px 40px rgb(0 0 0 / 55%);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-2);
+}
+
+.title {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.clear {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.clear:hover { color: var(--text); }
+
+.clear:focus-visible {
+  outline: 2px solid var(--volt);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  /* Twenty entries would be taller than a short viewport. The list scrolls
+     inside the popover rather than pushing the popover off the screen. */
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+}
+
+.row {
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  /* State on the left edge, where a scanning eye meets the row first. The word
+     is in the row too — this stripe is reinforcement, never the only signal. */
+  border-left-width: 2px;
+}
+
+.row[data-status="PENDING"] { border-left-color: var(--text-dim); }
+.row[data-status="CONFIRMING"] { border-left-color: var(--warn); }
+.row[data-status="CONFIRMED"] { border-left-color: var(--up); }
+.row[data-status="FAILED"] { border-left-color: var(--down); }
+
+.rowHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.state {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.row[data-status="PENDING"] .state { color: var(--text-dim); }
+.row[data-status="CONFIRMING"] .state { color: var(--warn); }
+.row[data-status="CONFIRMED"] .state { color: var(--up); }
+.row[data-status="FAILED"] .state { color: var(--down); }
+
+.hash {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
+}
+
+.summary {
+  margin-top: 2px;
+  font-size: var(--text-sm);
+  color: var(--text);
+  /* The intent summary is a sentence, not a token: it wraps rather than being
+     cut, because a truncated description of what was signed is useless. */
+  overflow-wrap: anywhere;
+}
+
+.rowFoot {
+  display: flex;
+  gap: var(--s-3);
+  margin-top: var(--s-1);
+}
+
+.rowFoot:empty { display: none; }
+
+.link {
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.link:hover {
+  color: var(--volt);
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--volt);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.foot {
+  margin-top: var(--s-2);
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
+}
+
+/*
+ * On a narrow screen the popover spans the viewport rather than hanging off the
+ * right of a 34px button. It stays anchored to the header — this is still a
+ * popover, not a sheet, because §61 says non-blocking and a full-height sheet on
+ * mobile is the modal this is meant to avoid.
+ */
+@media (max-width: 480px) {
+  .panel {
+    right: calc(var(--s-4) * -1);
+    width: calc(100vw - var(--s-4));
+  }
+}

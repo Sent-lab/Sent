@@ -105,9 +105,11 @@ export interface SweepResult {
  * replace one another depending on gas price, and the second market simply
  * never gets finalised while the logs record two attempts.
  *
- * The pending set is small by construction — a market passes through this
- * state once, briefly — so there is nothing to gain by racing anyway. If it is
- * ever large enough for sequencing to hurt, that is the alert firing.
+ * Each market enters this state at most once, but any number of markets can be
+ * pending after a keeper outage, an unavailable large lane or repeated venue
+ * failures. Sequential sends protect the shared nonce; pending count and age
+ * must be monitored because a growing backlog can leave many markets without
+ * a venue.
  *
  * ONE FAILURE MUST NOT END THE SWEEP
  * ----------------------------------

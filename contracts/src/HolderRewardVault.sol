@@ -73,6 +73,15 @@ contract HolderRewardVault is ReentrancyGuard {
         uint256 activeAt;
     }
 
+    /// @dev Highest attested epoch and cumulative total ever accepted per market.
+    ///      This survives Guardian cancellation so a superseded signature cannot
+    ///      be replayed after its pending slot is cleared.
+    struct SubmissionWatermark {
+        uint256 epochSequence;
+        uint256 totalCumulative;
+        bool exists;
+    }
+
     address public governance;
 
     /// @notice Guardian Safe (§588). A brake, never a steering wheel.
@@ -121,6 +130,11 @@ contract HolderRewardVault is ReentrancyGuard {
     /// @dev market => a submitted distribution still inside its activation delay.
     mapping(address market => Distribution) public pending;
 
+    /// @notice Highest accepted commitment watermark per market, including roots
+    ///         later cancelled by the Guardian. Operators use this to choose the
+    ///         next valid epoch without replaying superseded signed data.
+    mapping(address market => SubmissionWatermark) public submissionWatermark;
+
     /// @dev market => account => cumulative amount already claimed.
     mapping(address market => mapping(address account => uint256)) public claimedBy;
 
@@ -161,6 +175,7 @@ contract HolderRewardVault is ReentrancyGuard {
     error QuorumZero();
     error TooManySignatures(uint256 provided, uint256 attestors);
     error NotGuardian();
+    error ZeroMerkleRoot();
     error ClaimsArePaused();
     error NotPaused();
     error NoPendingCommitment();
@@ -238,9 +253,14 @@ contract HolderRewardVault is ReentrancyGuard {
     function submitCommitment(Commitment calldata commitment, bytes[] calldata signatures) external {
         if (!isMarket[commitment.market]) revert NotMarket();
         if (commitment.rewardAsset != rewardAsset[commitment.market]) revert WrongRewardAsset();
+        // Zero is the sentinel for an empty active/pending slot. Accepting it as
+        // a signed commitment could overwrite a valid pending root while leaving
+        // the slot looking empty to activate(), cancel(), and monotonicity checks.
+        if (commitment.merkleRoot == bytes32(0)) revert ZeroMerkleRoot();
 
-        // Monotonicity must be measured against the FURTHEST-ADVANCED commitment
-        // the vault knows about, which is the pending one whenever it exists.
+        // Monotonicity is measured against the highest accepted submission,
+        // including a pending root later cancelled by the Guardian. Clearing the
+        // pending slot must not make an older signed root valid again.
         //
         // Checking only against `active` left a downgrade open: an older but still
         // valid commitment could overwrite a pending newer one, rolling
@@ -252,6 +272,13 @@ contract HolderRewardVault is ReentrancyGuard {
         uint256 highestSequence = current.epochSequence;
         uint256 highestTotal = current.totalCumulative;
         bool haveAny = current.merkleRoot != bytes32(0);
+
+        SubmissionWatermark storage watermark = submissionWatermark[commitment.market];
+        if (watermark.exists) {
+            haveAny = true;
+            if (watermark.epochSequence > highestSequence) highestSequence = watermark.epochSequence;
+            if (watermark.totalCumulative > highestTotal) highestTotal = watermark.totalCumulative;
+        }
 
         if (inFlight.merkleRoot != bytes32(0)) {
             haveAny = true;
@@ -275,6 +302,10 @@ contract HolderRewardVault is ReentrancyGuard {
         }
 
         _verifyQuorum(commitment, signatures);
+
+        watermark.epochSequence = commitment.epochSequence;
+        watermark.totalCumulative = commitment.totalCumulative;
+        watermark.exists = true;
 
         uint256 activeAt = block.timestamp + ACTIVATION_DELAY;
 
@@ -389,6 +420,7 @@ contract HolderRewardVault is ReentrancyGuard {
     }
 
     function setGuardian(address newGuardian) external onlyGovernance {
+        if (newGuardian == address(0)) revert ZeroAddress();
         emit GuardianUpdated(guardian, newGuardian);
         guardian = newGuardian;
     }
@@ -437,6 +469,16 @@ contract HolderRewardVault is ReentrancyGuard {
 
     function attestorCount() external view returns (uint256) {
         return _attestors.length;
+    }
+
+    /// @notice Whether launches may safely begin accruing Stockback.
+    /// @dev The factory checks this before creating a market. Without a guardian
+    ///      and a reachable nonzero quorum, funded rewards could accrue with no
+    ///      valid way to publish a distribution. A pause also closes new launches
+    ///      until governance has reviewed and resumed claims.
+    function launchConfigurationReady() external view returns (bool) {
+        uint256 required = quorum;
+        return guardian != address(0) && !claimsPaused && required != 0 && required <= _attestors.length;
     }
 
     function transferGovernance(address newGovernance) external onlyGovernance {

@@ -15,13 +15,12 @@ pragma solidity 0.8.28;
 ///
 /// WHY THIS EXISTS SEPARATELY FROM THE ROUTER
 /// ------------------------------------------
-/// The router needs verified HyperSwap addresses (V-06) and a permanent-lock
-/// primitive (V-09), neither of which is confirmed. The MATH needs neither, and
-/// it is the part most likely to be wrong.
+/// The router needs verified HyperSwap addresses (V-06, now verified) and a
+/// permanent-lock primitive (V-09, implemented but not yet deployed). The MATH
+/// needs neither, and it is the part most likely to be wrong.
 ///
-/// Separating them means the geometry can be proven now rather than waiting on
-/// facts nobody has yet — and when the addresses land, what remains is wiring
-/// rather than arithmetic.
+/// Separating them lets the geometry be proven independently. The remaining
+/// deployment work is wiring and live verification rather than address discovery.
 ///
 /// THE STRUCTURAL RESULT (Day 1)
 /// -----------------------------
@@ -48,8 +47,9 @@ library GraduationMath {
     /// @notice The usable full range for a tick spacing.
     /// @dev Bounds are pulled INWARD to the nearest usable tick. Rounding outward
     ///      would produce ticks the pool rejects, and the failure would surface
-    ///      inside the graduation transaction — the one place a revert is most
-    ///      expensive, because it blocks a trade that already crossed the endpoint.
+    ///      inside the graduation finalization transaction. That call reverts
+    ///      without undoing the already-settled crossing buy; the market stays
+    ///      GRADUATING and anyone can retry after the underlying issue is fixed.
     function fullRange(int24 tickSpacing) internal pure returns (int24 lower, int24 upper) {
         if (tickSpacing <= 0) revert TickSpacingZero();
 
@@ -132,7 +132,8 @@ library GraduationMath {
     /// @notice Plan the graduation mint from the assets actually available.
     /// @dev Liquidity is the largest BOTH sides support. Taking either side alone
     ///      would demand more of the other than the market holds, and the mint
-    ///      would revert inside the graduating trade.
+    ///      would revert the graduation finalization and leave the market
+    ///      retryable in GRADUATING.
     function planMint(
         uint160 sqrtP,
         uint160 sqrtA,

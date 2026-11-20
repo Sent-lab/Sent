@@ -63,7 +63,7 @@ import {
   type Transaction,
 } from "@sent/database";
 import { scheduleForRange } from "@sent/worker";
-import { makeCurve, marginalPrice } from "@sent/economics";
+import { makeCurve, marginalPrice, splitCoreFee } from "@sent/economics";
 import {
   launchpadFactoryAbi,
   launchMarketAbi,
@@ -73,7 +73,7 @@ import {
   feeVaultAbi,
 } from "@sent/contracts";
 
-import { toNormalized } from "@sent/sdk";
+import { toNormalized, toRawForPayout } from "@sent/sdk";
 import { createLogger, type Logger } from "@sent/observability/logger";
 import type { Registry } from "@sent/observability/metrics";
 
@@ -98,9 +98,9 @@ export interface IndexerConfig {
   readonly chainId: number;
   readonly factory: `0x${string}`;
   readonly rewardVault: `0x${string}`;
-  /** Block to start from. Usually the factory deployment block. */
+  /** Earliest deployment block among monitored contracts; includes registry events. */
   readonly startBlock: bigint;
-  /** Blocks per getLogs call. HyperEVM's range cap is unmeasured (V-15). */
+  /** Blocks per getLogs call. HyperEVM's public RPC caps this at 50 (V-15). */
   readonly batchSize: bigint;
   /** Blocks below the head treated as settled (§335). */
   readonly confirmations: number;
@@ -110,9 +110,11 @@ export interface IndexerConfig {
 }
 
 export const DEFAULT_CONFIG: Omit<IndexerConfig, "rpcUrl" | "chainId" | "factory" | "rewardVault" | "startBlock"> = {
-  batchSize: 500n,
+  batchSize: 50n,
   confirmations: 20,
-  pollIntervalMs: 2_000,
+  // Hyperliquid's public RPC allows 100 JSON-RPC requests per minute per IP.
+  // Leave room for range reads and API calls instead of polling the head every 2s.
+  pollIntervalMs: 15_000,
   reorgDepth: 128,
 };
 
@@ -391,7 +393,7 @@ export class Indexer {
      * contains a launch cannot ask for that market's own events. Everything the
      * market emitted in the same range was silently absent.
      *
-     * On a real chain with a 500-block batch that is the first several minutes
+     * On a real chain with a multi-block batch that is the first several minutes
      * of every market's life, which is exactly when most of its activity
      * happens, and nothing would ever have reported it: the projection would
      * simply be missing trades that the chain has.
@@ -466,8 +468,8 @@ export class Indexer {
      *
      * The schema: every derived row carries `block_number REFERENCES blocks`,
      * because that foreign key is what makes a reorg rollback a DELETE rather
-     * than a hand-written cascade. With a 500-block range and one block
-     * recorded, 499 blocks' worth of inserts violated it and the tick failed —
+     * than a hand-written cascade. With a multi-block range and one block
+     * recorded, every other block's inserts violated it and the tick failed —
      * so the cursor never advanced and indexing stopped at the first range
      * containing an event outside its own first block.
      *
@@ -782,7 +784,7 @@ export class Indexer {
     // (§699). This was hardcoded to eighteen, which silently scaled every price
     // and notional in the projection by 10^12 for a six-decimal xStock — and
     // xStocks are not eighteen-decimal assets.
-    const quoteDecimals = await this.quoteDecimalsOf(quoteAsset);
+    const quoteDecimals = await this.assetDecimalsOf(quoteAsset);
 
     // qG is a pure fraction of supply and identical for every pair, so it is
     // derived rather than read — one less value that can disagree with the chain.
@@ -845,6 +847,14 @@ export class Indexer {
 
     if (decoded.eventName === "Bought" || decoded.eventName === "Sold") {
       const isBuy = decoded.eventName === "Bought";
+      const quoteDecimals = this.quoteDecimalsFor(market);
+      const coreFeeRaw = toRawForPayout(a.coreFee as bigint, quoteDecimals);
+      const stockbackRaw = toRawForPayout(a.stockback as bigint, quoteDecimals);
+      const coreSplitRaw = splitCoreFee(coreFeeRaw);
+      const coreFee = toNormalized(coreFeeRaw, quoteDecimals);
+      const creatorFee = toNormalized(coreSplitRaw.creator, quoteDecimals);
+      const platformFee = toNormalized(coreSplitRaw.platform, quoteDecimals);
+      const stockback = toNormalized(stockbackRaw, quoteDecimals);
 
       await insertTrade(
         tx,
@@ -857,12 +867,14 @@ export class Indexer {
           notional: (isBuy ? a.grossQuoteIn : a.grossQuoteOut) as bigint,
           net: (isBuy ? a.netToCurve : a.netQuoteOut) as bigint,
           tokens: (isBuy ? a.tokensOut : a.tokensIn) as bigint,
-          coreFee: a.coreFee as bigint,
-          // The event carries the core fee; the split is re-derived from the
-          // canonical rule rather than stored twice on-chain.
-          creatorFee: ceilBps(a.coreFee as bigint, 6_500n),
-          platformFee: (a.coreFee as bigint) - ceilBps(a.coreFee as bigint, 6_500n),
-          stockback: a.stockback as bigint,
+          coreFee,
+          // The event carries normalized fees, while settlement re-denormalizes
+          // the core fee, rounds to raw asset units, and only then splits it.
+          // Reproduce that exact path so low-decimal assets' tape matches the
+          // amounts actually accrued to FeeVault.
+          creatorFee,
+          platformFee,
+          stockback,
           distributedAfter: a.newDistributed as bigint,
           collateralAfter: a.newCollateral as bigint,
           priceAfter: this.priceAfter(market, a.newDistributed as bigint),
@@ -893,10 +905,10 @@ export class Indexer {
         blockNumber,
         notional: (isBuy ? a.grossQuoteIn : a.grossQuoteOut) as bigint,
         tokens: (isBuy ? a.tokensOut : a.tokensIn) as bigint,
-        coreFee: a.coreFee as bigint,
-        creatorFee: ceilBps(a.coreFee as bigint, 6_500n),
-        platformFee: (a.coreFee as bigint) - ceilBps(a.coreFee as bigint, 6_500n),
-        stockback: a.stockback as bigint,
+        coreFee,
+        creatorFee,
+        platformFee,
+        stockback,
         priceAfter: this.priceAfter(market, a.newDistributed as bigint),
         distributedAfter: a.newDistributed as bigint,
         timestamp,
@@ -1040,7 +1052,7 @@ export class Indexer {
        * claim settles across every market the creator launched against this
        * asset, so there is no single market to read them from.
        */
-      const decimals = await this.quoteDecimalsOf(asset);
+      const decimals = await this.assetDecimalsOf(asset);
 
       return insertFeeClaim(tx, {
         blockNumber: claimBlock,
@@ -1081,10 +1093,17 @@ export class Indexer {
      * creator fee of 174,432 in the cockpit next to 174431738875981363 for the
      * same fee in the tape.
      *
-     * Converted with the SDK's own helper rather than a local multiply, so the
-     * boundary rule has one implementation (§1064).
+     * FeeVault also accrues the launched TOKEN side of post-graduation LP fees,
+     * not only the market's xStock quote side. Resolve decimals from the actual
+     * event asset: launched SENT tokens are fixed at 18 decimals, while xStock
+     * quote assets use the verified registry record. Using market quote decimals
+     * for every FeeVault event mis-scaled TOKEN fees by 10^12 for a 6-decimal
+     * quote market, and made the later token-fee claim unreadable in the indexer.
+     * Converted with the SDK's helper so the normalization rule has one
+     * implementation (§1064).
      */
-    const decimals = this.quoteDecimalsFor(market);
+    const asset = String(a.asset).toLowerCase() as `0x${string}`;
+    const decimals = await this.assetDecimalsOf(asset);
 
     await insertFeeAccrual(
       tx,
@@ -1092,7 +1111,7 @@ export class Indexer {
         blockNumber,
         market: market as `0x${string}`,
         creator: String(a.creator).toLowerCase() as `0x${string}`,
-        asset: String(a.asset).toLowerCase() as `0x${string}`,
+        asset,
         creatorAmount: toNormalized(a.creatorAmount as bigint, decimals),
         platformAmount: toNormalized(a.platformAmount as bigint, decimals),
         timestamp,
@@ -1146,7 +1165,7 @@ export class Indexer {
    * The xStock registry, from the factory.
    *
    * Cached after the first success, like the fee vault, and never cached as a
-   * failure. `quoteDecimalsOf` used to re-read `REGISTRY` on every uncached
+   * failure. `assetDecimalsOf` used to re-read `REGISTRY` on every uncached
    * asset; it now shares this resolution, so a launch costs one RPC call rather
    * than two.
    */
@@ -1574,8 +1593,14 @@ export class Indexer {
     return marginalPrice(makeCurve(known.p0), distributed);
   }
 
-  private async quoteDecimalsOf(asset: `0x${string}`): Promise<number> {
-    const cached = this.quoteDecimalsCache.get(asset);
+  private async assetDecimalsOf(asset: `0x${string}`): Promise<number> {
+    // SENT launch tokens are canonical assets too, and always use 18 decimals.
+    // Post-graduation LP fees can be accrued and claimed in that token, which
+    // is not registered as an xStock quote asset. Resolve it from the indexed
+    // factory launch map before asking the xStock registry.
+    if (this.tokenToMarket.has(asset)) return 18;
+
+    const cached = this.assetDecimalsCache.get(asset);
     if (cached !== undefined) return cached;
 
     const registry = await this.resolveRegistry();
@@ -1593,11 +1618,11 @@ export class Indexer {
       args: [asset],
     })) as { decimals: number };
 
-    this.quoteDecimalsCache.set(asset, record.decimals);
+    this.assetDecimalsCache.set(asset, record.decimals);
     return record.decimals;
   }
 
-  private readonly quoteDecimalsCache = new Map<string, number>();
+  private readonly assetDecimalsCache = new Map<string, number>();
 
   /** Markets discovered in the current transaction, applied only on commit. */
   private pendingMarkets: {
@@ -1651,12 +1676,6 @@ export class Indexer {
 }
 
 const ZERO = "0x0000000000000000000000000000000000000000";
-
-/** Creator share rounds UP, matching `Fees.splitCore` (D-003a). */
-function ceilBps(amount: bigint, bps: bigint): bigint {
-  const result = (amount * bps + 9_999n) / 10_000n;
-  return result > amount ? amount : result;
-}
 
 function seconds(startedAt: bigint): number {
   return Number(process.hrtime.bigint() - startedAt) / 1e9;

@@ -10,11 +10,11 @@ pragma solidity 0.8.28;
 /// it — the market's job ends at "here are the assets and the price they must open
 /// at".
 ///
-/// V-06 and V-09 are still open, so the concrete implementation lands on Day 3
-/// against verified HyperSwap addresses. Until then this interface is the contract
-/// between the two halves, and a market with no router simply cannot graduate —
-/// which is the correct failure (§16: no GRADUATED status without a complete
-/// migration).
+/// HyperSwap deployment addresses (V-06) are verified. SENT's concrete router
+/// and permanent lock (V-09) still need deployment and governance configuration.
+/// Until then this interface is the contract between the two halves, and a market
+/// with no router simply cannot graduate — which is the correct failure (§16: no
+/// GRADUATED status without a complete migration).
 interface IGraduationRouter {
     /// @notice Migrate a market's remaining reserve and collateral into a
     ///         permanently locked HyperSwap V3 position.

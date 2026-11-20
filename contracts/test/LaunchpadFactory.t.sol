@@ -16,6 +16,7 @@ import {Curve} from "../src/lib/Curve.sol";
 import {Metadata} from "../src/lib/Metadata.sol";
 import {ReferencePriceAdapter} from "../src/ReferencePriceAdapter.sol";
 import {MockAggregator} from "./mocks/MockAggregator.sol";
+import {StockbackTestReadiness} from "./helpers/StockbackTestReadiness.sol";
 
 contract FQuote is ERC20 {
     constructor() ERC20("Mock NVDAx", "NVDAx") {}
@@ -68,6 +69,7 @@ contract LaunchpadFactoryTest is Test {
 
         vm.prank(deployer);
         factory = new LaunchpadFactory(governance, treasury, address(registry), LAUNCH_FEE);
+        StockbackTestReadiness.configure(vm, factory.REWARD_VAULT(), governance);
 
         vm.prank(governance);
         factory.setRouter(address(router));

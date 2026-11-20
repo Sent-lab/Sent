@@ -1,5 +1,10 @@
 # Review notes
 
+Availability and oracle conclusions in this cumulative review were written from
+earlier snapshots. For current HyperEVM xStock markets and the Chainlink v10
+pull-feed candidate, use the dated [launch-readiness report](LAUNCH-READINESS-2026-11-18.md)
+and [verification-ledger update](VERIFY-LEDGER.md#external-re-check--2026-11-18).
+
 Where the defects in this codebase have actually been, written down so the next
 person reviewing it looks in the right places rather than the obvious ones.
 
@@ -438,18 +443,18 @@ verification item blocking it:
   field is ABSENT from the response rather than zero: an absent field renders as
   nothing, a zero renders as a market worth nothing.
 - The launch-anchor feed itself (V-11). The adapter, its refusals, the factory's
-  dependency on it, and now `PythAggregatorShim` are all built and fork-tested.
-  **What is missing is no longer a decision — it is data.** Pyth is the only
-  price source that exists on this chain (no HyperSwap pool, no HyperCore spot,
-  no equity perp), and its equity feeds there are 63–561 days stale with the 24/7
-  variants never published. Somebody has to publish them, and Pyth's public
-  update API now returns 401. Every launch is refused until that changes.
-- `/account` **P&L** — holdings and portfolio value now ship; realised and
-  unrealised P&L do not. They need a cost basis per account per market, which
-  means folding every trade rather than reading a balance, and the trade history
-  to fold it from only exists from the indexer's start block. A P&L that
-  silently began mid-history would be wrong in the direction that flatters,
-  which is the worst direction for a number a user might act on.
+  dependency on it, and `PythAggregatorShim` are built. The Day 8 Pyth findings
+  remain relevant to Pyth, but the 2026-11-18 re-check found a Chainlink
+  Tokenized Asset (v10) pull-stream candidate for SPYx on HyperEVM. SENT still
+  needs signed-report access, v10 verification/decoding and wrapper-value
+  handling. Every launch remains refused until a supported source is configured.
+- `/account` **P&L** — holdings ship with a calculated mark per market; the API
+  does not add values across different quote assets. Realised and unrealised P&L
+  do not ship. They need a cost basis per account per market, which means folding
+  every trade rather than reading a balance, and the trade history to fold it
+  from only exists from the indexer's start block. A P&L that silently began
+  mid-history would be wrong in the direction that flatters, which is the worst
+  direction for a number a user might act on.
 
 §279 forbids a mock or placeholder standing in for any of them in production,
 and `assertProductionConfigReady` enforces that at startup on chain 999.

@@ -84,9 +84,9 @@ LOCAL UNIT / FUZZ / INVARIANT
 ## 4. System Architecture — In My Own Words
 
 SENT is a **permissionless fixed-supply token launchpad on HyperEVM whose quote asset is an
-official canonical xStock** (tokenized equity), with an automatic graduation into permanently
-locked HyperSwap V3 liquidity, and a holder-reward mechanism ("Stockback") that pays holders in
-the market's own paired xStock.
+official canonical xStock** (tokenized equity), with endpoint-triggered curve closure followed
+by permissionless graduation into permanently locked HyperSwap V3 liquidity, and a holder-reward
+mechanism ("Stockback") that pays holders in the market's own paired xStock.
 
 **The economic life of a market has exactly two phases.**
 
@@ -108,7 +108,10 @@ Effective cost: **2% buy / 3% sell**. Both taxes sit **outside curve collateral*
 solvency accounting is never diluted by fees.
 
 When the marginal price reaches **25×** the launch price (the $50K reference MC endpoint), the
-market **graduates automatically inside the triggering trade** — no manual step, no vote, no admin.
+curve closes and returns any quote the curve cannot spend. A separate, permissionless
+`finalizeGraduation()` transaction creates and locks the HyperSwap position (D-016). The
+crossing trade does not choose migration inputs; if finalization fails, the market remains in
+`GRADUATING` and anyone can retry. Curve trades are unavailable during this handoff.
 The analytic endpoint `qG = 2·PG·S / (P0 + 3·PG)` puts ~65.79% of supply in the market and leaves
 ~34.21% of supply plus ~$17.1K-equivalent of curve collateral to seed the HyperSwap V3 position
 (~$34.2K reference TVL). `GraduationRouter` mints that V3 position at the tick geometry that
@@ -257,7 +260,8 @@ Sourced from §2, §421, §407, §408 and the operating brief.
 
 **Graduation**
 
-- Automatic, in-transaction, at the endpoint — no manual graduation, ever.
+- Endpoint-triggered curve closure; permissionless, retryable migration finalization (D-016).
+- No creator, governance or operator has a privileged graduation trigger.
 - **TOKEN address identical before and after graduation.**
 - HyperSwap is the canonical post-grad venue.
 - **LP principal permanently locked** — no withdrawal path for anyone.
@@ -469,7 +473,7 @@ Extract of the P0 core; the full matrix lives in `docs/TRACEABILITY.md` and is m
 | Stockback +1% buy / +2% sell | `LaunchMarket` → `HolderRewardVault` | funding projection | fee transparency panel (§316) | conservation: vault funding == Σ contributions | §178.2 |
 | Fees outside curve collateral | `curveCollateral` accounting | collateral projection | — | invariant: collateral == curve liability, never raw balance | §178.2 · §178.5 |
 | Sell solvency | `LaunchMarket` backward curve | — | sell quote | fuzz: any sell sequence stays solvent; no underflow | §178.2 |
-| Auto graduation at 25× | `LaunchMarket` → `GraduationRouter` | `Graduated` event | milestone moment UX | crossing-order fee segmentation (§411-A); no manual path exists | §178.4 |
+| Curve closes at 25×; permissionless migration finalization | `LaunchMarket` → `GraduationRouter` | `GraduationPending`, then `Graduated` events | handoff state and completion | frozen escrow; any caller can retry after failure; no privileged trigger | §178.4 |
 | Same TOKEN address post-grad | `LaunchToken` (untouched) | — | address unchanged | fork test: address identical pre/post | §178.4 |
 | Price continuity | V3 mint geometry | chart splice | continuous chart | fork: spot price delta within documented tolerance | §178.4 |
 | LP principal permanently locked | lock primitive / holder | LP position monitor | trust panel | adversarial: no caller, incl. governance, can withdraw principal | §178.4 · §178.5 |
@@ -663,7 +667,8 @@ I confirm, explicitly and without reservation:
 - I will **not** alter, retune, reinterpret, simplify, or "improve" any LOCKED decision without
   explicit product-owner approval recorded through the §144 change-control template.
 - I will **not** silently modify supply, allocations, fee rates, the 65/35 split, Stockback
-  economics, curve math, the $2K/$50K anchors, automatic graduation, address permanence, HyperSwap
+  economics, curve math, the $2K/$50K anchors, endpoint-triggered closure and permissionless
+  graduation finalization, address permanence, HyperSwap
   routing, LP permanence, creator post-grad fee rights, official xStock pairing, creator identity,
   CREATE2 creator-binding, wallet role separation, Treasury or Founder Profit routing, transaction
   integrity, Stockback claim accounting, canonical venue rules, or admin/security boundaries.

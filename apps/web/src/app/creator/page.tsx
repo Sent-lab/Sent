@@ -40,6 +40,7 @@ import { buildClaimCreatorFeesIntent } from "@sent/sdk";
 import { getCreator, isOk, type CreatorResponse } from "../../lib/api.ts";
 import { formatAmount, formatCompact, truncateAddress } from "../../lib/format.ts";
 import { useWallet, CHAIN_ID } from "../../lib/wallet.ts";
+import { track } from "../../lib/transactions.ts";
 import { GraduationProgress } from "../../components/GraduationProgress.tsx";
 import { FreshnessBadge } from "../../components/Freshness.tsx";
 import type { FreshnessEnvelope } from "@sent/realtime";
@@ -173,9 +174,8 @@ function Disconnected({ wallet }: { wallet: ReturnType<typeof useWallet> }): JSX
 /**
  * §221's first two priorities, side by side and clearly distinct.
  *
- * Both are sums across assets, which is only meaningful because every market is
- * quoted in an xStock and a creator's markets are usually few — so each asset is
- * also listed by name underneath rather than hidden inside a total.
+ * These balances are never totalled across different xStocks. Each asset has
+ * its own unit and the rows below preserve that unit explicitly.
  */
 function Earnings({
   data,
@@ -204,10 +204,10 @@ function Earnings({
         <span className={`${styles.metricValue} num`}>
           {/* An em dash while unknown, never a zero: "0" to a creator who has
               earned something is a wrong figure, not an empty one. */}
-          {(loading && data === null) || claimUnknown ? "—" : assetTotal(claimable)}
+          {(loading && data === null) || claimUnknown ? "—" : "By asset"}
         </span>
         <span className={styles.metricDetail}>
-          Read from the fee vault. This is what a claim pays.
+          Read from the fee vault; amounts use each fee asset's own decimals.
         </span>
         {claimUnknown ? (
           <span className={styles.assetsEmpty}>
@@ -221,10 +221,10 @@ function Earnings({
       <div className={`${styles.metric} m-ambient`}>
         <span className={styles.metricLabel}>Earned all time</span>
         <span className={`${styles.metricValue} num`}>
-          {loading && data === null ? "—" : assetTotal(accrued)}
+          {loading && data === null ? "—" : "By asset"}
         </span>
         <span className={styles.metricDetail}>
-          Your 65% of the core fee, including what you have already withdrawn.
+          Your share of trade and pool fees, including what you have already withdrawn.
         </span>
         <AssetList items={accrued} empty="No fees yet." />
       </div>
@@ -254,12 +254,12 @@ function Earnings({
   );
 }
 
-/** A per-asset breakdown, so a total is never the only thing shown. */
+/** A per-asset breakdown; different xStocks are not combined into one amount. */
 function AssetList({
   items,
   empty,
 }: {
-  items: readonly { asset: string; symbol: string; amount: string }[];
+  items: readonly { asset: string; symbol: string; amount: string; decimals?: number }[];
   empty: string;
 }): JSX.Element {
   if (items.length === 0) {
@@ -271,36 +271,13 @@ function AssetList({
       {items.map((item) => (
         <li key={item.asset} className={styles.asset}>
           <span className={`${styles.assetAmount} num`}>
-            {formatAmount(BigInt(item.amount), 18)}
+            {formatAmount(BigInt(item.amount), item.decimals ?? 18)}
           </span>
           <span className={styles.assetSymbol}>{item.symbol}</span>
         </li>
       ))}
     </ul>
   );
-}
-
-/**
- * Sum across assets, compactly.
- *
- * Every quantity in the projection is normalized to eighteen decimals, so these
- * add up. That was not true until the indexer normalized the vault's raw
- * amounts — before it did, adding a six-decimal figure to an eighteen-decimal
- * one would have produced a number a trillion times too small.
- */
-function assetTotal(
-  items: readonly { asset: string; symbol: string; amount: string }[],
-): string {
-  if (items.length === 0) return "0";
-
-  const total = items.reduce((sum, item) => sum + big(item.amount), 0n);
-
-  // One asset is the common case, and it can be named. Several cannot be summed
-  // into a single symbol, so the figure stands alone and the list below names
-  // each — rather than inventing a currency to express the total in.
-  return items.length === 1 && items[0] !== undefined
-    ? `${formatCompact(total, 18)} ${items[0].symbol}`
-    : formatCompact(total, 18);
 }
 
 /**
@@ -328,7 +305,7 @@ function ClaimPanel({
   const feeVault = data?.feeVault ?? null;
 
   const claim = useCallback(
-    async (asset: string, symbol: string, amount: string) => {
+    async (asset: string, symbol: string, amount: string, decimals: number) => {
       if (feeVault === null) return;
 
       setPending(asset);
@@ -348,7 +325,7 @@ function ClaimPanel({
           asset: asset as `0x${string}`,
           to: address,
           amount: BigInt(amount),
-          decimals: 18,
+          decimals,
           symbol,
         });
 
@@ -365,6 +342,7 @@ function ClaimPanel({
           },
         });
 
+        track({ hash, summary: intent.review.summary });
         setSent(hash);
         // Re-read rather than subtracting locally. The vault is the authority on
         // what is left, and a locally adjusted balance is how a page starts
@@ -409,7 +387,7 @@ function ClaimPanel({
           <li key={item.asset} className={styles.claimRow}>
             <div className={styles.claimAmount}>
               <span className={`${styles.claimValue} num`}>
-                {formatAmount(BigInt(item.amount), 18)}
+                {formatAmount(BigInt(item.amount), item.decimals)}
               </span>
               <span className={styles.claimSymbol}>{item.symbol}</span>
             </div>
@@ -426,7 +404,7 @@ function ClaimPanel({
               <button
                 type="button"
                 className={styles.claimButton}
-                onClick={() => void claim(item.asset, item.symbol, item.amount)}
+                onClick={() => void claim(item.asset, item.symbol, item.amount, item.decimals)}
                 disabled={pending !== null || data.feeVault === null}
               >
                 {pending === item.asset ? "Confirm in your wallet" : "Claim"}

@@ -92,9 +92,8 @@
   color: var(--up);
 }
 
-/* GRADUATING exists only inside a single transaction, so this is a state a user
-   sees for at most one block. It is styled anyway: rendering it as PRE_GRAD
-   would misreport the one moment it appears. */
+/* GRADUATING persists until someone successfully finalizes the migration. Keep
+   it visually distinct so a closed curve is never presented as tradeable. */
 .root[data-status="GRADUATING"] .fill {
   background: linear-gradient(90deg, var(--volt), var(--volt-glow));
   box-shadow: var(--glow-strong);

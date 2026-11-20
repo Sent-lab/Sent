@@ -24,6 +24,7 @@ import {
 import { truncateAddress } from "../../lib/format.ts";
 import { TokenCard } from "../../components/TokenCard.tsx";
 import { FreshnessBadge } from "../../components/Freshness.tsx";
+import { isActionableFreshness } from "../../lib/freshness.ts";
 
 import styles from "./explore.module.css";
 import type { JSX } from "react";
@@ -78,8 +79,11 @@ export default async function ExplorePage({
    * deriving the list from whatever markets happen to be indexed, would both
    * drift from what a launch would accept.
    */
-  const config = await getLaunchConfig({ revalidateSeconds: 60 }).catch(() => null);
-  const pairs = config !== null && isOk(config) ? config.data.launchable : [];
+  const config = await getLaunchConfig().catch(() => null);
+  const pairs =
+    config !== null && isOk(config) && isActionableFreshness(config.freshness)
+      ? config.data.launchable
+      : [];
 
   const result = await listMarkets(
     {
@@ -90,6 +94,11 @@ export default async function ExplorePage({
     },
     { revalidateSeconds: 4 },
   ).catch(() => null);
+  const marketDataUnavailable =
+    result === null ||
+    (result !== null &&
+      isOk(result) &&
+      (result.freshness.state === "STALE" || result.freshness.state === "RECONNECTING"));
 
   return (
     <div className="container" data-mode="experience">
@@ -160,9 +169,9 @@ export default async function ExplorePage({
         )}
       </nav>
 
-      {result === null ? (
+      {marketDataUnavailable ? (
         <p className={styles.state}>
-          Market data is reconnecting. Your funds and on-chain position are unchanged.
+          Market data is stale or reconnecting, so results are hidden until they refresh.
         </p>
       ) : !isOk(result) ? (
         <p className={styles.state}>{result.message}</p>

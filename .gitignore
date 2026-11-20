@@ -10,6 +10,7 @@ coverage/
 # The template is committed and must stay so. It carries variable NAMES and
 # nothing else — no keys, no deployed addresses, no real connection strings.
 !.env.example
+!infra/deployment/.env.public.example
 *.log
 .turbo/
 .DS_Store

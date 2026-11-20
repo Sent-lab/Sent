@@ -45,6 +45,7 @@ import { buildApproveIntent, buildUnwrapIntent, buildWrapIntent } from "@sent/sd
 import { allowance, balanceOf, convertToAssets, previewWrap, symbolOf } from "../lib/chain.ts";
 import { formatFixed, parseAmount } from "../lib/format.ts";
 import { useWallet, CHAIN_ID } from "../lib/wallet.ts";
+import { track } from "../lib/transactions.ts";
 import { IntentReview } from "./IntentReview.tsx";
 
 import styles from "./WrapPanel.module.css";
@@ -52,6 +53,8 @@ import styles from "./WrapPanel.module.css";
 type Direction = "WRAP" | "UNWRAP";
 
 export interface WrapPanelProps {
+  /** For the transaction center's deep link back to this market (§61). */
+  readonly token: string;
   /** The `WrappedXStock` the market is quoted in. */
   readonly wrapper: string;
   /** The rebasing xStock it holds. */
@@ -68,6 +71,7 @@ interface ChainState {
 }
 
 export function WrapPanel({
+  token,
   wrapper,
   underlying,
   wrapperSymbol,
@@ -244,7 +248,7 @@ export function WrapPanel({
           spenderRole: "this wrapper",
         });
 
-        await wallet.send({
+        const approvalHash = await wallet.send({
           kind: approval.kind,
           chainId: approval.chainId,
           to: approval.to,
@@ -256,9 +260,13 @@ export function WrapPanel({
             rows: approval.review.rows,
           },
         });
+
+        track({ hash: approvalHash, summary: approval.review.summary, token });
       }
 
-      setSent(await wallet.send(wire));
+      const hash = await wallet.send(wire);
+      track({ hash, summary: wire.review.summary, token });
+      setSent(hash);
       setInput("");
       await refresh();
     } catch (caught) {

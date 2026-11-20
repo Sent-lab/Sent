@@ -4,1156 +4,1177 @@
 
 export const launchpadFactoryAbi = [
   {
-    "type": "constructor",
     "inputs": [
       {
+        "internalType": "address",
         "name": "governance_",
-        "type": "address",
-        "internalType": "address"
+        "type": "address"
       },
       {
+        "internalType": "address",
         "name": "treasury_",
-        "type": "address",
-        "internalType": "address"
+        "type": "address"
       },
       {
+        "internalType": "address",
         "name": "registry_",
-        "type": "address",
-        "internalType": "address"
+        "type": "address"
       },
       {
+        "internalType": "uint256",
         "name": "launchFee_",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "uint256"
       }
     ],
-    "stateMutability": "nonpayable"
+    "stateMutability": "nonpayable",
+    "type": "constructor"
   },
   {
-    "type": "function",
-    "name": "ANCHOR_TOLERANCE_BPS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "FEE_VAULT",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract FeeVault"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "LAUNCH_VERSION",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "REGISTRY",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract XStockRegistry"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "REWARD_VAULT",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract HolderRewardVault"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "computeEffectiveSalt",
     "inputs": [
       {
-        "name": "creator",
-        "type": "address",
-        "internalType": "address"
+        "internalType": "uint256",
+        "name": "length",
+        "type": "uint256"
       },
       {
-        "name": "userSalt",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "internalType": "uint256",
+        "name": "max",
+        "type": "uint256"
+      }
+    ],
+    "name": "CidTooLong",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint8",
+        "name": "registered",
+        "type": "uint8"
       },
       {
+        "internalType": "uint8",
+        "name": "reported",
+        "type": "uint8"
+      }
+    ],
+    "name": "DecimalsDriftedFromRegistry",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
         "name": "quoteAsset",
-        "type": "address",
-        "internalType": "address"
+        "type": "address"
+      }
+    ],
+    "name": "DecimalsUnavailable",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "length",
+        "type": "uint256"
       },
       {
-        "name": "launchIntentHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "internalType": "uint256",
+        "name": "max",
+        "type": "uint256"
       }
     ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "pure"
+    "name": "DescriptionTooLong",
+    "type": "error"
   },
   {
-    "type": "function",
-    "name": "creatorOf",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getLaunch",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct LaunchpadFactory.Launch",
-        "components": [
-          {
-            "name": "token",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "market",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "creator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "quoteAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "launchedAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "exists",
-            "type": "bool",
-            "internalType": "bool"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "governance",
     "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
+    "name": "EmptyLink",
+    "type": "error"
   },
   {
-    "type": "function",
-    "name": "isAuthentic",
     "inputs": [
       {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "launch",
-    "inputs": [
-      {
-        "name": "params",
-        "type": "tuple",
-        "internalType": "struct LaunchpadFactory.LaunchParams",
-        "components": [
-          {
-            "name": "name",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "symbol",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "quoteAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "userSalt",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "launchIntentHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "xStockUsdWad",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "expectedToken",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "metadata",
-            "type": "tuple",
-            "internalType": "struct Metadata.Content",
-            "components": [
-              {
-                "name": "description",
-                "type": "string",
-                "internalType": "string"
-              },
-              {
-                "name": "imageCid",
-                "type": "string",
-                "internalType": "string"
-              },
-              {
-                "name": "links",
-                "type": "tuple[]",
-                "internalType": "struct Metadata.Link[]",
-                "components": [
-                  {
-                    "name": "label",
-                    "type": "string",
-                    "internalType": "string"
-                  },
-                  {
-                    "name": "url",
-                    "type": "string",
-                    "internalType": "string"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
-    ],
-    "outputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
+        "internalType": "uint256",
+        "name": "sent",
+        "type": "uint256"
       },
       {
-        "name": "market",
-        "type": "address",
-        "internalType": "address"
+        "internalType": "uint256",
+        "name": "required",
+        "type": "uint256"
       }
     ],
-    "stateMutability": "payable"
+    "name": "ExcessiveLaunchFee",
+    "type": "error"
   },
   {
-    "type": "function",
-    "name": "launchFee",
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "sent",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "required",
+        "type": "uint256"
+      }
+    ],
+    "name": "InsufficientLaunchFee",
+    "type": "error"
+  },
+  {
     "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
+    "name": "InvalidReferencePrice",
+    "type": "error"
   },
   {
-    "type": "function",
-    "name": "launchesByCreator",
-    "inputs": [
-      {
-        "name": "creator",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address[]",
-        "internalType": "address[]"
-      }
-    ],
-    "stateMutability": "view"
+    "inputs": [],
+    "name": "LaunchFeeTransferFailed",
+    "type": "error"
   },
   {
-    "type": "function",
-    "name": "metadataRevision",
     "inputs": [
       {
+        "internalType": "uint256",
+        "name": "length",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "max",
+        "type": "uint256"
+      }
+    ],
+    "name": "LinkLabelTooLong",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "length",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "max",
+        "type": "uint256"
+      }
+    ],
+    "name": "LinkUrlTooLong",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NotGovernance",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
         "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
+        "type": "address"
+      },
       {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "internalType": "address",
+        "name": "caller",
+        "type": "address"
       }
     ],
-    "stateMutability": "view"
+    "name": "NotTheCreator",
+    "type": "error"
   },
   {
-    "type": "function",
-    "name": "predictTokenAddress",
     "inputs": [
       {
-        "name": "effectiveSalt",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "internalType": "address",
+        "name": "predicted",
+        "type": "address"
       },
       {
-        "name": "name",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "symbol",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "creator",
-        "type": "address",
-        "internalType": "address"
+        "internalType": "address",
+        "name": "actual",
+        "type": "address"
       }
     ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
+    "name": "PredictedAddressMismatch",
+    "type": "error"
   },
   {
-    "type": "function",
-    "name": "previewLaunchAddress",
     "inputs": [
       {
-        "name": "creator",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "userSalt",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
+        "internalType": "address",
         "name": "quoteAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "launchIntentHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "name",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "symbol",
-        "type": "string",
-        "internalType": "string"
+        "type": "address"
       }
     ],
-    "outputs": [
+    "name": "QuoteAssetNotLaunchable",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ReentrancyGuardReentrantCall",
+    "type": "error"
+  },
+  {
+    "inputs": [
       {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
+        "internalType": "uint256",
+        "name": "reviewed",
+        "type": "uint256"
       },
       {
+        "internalType": "uint256",
+        "name": "actual",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "toleranceBps",
+        "type": "uint256"
+      }
+    ],
+    "name": "ReferencePriceDeviated",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ReferencePriceNotSet",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "RouterNotSet",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "token",
+        "type": "address"
+      }
+    ],
+    "name": "SafeERC20FailedOperation",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
         "name": "effectiveSalt",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "type": "bytes32"
       }
     ],
-    "stateMutability": "view"
+    "name": "SaltAlreadyUsed",
+    "type": "error"
   },
   {
-    "type": "function",
-    "name": "referencePrice",
     "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
+    "name": "StockbackNotReady",
+    "type": "error"
   },
   {
-    "type": "function",
-    "name": "referencePriceToP0",
     "inputs": [
       {
-        "name": "xStockUsdWad",
-        "type": "uint256",
-        "internalType": "uint256"
+        "internalType": "uint256",
+        "name": "count",
+        "type": "uint256"
       },
       {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
+        "internalType": "uint256",
+        "name": "max",
+        "type": "uint256"
       }
     ],
-    "outputs": [
-      {
-        "name": "p0",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "pure"
+    "name": "TooManyLinks",
+    "type": "error"
   },
   {
-    "type": "function",
-    "name": "reviseMetadata",
     "inputs": [
       {
+        "internalType": "address",
         "name": "token",
-        "type": "address",
-        "internalType": "address"
+        "type": "address"
+      }
+    ],
+    "name": "UnknownToken",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ZeroAddress",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "from",
+        "type": "address"
       },
       {
-        "name": "content",
-        "type": "tuple",
-        "internalType": "struct Metadata.Content",
-        "components": [
-          {
-            "name": "description",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "imageCid",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "links",
-            "type": "tuple[]",
-            "internalType": "struct Metadata.Link[]",
-            "components": [
-              {
-                "name": "label",
-                "type": "string",
-                "internalType": "string"
-              },
-              {
-                "name": "url",
-                "type": "string",
-                "internalType": "string"
-              }
-            ]
-          }
-        ]
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "router",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "saltUsed",
-    "inputs": [
-      {
-        "name": "salt",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "setLaunchFee",
-    "inputs": [
-      {
-        "name": "newFee",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setReferencePrice",
-    "inputs": [
-      {
-        "name": "adapter",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setRouter",
-    "inputs": [
-      {
-        "name": "router_",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setTreasury",
-    "inputs": [
-      {
-        "name": "newTreasury",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "tokenAt",
-    "inputs": [
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "totalLaunches",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "transferGovernance",
-    "inputs": [
-      {
-        "name": "newGovernance",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "treasury",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "event",
     "name": "GovernanceTransferred",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
+    "type": "event"
   },
   {
-    "type": "event",
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "from",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "to",
+        "type": "uint256"
+      }
+    ],
     "name": "LaunchFeeUpdated",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "to",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
+    "type": "event"
   },
   {
-    "type": "event",
-    "name": "LaunchMetadata",
+    "anonymous": false,
     "inputs": [
       {
+        "indexed": true,
+        "internalType": "address",
         "name": "token",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
+        "type": "address"
       },
       {
+        "indexed": true,
+        "internalType": "address",
         "name": "creator",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
+        "type": "address"
       },
       {
+        "indexed": true,
+        "internalType": "uint256",
         "name": "revision",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
+        "type": "uint256"
       },
       {
+        "indexed": false,
+        "internalType": "string",
         "name": "description",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "string"
       },
       {
+        "indexed": false,
+        "internalType": "string",
         "name": "imageCid",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "string"
       },
       {
-        "name": "links",
-        "type": "tuple[]",
+        "components": [
+          {
+            "internalType": "string",
+            "name": "label",
+            "type": "string"
+          },
+          {
+            "internalType": "string",
+            "name": "url",
+            "type": "string"
+          }
+        ],
         "indexed": false,
         "internalType": "struct Metadata.Link[]",
+        "name": "links",
+        "type": "tuple[]"
+      }
+    ],
+    "name": "LaunchMetadata",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "from",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      }
+    ],
+    "name": "ReferencePriceUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "from",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      }
+    ],
+    "name": "RouterUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "token",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "market",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "creator",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "quoteAsset",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "symbol",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "p0",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "effectiveSalt",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "launchIntentHash",
+        "type": "bytes32"
+      }
+    ],
+    "name": "TokenLaunched",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "from",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      }
+    ],
+    "name": "TreasuryUpdated",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "ANCHOR_TOLERANCE_BPS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "FEE_VAULT",
+    "outputs": [
+      {
+        "internalType": "contract FeeVault",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "LAUNCH_VERSION",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "REGISTRY",
+    "outputs": [
+      {
+        "internalType": "contract XStockRegistry",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "REWARD_VAULT",
+    "outputs": [
+      {
+        "internalType": "contract HolderRewardVault",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "creator",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "userSalt",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "address",
+        "name": "quoteAsset",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "launchIntentHash",
+        "type": "bytes32"
+      }
+    ],
+    "name": "computeEffectiveSalt",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "token",
+        "type": "address"
+      }
+    ],
+    "name": "creatorOf",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "token",
+        "type": "address"
+      }
+    ],
+    "name": "getLaunch",
+    "outputs": [
+      {
         "components": [
           {
-            "name": "label",
-            "type": "string",
-            "internalType": "string"
+            "internalType": "address",
+            "name": "token",
+            "type": "address"
           },
           {
-            "name": "url",
-            "type": "string",
-            "internalType": "string"
+            "internalType": "address",
+            "name": "market",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "creator",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "quoteAsset",
+            "type": "address"
+          },
+          {
+            "internalType": "uint64",
+            "name": "launchedAt",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bool",
+            "name": "exists",
+            "type": "bool"
           }
-        ]
+        ],
+        "internalType": "struct LaunchpadFactory.Launch",
+        "name": "",
+        "type": "tuple"
       }
     ],
-    "anonymous": false
+    "stateMutability": "view",
+    "type": "function"
   },
   {
-    "type": "event",
-    "name": "ReferencePriceUpdated",
-    "inputs": [
+    "inputs": [],
+    "name": "governance",
+    "outputs": [
       {
-        "name": "from",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
+        "internalType": "address",
+        "name": "",
+        "type": "address"
       }
     ],
-    "anonymous": false
+    "stateMutability": "view",
+    "type": "function"
   },
   {
-    "type": "event",
-    "name": "RouterUpdated",
     "inputs": [
       {
-        "name": "from",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TokenLaunched",
-    "inputs": [
-      {
+        "internalType": "address",
         "name": "token",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
+        "type": "address"
+      }
+    ],
+    "name": "isAuthentic",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "string",
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "internalType": "string",
+            "name": "symbol",
+            "type": "string"
+          },
+          {
+            "internalType": "address",
+            "name": "quoteAsset",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "userSalt",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "launchIntentHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "xStockUsdWad",
+            "type": "uint256"
+          },
+          {
+            "internalType": "address",
+            "name": "expectedToken",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "internalType": "string",
+                "name": "description",
+                "type": "string"
+              },
+              {
+                "internalType": "string",
+                "name": "imageCid",
+                "type": "string"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "string",
+                    "name": "label",
+                    "type": "string"
+                  },
+                  {
+                    "internalType": "string",
+                    "name": "url",
+                    "type": "string"
+                  }
+                ],
+                "internalType": "struct Metadata.Link[]",
+                "name": "links",
+                "type": "tuple[]"
+              }
+            ],
+            "internalType": "struct Metadata.Content",
+            "name": "metadata",
+            "type": "tuple"
+          }
+        ],
+        "internalType": "struct LaunchpadFactory.LaunchParams",
+        "name": "params",
+        "type": "tuple"
+      }
+    ],
+    "name": "launch",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "token",
+        "type": "address"
       },
       {
+        "internalType": "address",
         "name": "market",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
+        "type": "address"
+      }
+    ],
+    "stateMutability": "payable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "launchFee",
+    "outputs": [
       {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
         "name": "creator",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
+        "type": "address"
+      }
+    ],
+    "name": "launchesByCreator",
+    "outputs": [
+      {
+        "internalType": "address[]",
+        "name": "",
+        "type": "address[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "token",
+        "type": "address"
+      }
+    ],
+    "name": "metadataRevision",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "effectiveSalt",
+        "type": "bytes32"
       },
       {
-        "name": "quoteAsset",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
+        "internalType": "string",
         "name": "name",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "string"
       },
       {
+        "internalType": "string",
         "name": "symbol",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
+        "type": "string"
       },
       {
-        "name": "p0",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
+        "internalType": "address",
+        "name": "creator",
+        "type": "address"
+      }
+    ],
+    "name": "predictTokenAddress",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "creator",
+        "type": "address"
       },
       {
-        "name": "effectiveSalt",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
+        "internalType": "bytes32",
+        "name": "userSalt",
+        "type": "bytes32"
       },
       {
+        "internalType": "address",
+        "name": "quoteAsset",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
         "name": "launchIntentHash",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
+        "type": "bytes32"
+      },
+      {
+        "internalType": "string",
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "symbol",
+        "type": "string"
       }
     ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TreasuryUpdated",
-    "inputs": [
+    "name": "previewLaunchAddress",
+    "outputs": [
       {
-        "name": "from",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "CidTooLong",
-    "inputs": [
-      {
-        "name": "length",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "max",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DecimalsDriftedFromRegistry",
-    "inputs": [
-      {
-        "name": "registered",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "reported",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DecimalsUnavailable",
-    "inputs": [
-      {
-        "name": "quoteAsset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DescriptionTooLong",
-    "inputs": [
-      {
-        "name": "length",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "max",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "EmptyLink",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InsufficientLaunchFee",
-    "inputs": [
-      {
-        "name": "sent",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "required",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "InvalidReferencePrice",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LaunchFeeTransferFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LinkLabelTooLong",
-    "inputs": [
-      {
-        "name": "length",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "max",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "LinkUrlTooLong",
-    "inputs": [
-      {
-        "name": "length",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "max",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "NotGovernance",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotTheCreator",
-    "inputs": [
-      {
+        "internalType": "address",
         "name": "token",
-        "type": "address",
-        "internalType": "address"
+        "type": "address"
       },
       {
-        "name": "caller",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PredictedAddressMismatch",
-    "inputs": [
-      {
-        "name": "predicted",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "actual",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "QuoteAssetNotLaunchable",
-    "inputs": [
-      {
-        "name": "quoteAsset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ReentrancyGuardReentrantCall",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReferencePriceDeviated",
-    "inputs": [
-      {
-        "name": "reviewed",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "actual",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "toleranceBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ReferencePriceNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RouterNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SafeERC20FailedOperation",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SaltAlreadyUsed",
-    "inputs": [
-      {
+        "internalType": "bytes32",
         "name": "effectiveSalt",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "type": "bytes32"
       }
-    ]
+    ],
+    "stateMutability": "view",
+    "type": "function"
   },
   {
-    "type": "error",
-    "name": "TooManyLinks",
+    "inputs": [],
+    "name": "referencePrice",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
-        "name": "count",
-        "type": "uint256",
-        "internalType": "uint256"
+        "internalType": "uint256",
+        "name": "xStockUsdWad",
+        "type": "uint256"
       },
       {
-        "name": "max",
-        "type": "uint256",
-        "internalType": "uint256"
+        "internalType": "address",
+        "name": "",
+        "type": "address"
       }
-    ]
+    ],
+    "name": "referencePriceToP0",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "p0",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
   },
   {
-    "type": "error",
-    "name": "UnknownToken",
     "inputs": [
       {
+        "internalType": "address",
         "name": "token",
-        "type": "address",
-        "internalType": "address"
+        "type": "address"
+      },
+      {
+        "components": [
+          {
+            "internalType": "string",
+            "name": "description",
+            "type": "string"
+          },
+          {
+            "internalType": "string",
+            "name": "imageCid",
+            "type": "string"
+          },
+          {
+            "components": [
+              {
+                "internalType": "string",
+                "name": "label",
+                "type": "string"
+              },
+              {
+                "internalType": "string",
+                "name": "url",
+                "type": "string"
+              }
+            ],
+            "internalType": "struct Metadata.Link[]",
+            "name": "links",
+            "type": "tuple[]"
+          }
+        ],
+        "internalType": "struct Metadata.Content",
+        "name": "content",
+        "type": "tuple"
       }
-    ]
+    ],
+    "name": "reviseMetadata",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
   },
   {
-    "type": "error",
-    "name": "ZeroAddress",
-    "inputs": []
+    "inputs": [],
+    "name": "router",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "salt",
+        "type": "bytes32"
+      }
+    ],
+    "name": "saltUsed",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "newFee",
+        "type": "uint256"
+      }
+    ],
+    "name": "setLaunchFee",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "adapter",
+        "type": "address"
+      }
+    ],
+    "name": "setReferencePrice",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "router_",
+        "type": "address"
+      }
+    ],
+    "name": "setRouter",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newTreasury",
+        "type": "address"
+      }
+    ],
+    "name": "setTreasury",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "index",
+        "type": "uint256"
+      }
+    ],
+    "name": "tokenAt",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "totalLaunches",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newGovernance",
+        "type": "address"
+      }
+    ],
+    "name": "transferGovernance",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "treasury",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
   }
 ] as const;
