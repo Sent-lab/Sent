@@ -92,8 +92,8 @@ export function HypeWrapPanel({ token }: { readonly token: string }): JSX.Elemen
   return (
     <section className={styles.panel} aria-label="Wrap HYPE or unwrap WHYPE">
       <header className={styles.head}>
-        <h2 className={styles.title}>Get WHYPE to trade</h2>
-        <p className={styles.body}>This market uses WHYPE as its quote asset. Wrap and unwrap are 1:1 and reversible. Wrapping uses native HYPE; trading uses the ERC-20 WHYPE balance.</p>
+        <h2 className={styles.title}>Step 1: Get WHYPE</h2>
+        <p className={styles.body}>Start with native HYPE and wrap it 1:1 into WHYPE. The next panel converts WHYPE into this market&apos;s sWHYPE quote token, also 1:1 and reversible.</p>
       </header>
       <div className={styles.sides} role="group" aria-label="Conversion direction">
         {(["WRAP", "UNWRAP"] as const).map((option) => (

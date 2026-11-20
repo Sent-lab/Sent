@@ -24,6 +24,7 @@ import {
   XSTOCK_ALLOWLIST,
   REFERENCE_PRICE_FEEDS,
   GRADUATION_ROUTER,
+  LIQUIDITY_LOCK,
   WRAPPER_FACTORY,
   PLATFORM_ACCOUNTS,
 } from "../src/chain.ts";
@@ -304,27 +305,17 @@ section("Production readiness is still gated (§279)");
   // prerequisites, not a missing price source.
   check("the configured launch anchor is no longer a readiness blocker", !incorrectlyBlocksConfiguredAnchor);
 
-  /*
-   * §180 requires "Graduation + permanent LP path proven".
-   *
-   * The router and the lock are written and tested; what is missing is three
-   * HyperSwap addresses, two of which are immutable in the router's
-   * constructor. Guessing them produces a router that looks configured and
-   * mints a market's entire liquidity into a contract nobody verified.
-   */
-  check("no graduation router is deployed yet (V-06, V-09)", GRADUATION_ROUTER === null);
+  check("graduation router is verified from the live deployment", GRADUATION_ROUTER !== null);
+  check("permanent liquidity lock is verified from the live deployment", LIQUIDITY_LOCK !== null);
 
   let namesGraduation = false;
   try {
     assertProductionConfigReady();
   } catch (error) {
-    namesGraduation = error instanceof Error && error.message.includes("graduation router");
+    namesGraduation = error instanceof Error && error.message.includes("guardian Safe");
   }
 
-  // Named separately from the HyperSwap addresses, because it is fixed by a
-  // different action: those are a research task, this is a deployment that
-  // cannot happen until they land.
-  check("and the refusal says markets cannot graduate", namesGraduation);
+  check("router readiness is no longer the refusal; the missing guardian is", namesGraduation);
 
   /*
    * The wrapper factory (D-017).

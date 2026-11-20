@@ -23,7 +23,7 @@
  */
 
 import { notFound } from "next/navigation";
-import { WHYPE_ADDRESS } from "@sent/config";
+import { SENT_WHYPE_ADDRESS, WHYPE_ADDRESS } from "@sent/config";
 
 import { getMarket, getTape, isOk, API_BASE } from "../../../lib/api.ts";
 import {
@@ -146,6 +146,8 @@ export default async function TerminalPage({
   }
 
   const market = marketResult.data;
+  const quoteUnderlying = market.quoteUnderlying ??
+    (market.quoteAsset.toLowerCase() === SENT_WHYPE_ADDRESS.toLowerCase() ? WHYPE_ADDRESS : null);
   const status = normaliseStatus(market.status);
   const decimals = market.quoteDecimals;
 
@@ -192,16 +194,17 @@ export default async function TerminalPage({
             separates a real wTSLAx from one that only spells the same — the
             full address is on the details list below.
           */}
-          {market.quoteUnderlying != null && (
+          {quoteUnderlying != null && (
             <span className={styles.wrapped}>
               {market.quoteSymbol} is a wrapper. It holds{" "}
-              <span className="mono" title={market.quoteUnderlying}>
-                {truncateAddress(market.quoteUnderlying)}
+              <span className="mono" title={quoteUnderlying}>
+                {truncateAddress(quoteUnderlying)}
               </span>
               , and that address is the asset this market is actually quoted against.
             </span>
           )}
-          {market.quoteAsset.toLowerCase() === WHYPE_ADDRESS.toLowerCase() && (
+          {(market.quoteAsset.toLowerCase() === WHYPE_ADDRESS.toLowerCase() ||
+            market.quoteAsset.toLowerCase() === SENT_WHYPE_ADDRESS.toLowerCase()) && (
             <HypeWrapPanel token={market.token} />
           )}
           <FreshnessBadge envelope={marketResult.freshness} />
@@ -307,11 +310,11 @@ export default async function TerminalPage({
             action they came to take — and only markets whose quote asset is
             actually a wrapper show it at all.
           */}
-          {market.quoteUnderlying != null && (
+          {quoteUnderlying != null && (
             <WrapPanel
               token={market.token}
               wrapper={market.quoteAsset}
-              underlying={market.quoteUnderlying}
+              underlying={quoteUnderlying}
               wrapperSymbol={market.quoteSymbol}
               decimals={decimals}
             />

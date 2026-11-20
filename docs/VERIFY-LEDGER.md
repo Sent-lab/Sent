@@ -1949,3 +1949,74 @@ in the deployed registry, and the deployed reward vault without the
 quorum and attestor count read as zero. Governance Safe threshold is 2-of-3;
 Treasury Safe is still 1-of-1. The launch fee remains `0.04 HYPE`. Mainnet has
 not been changed.
+
+## HyperEVM MVP router and WHYPE oracle configured — 2026-11-20
+
+Governance Safe transaction
+`0x5ccaf373dc99d877275ea3e2f7e98e5f204ab441b0573f69cc67e01f26fb4909`
+was executed successfully; the factory now points to the verified SENT
+graduation router `0xa4c6F6Cc2754CD8E47172f9e10e9a227F6E2339b`. The subsequent
+two-call Safe batch
+`0x0152b6f937461daf39093f6f737535863d87c7c254a1fceeb38558a7becea38f`
+was also executed with 2/2 confirmations. It configured the existing
+ReferencePriceAdapter for canonical WHYPE using the HyperEVM HYPE/USD proxy,
+then connected that adapter to the factory.
+
+Read-only HyperEVM RPC readback confirms `factory.router()` equals the router
+above and `factory.referencePrice()` equals
+`0x772AEDd551E38de727248e2925F53aAc80BE2b32`. The adapter's
+`sourceOf(WHYPE)` returns the Chainlink proxy
+`0x2b25bc41d55de29f3a2e163f8eebf63966b25b57`, `maxAge=86400`, `minUsdWad=1e17`
+and `maxUsdWad=1e22`; the proxy reports 18 decimals and a positive, recent
+answer. This closes the router and HYPE/USD wiring steps, but does not enable
+WHYPE launches.
+
+The router wiring was independently read back again while preparing the MVP
+batch: factory `router()` is
+`0xa4c6F6Cc2754CD8E47172f9e10e9a227F6E2339b`; its `LAUNCHPAD()` equals the
+factory, `V3_FACTORY()`, `POSITION_MANAGER()` and `SWAP_ROUTER()` match the
+verified HyperSwap V3 deployment, and `FEE_TIER()`/`TICK_SPACING()` read as
+`10000`/`200`. Its immutable `LOCK()` is
+`0xb0B94d10cFCABF57467CFa193CB992c27714969D`; both contracts have live code.
+The canonical config and its readiness simulation now record these verified
+addresses instead of the stale null values.
+
+At the same read, `XStockRegistry.registeredCount()` remains `0`, and the
+deployed HolderRewardVault still reports zero guardian, attestors and quorum.
+Its `launchConfigurationReady()` call reverts, and the deployed factory runtime
+does not include the current source's `StockbackNotReady()` guard marker. The
+next release work is therefore WHYPE registration and evidence-backed gates,
+Stockback guardian/attestor configuration, and a deliberate MVP compatibility
+path for the older deployed bytecode. No token launch has been executed.
+
+## sWHYPE public-launch batch prepared — 2026-11-20
+
+Direct `registerAsset(WHYPE, ...)` was dry-run through the live registry and
+exceeded HyperEVM's 30M eth-call ceiling in the deployed `RebaseDetector` probe.
+The MVP now routes quotes through a minimal SENT-owned-by-no-one receipt token:
+`sWHYPE` holds canonical WHYPE, wraps and unwraps exactly 1:1, and has no
+administrative, fee, pause or upgrade controls. The wrapper source compiles with
+Solidity 0.8.28, optimizer 400 and viaIR. Its CREATE2 address and initcode hash
+are recorded in `docs/transactions/SENT-WHYPE-MVP.md`.
+
+The web terminal now renders the two conversion steps for sWHYPE markets, and
+the API assigns it the trusted quote label `sWHYPE`. API and web TypeScript
+checks pass, and the Next.js production build completes. These are local code
+checks; the wrapper has not been deployed and the live registry remains
+unchanged.
+
+The exact 10-action, zero-value Safe batch is serialized in
+`docs/transactions/SENT-WHYPE-MVP.safe.json`. It has not been sent. It deploys
+the wrapper; configures its HYPE/USD price; registers, attests and enables it;
+sets the per-launch fee to zero; and configures a guardian, two reward
+attestors and quorum 2. The gate payload
+sets `legalReviewed=true`, which is an on-chain governance attestation and has
+not been independently reviewed by counsel. The Safe owners must examine this
+field before signing. The batch does not move user funds.
+
+Even once the batch executes, reward claims are not fully operational: the repo
+has deterministic distribution computation but no attestor-key signing and
+submission service. Also, no public web host/domain deployment is configured in
+this checkout. The launch contract route can be tested after the Safe batch,
+but a genuinely public website and a claimable Stockback distribution each need
+their respective operator steps.

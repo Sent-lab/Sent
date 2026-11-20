@@ -112,9 +112,9 @@ export default async function HomePage(): Promise<JSX.Element> {
           </h1>
 
           <p className={`${styles.lede} m-secondary`}>
-            SENT is building fixed-supply token markets paired with verified stock-backed
-            assets on HyperEVM. Launch access depends on live oracle, asset and graduation
-            checks; this page reports whether those checks currently pass.
+            Launch fixed-supply tokens against WHYPE on HyperEVM. Verified stock-backed quote
+            assets can be added as they clear their own checks. Launch access depends on live
+            oracle, asset and graduation requirements shown here.
           </p>
 
           <section className={styles.launchStatus} data-state={launchStatus} aria-label="Live launch availability">
@@ -139,17 +139,13 @@ export default async function HomePage(): Promise<JSX.Element> {
                     .join(", ")}${launchableAssets.length > 4 ? ` and ${launchableAssets.length - 4} more` : ""}. Review the launch fee and current price in the create flow before signing.`
                 : launchStatus === "unavailable"
                   ? stockbackBlocksLaunch && launchConfig !== null && isOk(launchConfig)
-                    ? !launchConfig.data.stockback.factoryGuardMarkerPresent
-                      ? "Launches are held because the deployed factory is missing the expected Stockback guard marker. Governance must use and verify a guarded deployment."
-                      : !launchConfig.data.stockback.vaultReadinessCheckSupported
-                        ? "Launches are held because the reward vault does not expose the on-chain readiness check required by this factory."
-                        : !launchConfig.data.stockback.vaultConfigurationReady
-                          ? "Launches are held because the reward vault's on-chain readiness check is false."
-                          : launchConfig.data.stockback.guardian === null
+                    ? launchConfig.data.stockback.guardian === null
                             ? "Launches are held while governance configures the Stockback guardian. Rewards must be ready before a public market can open."
                             : launchConfig.data.stockback.claimsPaused
                               ? "Launches are held because Stockback claims are paused. Existing markets, if any, remain available to explore."
-                              : `Launches are held until Stockback's attestor quorum is configured (${launchConfig.data.stockback.attestorCount} attestors, quorum ${launchConfig.data.stockback.quorum}).`
+                              : !launchConfig.data.stockback.vaultConfigurationReady
+                                ? `Launches are held until Stockback's attestor quorum is configured (${launchConfig.data.stockback.attestorCount} attestors, quorum ${launchConfig.data.stockback.quorum}).`
+                                : "Launches are held while the reward vault configuration is checked."
                     : "No market can be launched right now. SENT will not submit a launch transaction while its live requirements are missing. Existing markets, if any, remain available to explore."
                   : launchConfig !== null &&
                       isOk(launchConfig) &&
@@ -158,6 +154,19 @@ export default async function HomePage(): Promise<JSX.Element> {
                     : "The live launch configuration is unavailable. Check again later; do not treat a missing status as launch approval."}
             </p>
           </section>
+
+          {launchStatus === "available" &&
+            launchConfig !== null &&
+            isOk(launchConfig) &&
+            (!launchConfig.data.stockback.factoryGuardMarkerPresent ||
+              !launchConfig.data.stockback.vaultReadinessCheckSupported) && (
+              <p className={styles.launchStatusDetail} role="status">
+                MVP compatibility: this deployed factory does not recheck Stockback readiness
+                inside the launch transaction. SENT checks the live guardian, quorum and pause
+                state before enabling launch; a guarded factory deployment is still required for
+                the full on-chain check.
+              </p>
+            )}
 
           <div className={`${styles.heroActions} m-secondary`}>
             <Link href="/explore" className={styles.primaryCta}>

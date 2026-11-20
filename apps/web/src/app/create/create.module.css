@@ -192,6 +192,16 @@
   line-height: var(--leading-normal);
 }
 
+.warning {
+  border: 1px solid var(--warning, #b7791f);
+  border-radius: var(--radius-sm);
+  padding: var(--s-3);
+  color: var(--text);
+  background: color-mix(in srgb, var(--warning, #b7791f) 10%, transparent);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+
 /* --- Preview (§220) ------------------------------------------------------- */
 
 .previewPane {

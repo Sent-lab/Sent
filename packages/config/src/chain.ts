@@ -45,6 +45,9 @@ export const TOKENIZED_ASSET_V10_FEEDS = {
  */
 export const WHYPE_ADDRESS = "0x5555555555555555555555555555555555555555" as const;
 
+/** Immutable 1:1 SENT wrapper for the public launch quote lane. */
+export const SENT_WHYPE_ADDRESS = "0x132eA1dC4d56515af2cC4fAa6C50005aCA3b6805" as const;
+
 /**
  * MVP quote asset: HyperEVM's canonical wrapped native token. Markets still
  * hold an ERC-20 quote asset, so users wrap HYPE to WHYPE before trading.
@@ -125,18 +128,16 @@ export const GRADUATION_FEE_TIER = 10_000;
 export const GRADUATION_TICK_SPACING = 200;
 
 /**
- * The deployed graduation router, once its router and lock have been deployed
- * and read back from chain. V-06's HyperSwap address verification is complete.
- *
- * Null, and the launch flow already behaves correctly without it: a factory
- * with no router refuses to launch, because §16 forbids a GRADUATED status
- * without a complete migration and a market that could never graduate should
- * never have been created.
+ * The deployed graduation router and its immutable permanent LP lock.
+ * Both were read back from HyperEVM after the Governance Safe wired the router
+ * into the factory (VERIFY ledger, 2026-11-20).
  */
-export const GRADUATION_ROUTER: `0x${string}` | null = null;
+export const GRADUATION_ROUTER: `0x${string}` | null =
+  "0xa4c6F6Cc2754CD8E47172f9e10e9a227F6E2339b";
 
 /** The permanent LP lock that holds every graduated position (§17, V-09). */
-export const LIQUIDITY_LOCK: `0x${string}` | null = null;
+export const LIQUIDITY_LOCK: `0x${string}` | null =
+  "0xb0B94d10cFCABF57467CFa193CB992c27714969D";
 
 /**
  * The `WrappedXStockFactory` every listed quote asset must come from (D-017).
@@ -170,10 +171,9 @@ export const WRAPPER_FACTORY: `0x${string}` | null =
  *   factory.treasury()           the treasury Safe
  *   factory.launchFee()          40000000000000000  (0.04 HYPE)
  *
- * `router` and `referencePrice` on the factory are still zero, and the
- * allowlist is still empty. That is the state the deployment log describes as
- * NOT DONE, and a launch is refused until it changes — see
- * `assertProductionConfigReady`.
+ * `router` and `referencePrice` have since been configured through the
+ * Governance Safe and verified on chain. The registry still has no enabled
+ * quote asset; the sWHYPE batch is prepared but not yet executed.
  */
 export const XSTOCK_REGISTRY: `0x${string}` = "0xA54BC1b31d17a6B9F76d6De1BE43B8efb8843c2B";
 export const LAUNCHPAD_FACTORY: `0x${string}` = "0xcEa3AcF9b70cE9807a99bcBdF0F93A437518Eaeb";
@@ -317,13 +317,12 @@ export function assertProductionConfigReady(): void {
   if (!HYPERSWAP_V3.verified) problems.push("HyperSwap V3 addresses unverified (V-06)");
   if (HYPERSWAP_V3.positionManager === null) problems.push("position manager missing (V-06)");
 
-  /*
-   * HyperSwap addresses are verified; SENT's own graduation router and
-   * permanent lock remain undeployed. Keep this separate because resolving the
-   * deployment requirement still leaves the asset and oracle gates below.
-   */
+  /* Keep router and permanent lock checks separate from the asset/oracle gates. */
   if (GRADUATION_ROUTER === null) {
     problems.push("no SENT graduation router deployed (V-09) — markets cannot graduate");
+  }
+  if (LIQUIDITY_LOCK === null) {
+    problems.push("no permanent liquidity lock deployed (V-09) — graduated LP positions cannot be secured");
   }
   if (!hasVerifiedXStock && !hasBaseQuoteAsset) {
     problems.push("no quote assets configured for launch (V-02/V-03/V-05)");

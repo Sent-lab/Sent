@@ -9,7 +9,7 @@
 
 import { Database } from "@sent/database";
 import { apiEnv, chainEnv, databaseEnv, loadAll } from "@sent/config/env";
-import { BASE_QUOTE_ASSETS, XSTOCK_ALLOWLIST } from "@sent/config";
+import { BASE_QUOTE_ASSETS, SENT_WHYPE_ADDRESS, XSTOCK_ALLOWLIST } from "@sent/config";
 
 import { startServer } from "./server.ts";
 
@@ -33,6 +33,7 @@ async function main(): Promise<void> {
       ...XSTOCK_ALLOWLIST.filter((entry) => entry.verified).map((entry) => [entry.erc20, entry.symbol] as const),
     ],
   );
+  quoteSymbols.set(SENT_WHYPE_ADDRESS.toLowerCase() as `0x${string}`, "sWHYPE");
 
   // The disposable Anvil deployment uses one deterministic NVDAx-shaped mock
   // quote token. Label it explicitly in local projections so the market page

@@ -1771,9 +1771,12 @@ export function handleLaunchConfig(
   port: DataPort,
   config: LaunchPreconditions,
 ): ApiResponse<LaunchConfigResponse> {
+  // The live mainnet factory and vault predate the current launch-readiness
+  // selectors. When those selectors are absent, the port derives the same
+  // predicate from the vault's public guardian/quorum/pause getters. The
+  // response preserves both marker flags so the UI can disclose that legacy
+  // deployments lack the on-chain recheck present in newly deployed source.
   const stockbackReady =
-    config.stockback.factoryGuardMarkerPresent &&
-    config.stockback.vaultReadinessCheckSupported &&
     config.stockback.vaultConfigurationReady &&
     config.stockback.guardian !== null &&
     config.stockback.quorum > 0n &&

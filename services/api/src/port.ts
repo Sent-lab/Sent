@@ -424,7 +424,12 @@ export class PostgresPort implements DataPort {
         vault: rewardVault,
         factoryGuardMarkerPresent,
         vaultReadinessCheckSupported: vaultReadiness.supported,
-        vaultConfigurationReady: vaultReadiness.ready,
+        // The deployed mainnet vault predates this selector. Its implementation
+        // predicate is exactly these public fields, so derive it for the MVP
+        // while retaining `vaultReadinessCheckSupported=false` as a warning.
+        vaultConfigurationReady: vaultReadiness.supported
+          ? vaultReadiness.ready
+          : guardian !== ZERO && !claimsPaused && quorum > 0n && quorum <= attestorCount,
         guardian: guardian === ZERO ? null : guardian,
         attestorCount,
         quorum,

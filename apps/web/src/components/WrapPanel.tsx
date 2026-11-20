@@ -5,7 +5,7 @@
  *
  * WHY A USER IS ASKED TO DO THIS AT ALL
  * -------------------------------------
- * Markets are quoted in a wrapper, not in the xStock itself. A Uniswap V3
+ * Markets may be quoted in a wrapper rather than the underlying asset. A Uniswap V3
  * position pays from internal liquidity accounting and has no `skim()`, so a
  * rebasing token sealed into a permanently locked position loses its dividends
  * forever and breaks outright on a reverse split. Graduation locks that position
@@ -55,9 +55,9 @@ type Direction = "WRAP" | "UNWRAP";
 export interface WrapPanelProps {
   /** For the transaction center's deep link back to this market (§61). */
   readonly token: string;
-  /** The `WrappedXStock` the market is quoted in. */
+  /** The wrapper the market is quoted in. */
   readonly wrapper: string;
-  /** The rebasing xStock it holds. */
+  /** The underlying asset it holds. */
   readonly underlying: string;
   readonly wrapperSymbol: string;
   readonly decimals: number;
@@ -285,11 +285,8 @@ export function WrapPanel({
       <header className={styles.head}>
         <h2 className={styles.title}>Get {wrapperSymbol}</h2>
         <p className={styles.body}>
-          This market is quoted in {wrapperSymbol}, a wrapper around the xStock it holds.
-          The wrapper exists because a permanently locked liquidity position cannot hold a
-          token whose balances move — dividends would be stranded in it and a reverse split
-          would break it. Wrapping is reversible at any time, by you, with nobody&apos;s
-          permission: the wrapper has no owner and no pause.
+          This market is quoted in {wrapperSymbol}, a wrapper around the underlying asset.
+          Wrapping is 1:1 and reversible at any time. The wrapper has no owner, fee, or pause.
         </p>
       </header>
 

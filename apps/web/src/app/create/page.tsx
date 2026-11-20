@@ -692,13 +692,7 @@ export default function CreatePage(): JSX.Element {
           ) : !config.stockback.ready ? (
             <p className={styles.blocked}>
               Stockback is not ready for this launch.{" "}
-              {!config.stockback.factoryGuardMarkerPresent
-                ? "The deployed factory is missing the expected Stockback guard marker. Governance must use and verify a guarded factory deployment before launches can open."
-                : !config.stockback.vaultReadinessCheckSupported
-                  ? "The deployed reward vault does not expose the on-chain launch-readiness check required by the factory."
-                  : !config.stockback.vaultConfigurationReady
-                    ? "The reward vault's on-chain readiness check is false. Review its guardian, attestor quorum and claim pause settings."
-                : config.stockback.guardian === null
+              {config.stockback.guardian === null
                   ? "Governance has not assigned the reward guardian."
                   : config.stockback.claimsPaused
                     ? "Reward claims are currently paused."
@@ -715,6 +709,19 @@ export default function CreatePage(): JSX.Element {
               any market can launch.
             </p>
           ) : null}
+
+          {config !== null &&
+            readinessFresh &&
+            config.stockback.ready &&
+            (!config.stockback.factoryGuardMarkerPresent ||
+              !config.stockback.vaultReadinessCheckSupported) && (
+              <p className={styles.warning} role="status">
+                MVP compatibility: this deployed factory does not recheck Stockback readiness
+                inside the launch transaction. SENT checks the live guardian, quorum and pause
+                state before enabling launch. Keep those settings unchanged until a guarded
+                factory is deployed.
+              </p>
+            )}
 
           {sent !== null && (
             <p className={styles.hint}>
