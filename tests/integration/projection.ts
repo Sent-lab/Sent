@@ -254,9 +254,9 @@ try {
   {
     for (let n = 2n; n <= 40n; n++) await block(db, n, 1_000n + n);
 
+    await setCursor(db, 40n, hash(40));
     check("the head is the highest block", (await headBlockIndexed(db)) === 40n);
 
-    await setCursor(db, 40n, hash(40));
     const cursor = await getCursor(db);
     check("the cursor round-trips", cursor?.lastBlock === 40n);
     check("and keeps its 32-byte hash", cursor?.lastHash === hash(40));
@@ -848,6 +848,9 @@ section("Stockback funding and datasets");
     check("trades exist before the rollback", before.length === 4);
 
     const removed = await rollbackTo(db, 21n);
+    // The indexer commits the cursor update in the same transaction as the
+    // projection rollback; mirror that production sequence in this fixture.
+    await setCursor(db, 21n, "0x00");
     check("blocks above the fork are deleted", removed > 0);
 
     const after = await listTrades(db, MARKET, 10);
