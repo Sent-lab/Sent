@@ -5,6 +5,7 @@ Status: prepared, not submitted or executed.
 Network: HyperEVM mainnet (chain ID 999)  
 Safe: `0x791fb66Ac5ff91eE7D3F1697f85c4D8b646D1e22` (2-of-3)  
 Batch manifest: `SENT-WHYPE-MVP.safe.json`
+Safe Transaction Builder import: `SENT-WHYPE-MVP.safe-builder.json`
 
 The batch deploys a permissionless, immutable 1:1 receipt token (`sWHYPE`) at
 `0x132eA1dC4d56515af2cC4fAa6C50005aCA3b6805`. It wraps canonical WHYPE at
@@ -27,6 +28,11 @@ The ten atomic Safe actions:
 9. Add Treasury owner `0xe7c76052DcAedaF7beba00F5B3c2a979407f0D4e` as the second
    attestor.
 10. Set reward quorum to 2.
+
+The Safe Transaction Builder JSON contains those same ten calls in importable
+batch format. Its recomposed MultiSend calldata matches the reviewed manifest
+byte-for-byte, and its Safe Builder checksum is valid. It has not yet been
+imported into the Safe UI or proposed to the signer queue.
 
 **Governance attestation:** action 4 also sets `legalReviewed=true`. This is an
 on-chain governance assertion, not evidence that external counsel reviewed the
